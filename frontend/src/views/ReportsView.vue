@@ -18,7 +18,7 @@ async function loadLeave() {
       employee_id: r.employee_id,
       leave_type_name: r.leave_type_id,
       leave_type_id: r.leave_type_id,
-      days: r.start_date && r.end_date ? Math.max(1, Math.ceil((new Date(r.end_date) - new Date(r.start_date)) / (24 * 60 * 60 * 1000)) + 1) : '—',
+      days: r.start_date && r.end_date ? Math.max(1, Math.ceil((new Date(r.end_date) - new Date(r.start_date)) / (24 * 60 * 60 * 1000)) + 1) : '-',
     }))
   } catch {
     leaveData.value = []
@@ -31,35 +31,35 @@ async function loadLeave() {
 <template>
   <div class="space-y-6">
     <div>
-      <h1 class="text-2xl font-bold text-gray-900">Reports</h1>
-      <p class="mt-1 text-sm text-gray-500">Leave reports.</p>
+      <h1 class="text-2xl font-bold text-primary-200">Reports</h1>
+      <p class="mt-1 text-sm text-gray-400">Leave reports.</p>
     </div>
-    <div class="flex flex-wrap items-end gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div class="flex flex-wrap items-end gap-4 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
       <AppDatePicker v-model="dateFrom" label="From" />
       <AppDatePicker v-model="dateTo" label="To" />
       <AppButton @click="loadLeave" :loading="loading">Run report</AppButton>
     </div>
-    <div class="rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
       <div v-if="loading" class="flex justify-center py-12">
         <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
       </div>
       <div v-else class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="min-w-full divide-y divide-gray-800">
+          <thead class="bg-gray-950">
             <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Employee</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Leave type</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Days</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Leave type</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Days</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-gray-200 bg-white">
-            <tr v-for="(row, i) in leaveData" :key="i" class="hover:bg-gray-50">
-              <td class="px-4 py-3 text-sm text-gray-900">{{ row.employee_name ?? row.employee_id }}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">{{ row.leave_type_name ?? row.leave_type_id }}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">{{ row.days ?? '—' }}</td>
+          <tbody class="divide-y divide-gray-800 bg-gray-900">
+            <tr v-for="(row, i) in leaveData" :key="i" class="hover:bg-gray-950">
+              <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name ?? row.employee_id }}</td>
+              <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type_id }}</td>
+              <td class="px-4 py-3 text-sm text-gray-300">{{ row.days ?? '-' }}</td>
             </tr>
             <tr v-if="!leaveData.length && !loading">
-              <td colspan="3" class="px-4 py-8 text-center text-sm text-gray-500">Run report to see data.</td>
+              <td colspan="3" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see data.</td>
             </tr>
           </tbody>
         </table>
@@ -67,3 +67,5 @@ async function loadLeave() {
     </div>
   </div>
 </template>
+
+

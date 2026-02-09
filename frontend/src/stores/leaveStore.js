@@ -5,6 +5,7 @@ import {
   getLeaveTypes,
   getLeaveBalances,
   getLeaveRequests,
+  getLeaveRequestsForEmployee,
   createLeaveRequest as createRequestApi,
   approveLeaveRequest,
   rejectLeaveRequest,
@@ -32,14 +33,16 @@ export const useLeaveStore = defineStore('leave', () => {
     return balances.value
   }
 
-  async function fetchRequests() {
+  async function fetchRequests(options = {}) {
     loading.value = true
     try {
       const authStore = useAuthStore()
-      requests.value = await getLeaveRequests(
-        authStore.role,
-        authStore.user?.employee_id
-      )
+      const employeeId = authStore.user?.employee_id
+      if (options.scope === 'mine') {
+        requests.value = await getLeaveRequestsForEmployee(employeeId)
+      } else {
+        requests.value = await getLeaveRequests(authStore.role, employeeId)
+      }
       total.value = requests.value.length
       return requests.value
     } finally {

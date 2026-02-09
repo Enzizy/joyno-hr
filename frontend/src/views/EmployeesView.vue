@@ -88,28 +88,28 @@ async function remove(row) {
   <div class="space-y-6">
     <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">Employee Management</h1>
-        <p class="mt-1 text-sm text-gray-500">Create, edit, and manage employees.</p>
+        <h1 class="text-2xl font-bold text-primary-200">Employee Management</h1>
+        <p class="mt-1 text-sm text-gray-400">Create, edit, and manage employees.</p>
       </div>
       <AppButton @click="openCreate">Add employee</AppButton>
     </div>
     <AppTable :loading="employeeStore.loading">
-      <thead class="bg-gray-50">
+      <thead class="bg-gray-950">
         <tr>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Code</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Name</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Department</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Position</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Status</th>
-          <th class="px-4 py-3 text-right text-xs font-medium text-gray-500">Actions</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Code</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Name</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Department</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Position</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
+          <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-gray-200 bg-white">
-        <tr v-for="row in employeeStore.list" :key="row.id" class="hover:bg-gray-50">
-          <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ row.employee_code }}</td>
-          <td class="px-4 py-3 text-sm text-gray-900">{{ row.first_name }} {{ row.last_name }}</td>
-          <td class="px-4 py-3 text-sm text-gray-600">{{ row.department }}</td>
-          <td class="px-4 py-3 text-sm text-gray-600">{{ row.position }}</td>
+      <tbody class="divide-y divide-gray-800 bg-gray-900">
+        <tr v-for="row in employeeStore.list" :key="row.id" class="hover:bg-gray-950">
+          <td class="px-4 py-3 text-sm font-medium text-primary-200">{{ row.employee_code }}</td>
+          <td class="px-4 py-3 text-sm text-primary-200">{{ row.first_name }} {{ row.last_name }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ row.department }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ row.position }}</td>
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
           </td>
@@ -119,7 +119,7 @@ async function remove(row) {
           </td>
         </tr>
         <tr v-if="!employeeStore.list.length && !employeeStore.loading">
-          <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-500">No employees yet.</td>
+          <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">No employees yet.</td>
         </tr>
       </tbody>
     </AppTable>
@@ -132,26 +132,26 @@ async function remove(row) {
         <AppInput v-model="form.department" label="Department" required />
         <AppInput v-model="form.position" label="Position" required />
         <div>
-          <label class="mb-1 block text-sm font-medium text-gray-700">Salary type</label>
+          <label class="mb-1 block text-sm font-medium text-gray-200">Salary type</label>
           <select
             v-model="form.salary_type"
-            class="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
           >
-            <option value="monthly">Monthly</option>
-            <option value="hourly">Hourly</option>
+            <option value="monthly" class="bg-gray-900 text-primary-200">Monthly</option>
+            <option value="hourly" class="bg-gray-900 text-primary-200">Hourly</option>
           </select>
         </div>
         <AppInput v-model="form.salary_amount" type="number" label="Salary amount" required />
         <AppInput v-model="form.date_hired" type="date" label="Date hired" required />
         <div>
-          <label class="mb-1 block text-sm font-medium text-gray-700">Status</label>
+          <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
           <select
             v-model="form.status"
-            class="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
           >
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-            <option value="resigned">Resigned</option>
+            <option value="active" class="bg-gray-900 text-primary-200">Active</option>
+            <option value="inactive" class="bg-gray-900 text-primary-200">Inactive</option>
+            <option value="resigned" class="bg-gray-900 text-primary-200">Resigned</option>
           </select>
         </div>
       </form>
@@ -162,3 +162,5 @@ async function remove(row) {
     </AppModal>
   </div>
 </template>
+
+

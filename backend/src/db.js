@@ -1,14 +1,21 @@
-require('dotenv').config()
-const mysql = require('mysql2/promise')
+const { Pool } = require('pg')
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'hr_system',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
+const connectionString = process.env.DATABASE_URL
+const isProduction = process.env.NODE_ENV === 'production'
+const sslMode = process.env.PGSSLMODE
+const useSsl =
+  sslMode !== 'disable' &&
+  !!connectionString &&
+  (connectionString.includes('sslmode=require') || isProduction)
+
+const pool = new Pool({
+  connectionString,
+  ssl: useSsl ? { rejectUnauthorized: false } : false,
 })
 
-module.exports = pool
+async function query(text, params = []) {
+  const result = await pool.query(text, params)
+  return { rows: result.rows, rowCount: result.rowCount }
+}
+
+module.exports = { query }

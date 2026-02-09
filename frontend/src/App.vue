@@ -7,3 +7,4 @@ import AppToast from '@/components/ui/AppToast.vue'
   <RouterView />
   <AppToast />
 </template>
+

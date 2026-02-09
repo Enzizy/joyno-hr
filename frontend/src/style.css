@@ -7,6 +7,17 @@
     @apply antialiased;
   }
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-gray-950 text-gray-100;
+    background-image:
+      radial-gradient(1200px 600px at 15% -10%, rgba(212, 175, 55, 0.18), transparent 60%),
+      radial-gradient(800px 500px at 85% 10%, rgba(212, 175, 55, 0.12), transparent 60%);
   }
 }
+
+@layer base {
+  ::selection {
+    background: rgba(212, 175, 55, 0.35);
+    color: #0b0b0b;
+  }
+}
+

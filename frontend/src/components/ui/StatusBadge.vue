@@ -9,18 +9,18 @@ const props = defineProps({
 const badgeClass = computed(() => {
   if (props.variant !== 'auto') {
     const v = {
-      success: 'bg-green-100 text-green-800',
-      warning: 'bg-amber-100 text-amber-800',
-      danger: 'bg-red-100 text-red-800',
-      info: 'bg-blue-100 text-blue-800',
+      success: 'bg-green-900 text-green-200',
+      warning: 'bg-amber-900 text-amber-200',
+      danger: 'bg-red-900 text-red-200',
+      info: 'bg-blue-900 text-blue-200',
     }
     return v[props.variant] || v.info
   }
   const s = (props.status || '').toLowerCase()
-  if (['active', 'approved', 'present'].includes(s)) return 'bg-green-100 text-green-800'
-  if (['pending', 'inactive'].includes(s)) return 'bg-amber-100 text-amber-800'
-  if (['rejected', 'resigned', 'absent'].includes(s)) return 'bg-red-100 text-red-800'
-  return 'bg-gray-100 text-gray-800'
+  if (['active', 'approved', 'present'].includes(s)) return 'bg-green-900 text-green-200'
+  if (['pending', 'inactive', 'on_leave'].includes(s)) return 'bg-amber-900 text-amber-200'
+  if (['rejected', 'resigned', 'absent'].includes(s)) return 'bg-red-900 text-red-200'
+  return 'bg-gray-800 text-gray-200'
 })
 </script>
 
@@ -32,3 +32,5 @@ const badgeClass = computed(() => {
     <slot>{{ status }}</slot>
   </span>
 </template>
+
+

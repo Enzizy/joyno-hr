@@ -15,7 +15,7 @@ defineEmits(['update:modelValue'])
 
 <template>
   <div class="w-full">
-    <label v-if="label" class="mb-1 block text-sm font-medium text-gray-700">
+    <label v-if="label" class="mb-1 block text-sm font-medium text-gray-200">
       {{ label }}
       <span v-if="required" class="text-red-500">*</span>
     </label>
@@ -26,10 +26,12 @@ defineEmits(['update:modelValue'])
       :disabled="disabled"
       :min="min"
       :max="max"
-      class="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
-      :class="error ? 'border-red-500' : 'border-gray-300'"
+      class="block w-full rounded-lg border bg-gray-900 px-4 py-3 text-base text-gray-100 placeholder:text-gray-500 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+      :class="error ? 'border-red-500' : 'border-gray-700'"
       @input="$emit('update:modelValue', $event.target.value)"
     />
     <p v-if="error" class="mt-1 text-sm text-red-600">{{ error }}</p>
   </div>
 </template>
+
+

@@ -24,7 +24,7 @@ const toastStore = useToastStore()
           class="ml-2 rounded p-1 opacity-70 hover:opacity-100"
           @click="toastStore.remove(t.id)"
         >
-          ×
+          x
         </button>
       </div>
     </TransitionGroup>
@@ -42,3 +42,4 @@ const toastStore = useToastStore()
   transform: translateX(100%);
 }
 </style>
+

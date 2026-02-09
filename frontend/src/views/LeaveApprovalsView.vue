@@ -60,57 +60,59 @@ async function confirmReject() {
 <template>
   <div class="space-y-6">
     <div>
-      <h1 class="text-2xl font-bold text-gray-900">Leave Approvals</h1>
-      <p class="mt-1 text-sm text-gray-500">Approve or reject leave requests.</p>
+      <h1 class="text-2xl font-bold text-primary-200">Leave Approvals</h1>
+      <p class="mt-1 text-sm text-gray-400">Approve or reject leave requests.</p>
     </div>
     <AppTable :loading="leaveStore.loading">
-      <thead class="bg-gray-50">
+      <thead class="bg-gray-950">
         <tr>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Employee</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Dates</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Type</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Reason</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Status</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500">Rejection reason</th>
-          <th class="px-4 py-3 text-right text-xs font-medium text-gray-500">Actions</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Dates</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Reason</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Rejection reason</th>
+          <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-gray-200 bg-white">
-        <tr v-for="row in leaveStore.requests" :key="row.id" class="hover:bg-gray-50">
-          <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ row.employee?.first_name }} {{ row.employee?.last_name }}</td>
-          <td class="px-4 py-3 text-sm text-gray-600">{{ row.start_date }} – {{ row.end_date }}</td>
-          <td class="px-4 py-3 text-sm text-gray-600">{{ row.leave_type?.name ?? row.leave_type_id }}</td>
-          <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate" :title="row.reason">{{ row.reason || '—' }}</td>
+      <tbody class="divide-y divide-gray-800 bg-gray-900">
+        <tr v-for="row in leaveStore.requests" :key="row.id" class="hover:bg-gray-950">
+          <td class="px-4 py-3 text-sm font-medium text-primary-200">
+            {{ row.employee_name ?? `${row.employee?.first_name || ''} ${row.employee?.last_name || ''}`.trim() }}
+          </td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ row.start_date }} - {{ row.end_date }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.reason">{{ row.reason || '-' }}</td>
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
           </td>
-          <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '—') : '—' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
           <td class="px-4 py-3 text-right">
             <template v-if="row.status === 'pending'">
               <AppButton variant="primary" size="sm" @click="approve(row)">Approve</AppButton>
               <AppButton variant="danger" size="sm" class="ml-1" @click="openRejectModal(row)">Reject</AppButton>
             </template>
-            <span v-else class="text-sm text-gray-400">—</span>
+            <span v-else class="text-sm text-gray-400">-</span>
           </td>
         </tr>
         <tr v-if="!leaveStore.requests.length && !leaveStore.loading">
-          <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-500">No leave requests.</td>
+          <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
         </tr>
       </tbody>
     </AppTable>
 
     <AppModal :show="rejectModal" title="Reject leave request" @close="closeRejectModal">
-      <p v-if="rejectingRow" class="mb-3 text-sm text-gray-600">
-        Rejecting leave for <strong>{{ rejectingRow.employee?.first_name }} {{ rejectingRow.employee?.last_name }}</strong>
-        ({{ rejectingRow.start_date }} – {{ rejectingRow.end_date }})?
+      <p v-if="rejectingRow" class="mb-3 text-sm text-gray-300">
+        Rejecting leave for <strong>{{ rejectingRow.employee_name || 'Employee' }}</strong>
+        ({{ rejectingRow.start_date }} - {{ rejectingRow.end_date }})?
       </p>
       <div>
-        <label class="mb-1 block text-sm font-medium text-gray-700">Reason for rejection <span class="text-red-500">*</span></label>
+        <label class="mb-1 block text-sm font-medium text-gray-200">Reason for rejection <span class="text-red-500">*</span></label>
         <textarea
           v-model="rejectionComment"
           rows="3"
           required
-          class="block w-full rounded-lg border border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 text-sm"
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 placeholder:text-gray-500 shadow-sm focus:border-primary-500 focus:ring-primary-500"
           placeholder="Explain why this leave request is being rejected..."
         />
       </div>
@@ -121,3 +123,5 @@ async function confirmReject() {
     </AppModal>
   </div>
 </template>
+
+

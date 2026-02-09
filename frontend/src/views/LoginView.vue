@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
+import logoBg from '@/assets/Joynomedia logo.png'
 
 const router = useRouter()
 const route = useRoute()
@@ -39,12 +40,16 @@ async function onSubmit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-gray-100 px-4">
+  <div class="relative flex min-h-screen items-center justify-center bg-gray-800 px-4">
+    <div
+      class="pointer-events-none absolute inset-0 bg-center bg-no-repeat opacity-15"
+      :style="{ backgroundImage: `url(${logoBg})`, backgroundSize: '520px auto' }"
+    />
     <div class="w-full max-w-md">
-      <div class="rounded-2xl border border-gray-200 bg-white p-8 shadow-lg">
+      <div class="rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg">
         <div class="mb-8 text-center">
-          <h1 class="text-2xl font-bold text-gray-900">HR System</h1>
-          <p class="mt-1 text-sm text-gray-500">Sign in to your account</p>
+          <h1 class="text-2xl font-bold text-primary-200">Joyno HR</h1>
+          <p class="mt-1 text-sm text-gray-400">Sign in to your account</p>
         </div>
         <form class="space-y-4" @submit.prevent="onSubmit">
           <AppInput
@@ -59,7 +64,7 @@ async function onSubmit() {
             v-model="password"
             type="password"
             label="Password"
-            placeholder="••••••••"
+            placeholder="********"
             required
             :error="error && password ? error : ''"
           />
@@ -68,9 +73,11 @@ async function onSubmit() {
           </AppButton>
         </form>
       </div>
-      <p class="mt-6 text-center text-xs text-gray-500">
+      <p class="mt-6 text-center text-xs text-gray-400">
         Internal use only. Contact IT for access.
       </p>
     </div>
   </div>
 </template>
+
+
