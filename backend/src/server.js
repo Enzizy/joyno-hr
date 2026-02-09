@@ -41,6 +41,21 @@ const loginLimiter = rateLimit({
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
 
+async function ensureDefaultLeaveTypes() {
+  try {
+    const { rows } = await db.query('SELECT COUNT(*) AS count FROM leave_types')
+    const count = Number(rows[0]?.count || 0)
+    if (count > 0) return
+    await db.query(
+      `INSERT INTO leave_types (name, default_credits)
+       VALUES ($1,$2), ($3,$4), ($5,$6)`,
+      ['Vacation', 0, 'Sick', 0, 'Emergency', 0]
+    )
+  } catch (err) {
+    console.error('Failed to seed leave types', err)
+  }
+}
+
 function signToken(user) {
   return jwt.sign(
     {
@@ -348,4 +363,5 @@ app.get('/api/audit-logs', authRequired, requireRole(['admin']), async (req, res
 const PORT = process.env.PORT || 3000
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`API running on port ${PORT}`)
+  ensureDefaultLeaveTypes()
 })
