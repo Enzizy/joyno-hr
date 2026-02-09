@@ -11,16 +11,20 @@ const { addAuditLog, updateEmployeeStatus } = require('./helpers')
 const app = express()
 app.set('trust proxy', 1)
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || ''
+const allowedOrigins = FRONTEND_ORIGIN.split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true)
-    if (!FRONTEND_ORIGIN) return callback(new Error('FRONTEND_ORIGIN not set'))
-    if (origin === FRONTEND_ORIGIN) return callback(null, true)
+    if (!allowedOrigins.length) return callback(new Error('FRONTEND_ORIGIN not set'))
+    if (allowedOrigins.includes(origin)) return callback(null, true)
     return callback(new Error('Not allowed by CORS'))
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  optionsSuccessStatus: 204,
 }
 
 app.use(helmet())
