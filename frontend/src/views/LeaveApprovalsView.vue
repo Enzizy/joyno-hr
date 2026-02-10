@@ -22,7 +22,7 @@ const attachmentLoading = ref(false)
 const statusFilter = ref('all')
 const typeFilter = ref('all')
 const page = ref(1)
-const pageSize = 5
+const pageSize = 10
 const reasonMax = 24
 
 function formatDate(value) {
