@@ -23,6 +23,7 @@ const statusFilter = ref('all')
 const typeFilter = ref('all')
 const page = ref(1)
 const pageSize = 5
+const reasonMax = 24
 
 function formatDate(value) {
   if (!value) return '-'
@@ -111,6 +112,13 @@ function openReasonModal(row) {
 function closeReasonModal() {
   reasonModal.value = false
   reasonRow.value = null
+}
+
+function truncateReason(text) {
+  if (!text) return '-'
+  const str = String(text)
+  if (str.length <= reasonMax) return str
+  return `${str.slice(0, reasonMax)}…`
 }
 
 async function openAttachment(row) {
@@ -217,7 +225,7 @@ async function confirmReject() {
               :title="row.reason"
               @click="openReasonModal(row)"
             >
-              {{ row.reason }}
+              {{ truncateReason(row.reason) }}
             </button>
             <span v-else>-</span>
           </td>
