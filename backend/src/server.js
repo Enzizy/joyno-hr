@@ -29,7 +29,17 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 }
 
-app.use(helmet())
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        'img-src': ["'self'", 'data:', 'blob:', 'https:'],
+        'media-src': ["'self'", 'data:', 'blob:', 'https:'],
+      },
+    },
+  })
+)
 app.use(cors(corsOptions))
 app.options('*', cors(corsOptions))
 app.use(express.json())
