@@ -3,21 +3,14 @@ import { ref } from 'vue'
 import { getLeaveReport } from '@/services/firestore'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
+import * as XLSX from 'xlsx'
 
 const dateFrom = ref(new Date().toISOString().slice(0, 10))
 const dateTo = ref(new Date().toISOString().slice(0, 10))
 const loading = ref(false)
 const leaveData = ref([])
 
-function csvEscape(value) {
-  const str = value == null ? '' : String(value)
-  if (str.includes('"') || str.includes(',') || str.includes('\n')) {
-    return `"${str.replace(/"/g, '""')}"`
-  }
-  return str
-}
-
-function exportCsv() {
+function exportXlsx() {
   if (!leaveData.value.length) return
   const headers = ['Employee', 'Leave type', 'Reason', 'Days']
   const rows = leaveData.value.map((row) => [
@@ -26,18 +19,33 @@ function exportCsv() {
     row.reason ?? '',
     row.days ?? '',
   ])
-  const csv = [headers, ...rows].map((r) => r.map(csvEscape).join(',')).join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
+  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows])
+
+  const headerStyle = {
+    font: { bold: true, color: { rgb: 'FFFFFF' } },
+    fill: { fgColor: { rgb: '1F2937' } },
+    alignment: { vertical: 'center', horizontal: 'left' },
+  }
+  headers.forEach((_, idx) => {
+    const cell = worksheet[XLSX.utils.encode_cell({ r: 0, c: idx })]
+    if (cell) cell.s = headerStyle
+  })
+
+  const colWidths = headers.map((h, idx) => {
+    let maxLen = String(h).length
+    rows.forEach((row) => {
+      const len = row[idx] == null ? 0 : String(row[idx]).length
+      if (len > maxLen) maxLen = len
+    })
+    return { wch: Math.min(Math.max(maxLen + 2, 12), 60) }
+  })
+  worksheet['!cols'] = colWidths
+
+  const workbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Leave Report')
   const from = dateFrom.value || 'from'
   const to = dateTo.value || 'to'
-  link.href = url
-  link.download = `leave-report-${from}-to-${to}.csv`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  XLSX.writeFile(workbook, `leave-report-${from}-to-${to}.xlsx`)
 }
 
 async function loadLeave() {
@@ -70,7 +78,7 @@ async function loadLeave() {
       <AppDatePicker v-model="dateFrom" label="From" />
       <AppDatePicker v-model="dateTo" label="To" />
       <AppButton @click="loadLeave" :loading="loading">Run report</AppButton>
-      <AppButton variant="secondary" :disabled="!leaveData.length" @click="exportCsv">Export CSV</AppButton>
+      <AppButton variant="secondary" :disabled="!leaveData.length" @click="exportXlsx">Export XLSX</AppButton>
     </div>
     <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
       <div v-if="loading" class="flex justify-center py-12">
