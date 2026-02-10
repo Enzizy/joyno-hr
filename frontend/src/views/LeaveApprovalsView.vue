@@ -22,7 +22,7 @@ const attachmentLoading = ref(false)
 const statusFilter = ref('all')
 const typeFilter = ref('all')
 const page = ref(1)
-const pageSize = 10
+const pageSize = ref(10)
 const reasonMax = 24
 
 function formatDate(value) {
@@ -60,16 +60,21 @@ const filteredRequests = computed(() => {
 })
 
 const pagedRequests = computed(() => {
-  const start = (page.value - 1) * pageSize
-  return filteredRequests.value.slice(start, start + pageSize)
+  const start = (page.value - 1) * pageSize.value
+  return filteredRequests.value.slice(start, start + pageSize.value)
 })
 
 const canPrev = computed(() => page.value > 1)
-const canNext = computed(() => filteredRequests.value.length > page.value * pageSize)
+const canNext = computed(() => filteredRequests.value.length > page.value * pageSize.value)
 
 function resetFilters() {
   statusFilter.value = 'all'
   typeFilter.value = 'all'
+  page.value = 1
+}
+
+function changePageSize(event) {
+  pageSize.value = Number(event.target.value) || 10
   page.value = 1
 }
 
@@ -194,6 +199,18 @@ async function confirmReject() {
         >
           <option value="all">All</option>
           <option v-for="type in typeOptions" :key="type" :value="type">{{ type }}</option>
+        </select>
+      </div>
+      <div class="min-w-[140px]">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Rows</label>
+        <select
+          :value="pageSize"
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+          @change="changePageSize"
+        >
+          <option :value="10">10</option>
+          <option :value="20">20</option>
+          <option :value="50">50</option>
         </select>
       </div>
       <AppButton variant="secondary" @click="resetFilters">Reset</AppButton>
