@@ -21,6 +21,7 @@ const attachmentUrl = ref('')
 const attachmentLoading = ref(false)
 const statusFilter = ref('all')
 const typeFilter = ref('all')
+const nameQuery = ref('')
 const page = ref(1)
 const pageSize = ref(10)
 const reasonMax = 24
@@ -55,6 +56,15 @@ const filteredRequests = computed(() => {
       const name = String(r.leave_type_name || r.leave_type_id || '')
       if (name !== typeFilter.value) return false
     }
+    const q = nameQuery.value.trim().toLowerCase()
+    if (q) {
+      const emp = String(
+        r.employee_name ?? `${r.employee?.first_name || ''} ${r.employee?.last_name || ''}`
+      )
+        .trim()
+        .toLowerCase()
+      if (!emp.includes(q)) return false
+    }
     return true
   })
 })
@@ -70,6 +80,7 @@ const canNext = computed(() => filteredRequests.value.length > page.value * page
 function resetFilters() {
   statusFilter.value = 'all'
   typeFilter.value = 'all'
+  nameQuery.value = ''
   page.value = 1
 }
 
@@ -178,6 +189,15 @@ async function confirmReject() {
       <p class="mt-1 text-sm text-gray-400">Approve or reject leave requests.</p>
     </div>
     <div class="flex flex-wrap items-end gap-4 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+      <div class="min-w-[220px]">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Employee</label>
+        <input
+          v-model="nameQuery"
+          type="text"
+          placeholder="Search name"
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+        />
+      </div>
       <div class="min-w-[180px]">
         <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
         <select
