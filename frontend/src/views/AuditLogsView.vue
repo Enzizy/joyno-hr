@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { getAuditLogs } from '@/services/firestore'
 import AppTable from '@/components/ui/AppTable.vue'
 
@@ -18,6 +18,45 @@ async function load() {
     loading.value = false
   }
 }
+
+function formatDate(value) {
+  if (!value) return '-'
+  const date = value?.toDate?.() || new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function titleize(text) {
+  if (!text) return '-'
+  return String(text)
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (m) => m.toUpperCase())
+}
+
+function formatAction(action) {
+  return titleize(action)
+}
+
+function formatTarget(table, id) {
+  const name = titleize(table)
+  if (!id && id !== 0) return name
+  return `${name} #${id}`
+}
+
+const rows = computed(() =>
+  list.value.map((row) => ({
+    ...row,
+    timeLabel: formatDate(row.created_at),
+    actionLabel: formatAction(row.action),
+    targetLabel: formatTarget(row.target_table, row.target_id),
+  }))
+)
 </script>
 
 <template>
@@ -36,11 +75,14 @@ async function load() {
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
-        <tr v-for="row in list" :key="row.id" class="hover:bg-gray-950">
-          <td class="px-4 py-3 text-sm text-gray-300">{{ row.created_at?.toDate?.()?.toLocaleString?.() ?? row.created_at ?? '-' }}</td>
-          <td class="px-4 py-3 text-sm text-primary-200">{{ row.user_id ?? '-' }}</td>
-          <td class="px-4 py-3 text-sm text-primary-200">{{ row.action }}</td>
-          <td class="px-4 py-3 text-sm text-gray-300">{{ row.target_table }} #{{ row.target_id }}</td>
+        <tr v-for="row in rows" :key="row.id" class="hover:bg-gray-950">
+          <td class="px-4 py-3 text-sm text-gray-300">{{ row.timeLabel }}</td>
+          <td class="px-4 py-3 text-sm text-primary-200">
+            <span v-if="row.user_id != null">User #{{ row.user_id }}</span>
+            <span v-else>-</span>
+          </td>
+          <td class="px-4 py-3 text-sm text-primary-200">{{ row.actionLabel }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ row.targetLabel }}</td>
         </tr>
         <tr v-if="!list.length && !loading">
           <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">No audit logs.</td>
