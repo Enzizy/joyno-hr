@@ -60,7 +60,8 @@ export const useLeaveStore = defineStore('leave', () => {
     const authStore = useAuthStore()
     const employeeId = authStore.user?.employee_id
     if (!employeeId) throw new Error('No employee linked to your account')
-    const data = await createRequestApi({ ...payload, employee_id: employeeId })
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData
+    const data = await createRequestApi(isFormData ? payload : { ...payload, employee_id: employeeId })
     requests.value = [data, ...requests.value]
     return data
   }
