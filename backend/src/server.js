@@ -213,8 +213,8 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
   const e = req.body || {}
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, salary_type, salary_amount, date_hired, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     (employee_code, first_name, last_name, department, position, salary_type, salary_amount, weekly_allowance, date_hired, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      RETURNING id`,
     [
       e.employee_code,
@@ -224,6 +224,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
       e.position,
       e.salary_type || 'monthly',
       e.salary_amount || 0,
+      e.weekly_allowance || 0,
       e.date_hired,
       e.status || 'active',
     ]
@@ -238,8 +239,8 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
   const e = req.body || {}
   await db.query(
     `UPDATE employees
-     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, salary_type=$6, salary_amount=$7, date_hired=$8, status=$9
-     WHERE id=$10`,
+     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, salary_type=$6, salary_amount=$7, weekly_allowance=$8, date_hired=$9, status=$10
+     WHERE id=$11`,
     [
       e.employee_code,
       e.first_name,
@@ -248,6 +249,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
       e.position,
       e.salary_type || 'monthly',
       e.salary_amount || 0,
+      e.weekly_allowance || 0,
       e.date_hired,
       e.status || 'active',
       req.params.id,
@@ -504,8 +506,8 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
 
 // Payroll
 app.post('/api/payroll-runs', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const { period_start, period_end, items = [] } = req.body || {}
-  if (!period_start || !period_end || !Array.isArray(items) || !items.length) {
+  const { period_start, period_end } = req.body || {}
+  if (!period_start || !period_end) {
     return res.status(400).json({ message: 'Missing required fields' })
   }
   const runResult = await db.query(
@@ -516,20 +518,22 @@ app.post('/api/payroll-runs', authRequired, requireRole(['admin', 'hr']), async 
   )
   const runId = runResult.rows[0]?.id
 
+  const empRows = await db.query('SELECT * FROM employees ORDER BY id ASC')
+  const employees = empRows.rows || []
+  if (!employees.length) {
+    return res.json({ run_id: runId, count: 0, weeks: 0 })
+  }
+
   const startDate = new Date(period_start)
   const endDate = new Date(period_end)
   const days = Math.max(1, Math.floor((endDate - startDate) / (24 * 60 * 60 * 1000)) + 1)
   const weeks = Math.max(1, Math.ceil(days / 7))
 
   const saved = []
-  for (const item of items) {
-    const employeeId = Number(item.employee_id)
-    if (!employeeId) continue
-    const empResult = await db.query('SELECT * FROM employees WHERE id = $1', [employeeId])
-    const emp = empResult.rows[0]
-    if (!emp) continue
+  for (const emp of employees) {
+    const employeeId = Number(emp.id)
     const baseSalary = Number(emp.salary_amount || 0)
-    const weeklyAllowance = Number(item.weekly_allowance || 0)
+    const weeklyAllowance = Number(emp.weekly_allowance || 0)
     const totalAllowance = weeklyAllowance * weeks
     const gross = baseSalary + totalAllowance
     const { rows } = await db.query(

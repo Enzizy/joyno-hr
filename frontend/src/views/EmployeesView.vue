@@ -24,6 +24,7 @@ const form = ref({
   position: '',
   salary_type: 'monthly',
   salary_amount: '',
+  weekly_allowance: '',
   date_hired: '',
   status: 'active',
 })
@@ -60,6 +61,7 @@ function openCreate() {
     position: '',
     salary_type: 'monthly',
     salary_amount: '',
+    weekly_allowance: '',
     date_hired: '',
     status: 'active',
   }
@@ -76,6 +78,7 @@ function openEdit(row) {
     position: row.position,
     salary_type: row.salary_type,
     salary_amount: row.salary_amount,
+    weekly_allowance: row.weekly_allowance ?? '',
     date_hired: row.date_hired?.slice(0, 10) ?? '',
     status: row.status,
   }
@@ -224,6 +227,7 @@ async function remove(row) {
           </select>
         </div>
         <AppInput v-model="form.salary_amount" type="number" label="Salary amount" required />
+        <AppInput v-model="form.weekly_allowance" type="number" label="Weekly allowance" />
         <AppInput v-model="form.date_hired" type="date" label="Date hired" required />
         <div>
           <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>

@@ -1,7 +1,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { getEmployees } from '@/services/api'
-import { createPayrollRun } from '@/services/api'
+import { getEmployees, createPayrollRun } from '@/services/api'
 import { useToastStore } from '@/stores/toastStore'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppTable from '@/components/ui/AppTable.vue'
@@ -12,17 +11,10 @@ const employees = ref([])
 const loading = ref(false)
 const periodStart = ref(new Date().toISOString().slice(0, 10))
 const periodEnd = ref(new Date().toISOString().slice(0, 10))
-const allowances = ref({})
-
 onMounted(async () => {
   loading.value = true
   try {
     employees.value = await getEmployees()
-    const map = {}
-    employees.value.forEach((e) => {
-      map[e.id] = Number(e.weekly_allowance || 0)
-    })
-    allowances.value = map
   } finally {
     loading.value = false
   }
@@ -43,14 +35,9 @@ async function generatePayroll() {
   }
   loading.value = true
   try {
-    const items = employees.value.map((e) => ({
-      employee_id: e.id,
-      weekly_allowance: Number(allowances.value[e.id] || 0),
-    }))
     await createPayrollRun({
       period_start: periodStart.value,
       period_end: periodEnd.value,
-      items,
     })
     toast.success('Payroll generated.')
   } catch (err) {
@@ -89,12 +76,7 @@ async function generatePayroll() {
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.department || '-' }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ Number(row.salary_amount || 0).toFixed(2) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">
-            <input
-              type="number"
-              min="0"
-              class="w-32 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
-              v-model.number="allowances[row.id]"
-            />
+            {{ Number(row.weekly_allowance || 0).toFixed(2) }}
           </td>
         </tr>
         <tr v-if="!employees.length && !loading">

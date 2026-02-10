@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS employees (
   position VARCHAR(100),
   salary_type VARCHAR(50) DEFAULT 'monthly',
   salary_amount NUMERIC(12,2) DEFAULT 0,
+  weekly_allowance NUMERIC(12,2) DEFAULT 0,
   date_hired DATE,
   status VARCHAR(50) DEFAULT 'active',
   created_at TIMESTAMPTZ DEFAULT NOW(),
