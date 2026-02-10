@@ -13,6 +13,36 @@ const route = useRoute()
 
 const filteredItems = computed(() => props.items)
 
+const iconPaths = {
+  dashboard: [
+    'M3 3h7v7H3z',
+    'M14 3h7v11h-7z',
+    'M14 16h7v5h-7z',
+    'M3 12h7v9H3z',
+  ],
+  user: ['M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', 'M4 20a8 8 0 0 1 16 0'],
+  leave: ['M8 7V3m8 4V3M4 11h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z'],
+  users: [
+    'M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+    'M4 20a8 8 0 0 1 16 0',
+    'M19 8a2 2 0 1 1-4 0',
+    'M2 18a6 6 0 0 1 6-6',
+  ],
+  check: ['M9 12l2 2 4-4', 'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z'],
+  chart: ['M4 19h16', 'M7 16V8', 'M12 16V5', 'M17 16v-7'],
+  'user-cog': [
+    'M15 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',
+    'M4 20a8 8 0 0 1 12.2-6.5',
+    'M19.4 15.6a1.6 1.6 0 1 0 2.2 2.2',
+    'M18 18v-1.1m0-3.8V12m-1.1 4H15m5 0h-1.1m-.8-2.9-.8-.8',
+  ],
+  settings: [
+    'M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7z',
+    'M19.4 15a1.8 1.8 0 0 0 .4 2l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.8 1.8 0 0 0-2-.4 1.8 1.8 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.8 1.8 0 0 0-1-1.6 1.8 1.8 0 0 0-2 .4l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.8 1.8 0 0 0 .4-2 1.8 1.8 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.8 1.8 0 0 0 1.6-1 1.8 1.8 0 0 0-.4-2l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.8 1.8 0 0 0 2 .4 1.8 1.8 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.8 1.8 0 0 0 1 1.6 1.8 1.8 0 0 0 2-.4l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.8 1.8 0 0 0-.4 2 1.8 1.8 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.8 1.8 0 0 0-1.6 1z',
+  ],
+  audit: ['M8 4h8l2 2v14H6V4h2z', 'M9 9h6', 'M9 13h6', 'M9 17h4'],
+}
+
 function isActive(path) {
   if (path === '/') return route.path === '/'
   return route.path.startsWith(path)
@@ -52,8 +82,24 @@ function isActive(path) {
           "
           @click="emit('close')"
         >
-          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-800 text-gray-300" v-if="item.icon">
-            {{ item.icon === 'dashboard' ? 'D' : item.icon === 'user' ? 'U' : item.icon === 'leave' ? 'L' : item.icon === 'users' ? 'E' : item.icon === 'check' ? 'A' : item.icon === 'chart' ? 'R' : item.icon === 'user-cog' ? 'U' : item.icon === 'settings' ? 'S' : item.icon === 'audit' ? 'A' : '*' }}
+          <span
+            v-if="item.icon"
+            class="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-800/70 text-gray-200 ring-1 ring-gray-700"
+          >
+            <svg
+              v-if="iconPaths[item.icon]"
+              viewBox="0 0 24 24"
+              class="h-4.5 w-4.5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path v-for="(d, idx) in iconPaths[item.icon]" :key="idx" :d="d" />
+            </svg>
+            <span v-else class="text-xs">•</span>
           </span>
           <span>{{ item.name }}</span>
         </RouterLink>
