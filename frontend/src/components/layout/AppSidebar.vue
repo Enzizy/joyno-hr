@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import dashboardIcon from '@/assets/icons/dashboard-panel.svg?raw'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -14,23 +15,21 @@ const route = useRoute()
 const filteredItems = computed(() => props.items)
 
 const iconPaths = {
-  dashboard: ['M4 4h7v7H4z', 'M13 4h7v5h-7z', 'M13 11h7v9h-7z', 'M4 13h7v7H4z'],
-  user: ['M12 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z', 'M4 20a8 8 0 0 1 16 0'],
-  leave: ['M7 4h10a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M8 2v4', 'M16 2v4', 'M5 9h14'],
-  users: ['M8 7a3 3 0 1 1 6 0 3 3 0 0 1-6 0z', 'M2 20a8 8 0 0 1 16 0', 'M17 8a2.5 2.5 0 1 1 5 0', 'M19.5 20a6 6 0 0 0-3.5-5.2'],
-  check: ['M9 12l2 2 4-4', 'M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20z'],
-  chart: ['M4 19h16', 'M7 16V8', 'M12 16V5', 'M17 16v-7'],
-  'user-cog': ['M12 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0z', 'M3.5 20a7.5 7.5 0 0 1 12-5', 'M18 17.5a2.5 2.5 0 1 0 0 .01', 'M18 13.5v1.2m0 5.6V21m-2.2-3.5H15m6 0h-1.2m-1.1-2.4-.9-.9'],
-  settings: [
-    'M12 9.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5z',
-    'M4 12h2.1m11.8 0H20',
-    'M6.6 6.6l1.5 1.5m7.3 7.3 1.5 1.5',
-    'M6.6 17.4l1.5-1.5m7.3-7.3 1.5-1.5',
-    'M12 4v2.1m0 11.8V20',
-  ],
+  dashboard: ['M4 4h6v6H4z', 'M14 4h6v4h-6z', 'M14 10h6v10h-6z', 'M4 12h6v8H4z'],
+  user: ['M16 10a4 4 0 1 1-8 0 4 4 0 0 1 8 0z', 'M4 20a8 8 0 0 1 16 0'],
+  leave: ['M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z', 'M8 2v4', 'M16 2v4', 'M4 9h16'],
+  users: ['M9 10a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0z', 'M2 20a8 8 0 0 1 16 0', 'M18.5 8a2.5 2.5 0 1 1 5 0', 'M19.5 20a6 6 0 0 0-3.5-5.2'],
+  check: ['M9 12l2.5 2.5L16 10', 'M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20z'],
+  chart: ['M4 19h16', 'M7 16V9', 'M12 16V6', 'M17 16v-5'],
+  'user-cog': ['M12 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z', 'M3 20a8 8 0 0 1 12-5.5', 'M18.5 17.5a2.5 2.5 0 1 0 0 .01', 'M18.5 14.5v1.6m0 4.8V21m-2.4-3.5H15m6 0h-1.1m-1.2-2.4-.9-.9'],
+  settings: ['M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z', 'M3 12h2.5m13 0H21', 'M6.8 6.8l1.8 1.8m6.8 6.8 1.8 1.8', 'M6.8 17.2l1.8-1.8m6.8-6.8 1.8-1.8'],
   audit: ['M7 4h7l4 4v12H7z', 'M10 12h6', 'M10 16h6', 'M10 8h2'],
-  payroll: ['M4 7h16v10H4z', 'M7 10h3', 'M14 10h3', 'M7 14h3', 'M14 14h3'],
+  payroll: ['M4 7h16v10H4z', 'M7 10h4', 'M13 10h4', 'M7 14h4', 'M13 14h4'],
   payslip: ['M6 4h9l3 3v13H6z', 'M9 11h6', 'M9 15h6', 'M9 19h3'],
+}
+
+const customIcons = {
+  dashboard: dashboardIcon,
 }
 
 function isActive(path) {
@@ -74,15 +73,21 @@ function isActive(path) {
         >
           <span
             v-if="item.icon"
-            class="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-800/40 text-gray-200 ring-1 ring-gray-700/70"
+            class="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-gray-200"
           >
+            <span
+              v-if="customIcons[item.icon]"
+              class="sidebar-icon text-primary-300"
+              aria-hidden="true"
+              v-html="customIcons[item.icon]"
+            />
             <svg
-              v-if="iconPaths[item.icon]"
+              v-else-if="iconPaths[item.icon]"
               viewBox="0 0 24 24"
-              class="h-4.5 w-4.5"
+              class="h-5 w-5"
               fill="none"
               stroke="currentColor"
-              stroke-width="1.4"
+              stroke-width="1.25"
               stroke-linecap="round"
               stroke-linejoin="round"
               aria-hidden="true"
@@ -97,5 +102,15 @@ function isActive(path) {
     </nav>
   </aside>
 </template>
+
+<style scoped>
+.sidebar-icon :deep(svg) {
+  height: 20px;
+  width: 20px;
+  display: block;
+  fill: currentColor;
+  stroke: currentColor;
+}
+</style>
 
 
