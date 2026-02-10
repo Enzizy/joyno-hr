@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getUsers, getEmployees, createUser as createUserApi } from '@/services/firestore'
+import { getUsers, getEmployees, createUser as createUserApi, deleteUser as deleteUserApi } from '@/services/firestore'
 import { useToastStore } from '@/stores/toastStore'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppButton from '@/components/ui/AppButton.vue'
@@ -72,6 +72,17 @@ async function createUser() {
     submitting.value = false
   }
 }
+
+async function removeUser(row) {
+  if (!confirm(`Delete user ${row.email}?`)) return
+  try {
+    await deleteUserApi(row.id)
+    toast.success('User deleted.')
+    load()
+  } catch (err) {
+    toast.error(err.response?.data?.message || err.message || 'Failed to delete user.')
+  }
+}
 </script>
 
 <template>
@@ -89,6 +100,7 @@ async function createUser() {
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Email</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Role</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee ID</th>
+          <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
@@ -98,9 +110,12 @@ async function createUser() {
             <StatusBadge :status="row.role" />
           </td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.employee_code ?? row.employee_id ?? '-' }}</td>
+          <td class="px-4 py-3 text-right">
+            <AppButton variant="danger" size="sm" @click="removeUser(row)">Delete</AppButton>
+          </td>
         </tr>
         <tr v-if="!list.length && !loading">
-          <td colspan="3" class="px-4 py-8 text-center text-sm text-gray-400">No users.</td>
+          <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">No users.</td>
         </tr>
       </tbody>
     </AppTable>

@@ -37,6 +37,10 @@ export async function createUser(data) {
   return api.createUser(data)
 }
 
+export async function deleteUser(id) {
+  return api.deleteUser(id)
+}
+
 export async function getLeaveTypes() {
   return api.getLeaveTypes()
 }

@@ -197,6 +197,17 @@ app.post('/api/users', authRequired, requireRole(['admin']), async (req, res) =>
   res.json({ message: 'User created' })
 })
 
+app.delete('/api/users/:id', authRequired, requireRole(['admin']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid user id' })
+  if (id === req.user.id) return res.status(400).json({ message: 'Cannot delete your own account' })
+  const { rows } = await db.query('SELECT id FROM users WHERE id = $1', [id])
+  if (!rows.length) return res.status(404).json({ message: 'User not found' })
+  await db.query('DELETE FROM users WHERE id = $1', [id])
+  await addAuditLog(req.user.id, 'delete_user', 'users', id)
+  res.json({ message: 'User deleted' })
+})
+
 // Employees
 app.get('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { rows } = await db.query('SELECT * FROM employees ORDER BY created_at DESC')

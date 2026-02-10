@@ -68,6 +68,10 @@ export async function createUser(data) {
   return request('/api/users', { method: 'POST', body: JSON.stringify(data) })
 }
 
+export async function deleteUser(id) {
+  return request(`/api/users/${id}`, { method: 'DELETE' })
+}
+
 export async function getLeaveTypes() {
   return request('/api/leave-types')
 }
