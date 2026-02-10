@@ -9,6 +9,7 @@ import AppDatePicker from '@/components/ui/AppDatePicker.vue'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
 const leaveStore = useLeaveStore()
 const authStore = useAuthStore()
@@ -21,6 +22,9 @@ const attachment = ref(null)
 const cancelModal = ref(false)
 const cancellingRow = ref(null)
 const cancelling = ref(false)
+const attachmentModal = ref(false)
+const attachmentUrl = ref('')
+const attachmentLoading = ref(false)
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -133,6 +137,31 @@ async function confirmCancel() {
     cancelling.value = false
   }
 }
+
+async function openAttachment(row) {
+  if (!row?.id) return
+  attachmentLoading.value = true
+  attachmentModal.value = true
+  const token = localStorage.getItem('token')
+  try {
+    const res = await fetch(`${API_BASE}/api/leave-requests/${row.id}/attachment`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) throw new Error('Unable to load attachment')
+    const blob = await res.blob()
+    attachmentUrl.value = URL.createObjectURL(blob)
+  } catch {
+    attachmentUrl.value = ''
+  } finally {
+    attachmentLoading.value = false
+  }
+}
+
+function closeAttachment() {
+  attachmentModal.value = false
+  if (attachmentUrl.value) URL.revokeObjectURL(attachmentUrl.value)
+  attachmentUrl.value = ''
+}
 </script>
 
 <template>
@@ -220,15 +249,13 @@ async function confirmCancel() {
               <StatusBadge :status="row.status" />
             </td>
             <td class="px-4 py-3 text-sm text-gray-300">
-              <a
+              <button
                 v-if="row.attachment_data"
-                :href="row.attachment_data"
-                target="_blank"
-                rel="noopener"
                 class="text-primary-300 hover:text-primary-200"
+                @click="openAttachment(row)"
               >
                 View
-              </a>
+              </button>
               <span v-else>-</span>
             </td>
             <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
@@ -260,6 +287,18 @@ async function confirmCancel() {
     <template #footer>
       <AppButton variant="secondary" @click="closeCancelModal">Close</AppButton>
       <AppButton variant="danger" :loading="cancelling" @click="confirmCancel">Cancel request</AppButton>
+    </template>
+  </AppModal>
+  <AppModal :show="attachmentModal" title="Attachment" @close="closeAttachment">
+    <div v-if="attachmentLoading" class="flex items-center justify-center py-8">
+      <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
+    </div>
+    <div v-else>
+      <img v-if="attachmentUrl" :src="attachmentUrl" alt="Attachment" class="max-h-[70vh] w-full rounded-lg object-contain" />
+      <p v-else class="text-sm text-gray-400">Unable to load attachment.</p>
+    </div>
+    <template #footer>
+      <AppButton variant="secondary" @click="closeAttachment">Close</AppButton>
     </template>
   </AppModal>
 </template>

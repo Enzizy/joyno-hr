@@ -407,6 +407,28 @@ app.post('/api/leave-requests/:id/cancel', authRequired, async (req, res) => {
   res.json(updated.rows[0] || { id })
 })
 
+app.get('/api/leave-requests/:id/attachment', authRequired, async (req, res) => {
+  const id = req.params.id
+  const { rows } = await db.query(
+    'SELECT employee_id, attachment_type, attachment_data FROM leave_requests WHERE id = $1',
+    [id]
+  )
+  const request = rows[0]
+  if (!request) return res.status(404).json({ message: 'Leave request not found' })
+  const isOwner = request.employee_id && request.employee_id === req.user.employee_id
+  const isPrivileged = ['admin', 'hr'].includes(req.user.role)
+  if (!isOwner && !isPrivileged) return res.status(403).json({ message: 'Forbidden' })
+  if (!request.attachment_data) return res.status(404).json({ message: 'No attachment' })
+
+  const match = String(request.attachment_data).match(/^data:(.+);base64,(.*)$/)
+  if (!match) return res.status(400).json({ message: 'Invalid attachment data' })
+  const mime = request.attachment_type || match[1] || 'application/octet-stream'
+  const buffer = Buffer.from(match[2], 'base64')
+  res.setHeader('Content-Type', mime)
+  res.setHeader('Content-Disposition', 'inline')
+  res.send(buffer)
+})
+
 // Reports
 app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { from, to } = req.query
