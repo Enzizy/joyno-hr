@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import dashboardIcon from '@/assets/icons/dashboard-panel.svg?raw'
 import profileIcon from '@/assets/icons/profile.svg?raw'
 import leaveIcon from '@/assets/icons/leave.svg?raw'
+import leaveRequestIcon from '@/assets/icons/leave-request.svg?raw'
 import payslipIcon from '@/assets/icons/payslip.svg?raw'
 import employeeManageIcon from '@/assets/icons/employee-manage.svg?raw'
 import leaveApprovalIcon from '@/assets/icons/leave-approval.svg?raw'
@@ -41,7 +42,7 @@ const iconPaths = {
 const customIcons = {
   dashboard: dashboardIcon,
   user: profileIcon,
-  leave: leaveIcon,
+  leave: leaveRequestIcon,
   payslip: payslipIcon,
   users: employeeManageIcon,
   check: leaveApprovalIcon,
