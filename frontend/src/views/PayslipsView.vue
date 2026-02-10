@@ -14,6 +14,18 @@ const isEmployee = computed(() => authStore.role === 'employee')
 
 onMounted(load)
 
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
+}
+
+function formatRange(start, end) {
+  if (!start && !end) return '-'
+  return `${formatDate(start)} - ${formatDate(end)}`
+}
+
 async function load() {
   loading.value = true
   try {
@@ -62,7 +74,7 @@ async function downloadPdf(row) {
       <tbody class="divide-y divide-gray-800 bg-gray-900">
         <tr v-for="row in list" :key="row.id" class="hover:bg-gray-950">
           <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name || '-' }}</td>
-          <td class="px-4 py-3 text-sm text-gray-300">{{ row.period_start }} - {{ row.period_end }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ formatRange(row.period_start, row.period_end) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ Number(row.base_salary || 0).toFixed(2) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ Number(row.total_allowance || 0).toFixed(2) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ Number(row.gross_pay || 0).toFixed(2) }}</td>
