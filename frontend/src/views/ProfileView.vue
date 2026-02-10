@@ -71,6 +71,10 @@ async function changePassword() {
           <dt class="text-sm font-medium text-gray-400">Last name</dt>
           <dd class="mt-1 text-sm text-primary-200">{{ user.last_name }}</dd>
         </div>
+        <div v-if="user?.department">
+          <dt class="text-sm font-medium text-gray-400">Department</dt>
+          <dd class="mt-1 text-sm text-primary-200">{{ user.department }}</dd>
+        </div>
       </dl>
     </div>
 

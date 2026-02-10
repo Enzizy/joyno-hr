@@ -106,6 +106,10 @@ function actionLabel(row) {
         <p class="text-sm font-medium text-gray-400">Employee Code</p>
         <p class="mt-1 text-xl font-semibold text-primary-200">{{ employeeCode }}</p>
       </div>
+      <div v-if="authStore.user?.department" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+        <p class="text-sm font-medium text-gray-400">Department</p>
+        <p class="mt-1 text-xl font-semibold text-primary-200">{{ authStore.user.department }}</p>
+      </div>
       <div class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
         <p class="text-sm font-medium text-gray-400">Status</p>
         <p class="mt-1">

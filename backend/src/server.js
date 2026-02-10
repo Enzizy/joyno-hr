@@ -116,7 +116,7 @@ function requireRole(roles) {
 
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status
+    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
      WHERE u.id = $1`,
