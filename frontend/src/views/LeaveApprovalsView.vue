@@ -13,6 +13,8 @@ const rejectModal = ref(false)
 const rejectingRow = ref(null)
 const rejectionComment = ref('')
 const rejecting = ref(false)
+const reasonModal = ref(false)
+const reasonRow = ref(null)
 
 function formatDate(value) {
   if (!value) return '-'
@@ -47,6 +49,16 @@ function closeRejectModal() {
   rejectModal.value = false
   rejectingRow.value = null
   rejectionComment.value = ''
+}
+
+function openReasonModal(row) {
+  reasonRow.value = row
+  reasonModal.value = true
+}
+
+function closeReasonModal() {
+  reasonModal.value = false
+  reasonRow.value = null
 }
 
 async function confirmReject() {
@@ -95,7 +107,17 @@ async function confirmReject() {
           </td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ formatRange(row.start_date, row.end_date) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
-          <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.reason">{{ row.reason || '-' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate">
+            <button
+              v-if="row.reason"
+              class="text-left text-gray-300 hover:text-primary-200"
+              :title="row.reason"
+              @click="openReasonModal(row)"
+            >
+              {{ row.reason }}
+            </button>
+            <span v-else>-</span>
+          </td>
           <td class="px-4 py-3 text-sm text-gray-300">
             <a
               v-if="row.attachment_data"
@@ -148,5 +170,12 @@ async function confirmReject() {
     </AppModal>
   </div>
 </template>
+
+<AppModal :show="reasonModal" title="Leave reason" @close="closeReasonModal">
+  <p class="text-sm text-gray-200 whitespace-pre-wrap">{{ reasonRow?.reason || '-' }}</p>
+  <template #footer>
+    <AppButton variant="secondary" @click="closeReasonModal">Close</AppButton>
+  </template>
+</AppModal>
 
 
