@@ -30,6 +30,14 @@ const myRequests = computed(() => {
   if (!employeeId) return []
   return leaveStore.requests.filter((r) => r.employee_id === employeeId)
 })
+const todayISO = computed(() => {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+})
+const endMinDate = computed(() => form.value.start_date || todayISO.value)
 
 function formatDate(value) {
   if (!value) return '-'
@@ -150,8 +158,20 @@ async function confirmCancel() {
             <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
           </select>
         </div>
-        <AppDatePicker v-model="form.start_date" label="Start date" required :disabled="isOnLeave || submitting" />
-        <AppDatePicker v-model="form.end_date" label="End date" required :disabled="isOnLeave || submitting" />
+        <AppDatePicker
+          v-model="form.start_date"
+          label="Start date"
+          required
+          :min="todayISO"
+          :disabled="isOnLeave || submitting"
+        />
+        <AppDatePicker
+          v-model="form.end_date"
+          label="End date"
+          required
+          :min="endMinDate"
+          :disabled="isOnLeave || submitting"
+        />
         <div class="sm:col-span-2">
           <label class="mb-1 block text-sm font-medium text-gray-200">Reason <span class="text-red-500">*</span></label>
           <textarea
