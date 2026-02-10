@@ -168,14 +168,13 @@ async function confirmReject() {
         <AppButton variant="danger" :loading="rejecting" :disabled="!rejectionComment.trim()" @click="confirmReject">Reject</AppButton>
       </template>
     </AppModal>
+    <AppModal :show="reasonModal" title="Leave reason" @close="closeReasonModal">
+      <p class="text-sm text-gray-200 whitespace-pre-wrap">{{ reasonRow?.reason || '-' }}</p>
+      <template #footer>
+        <AppButton variant="secondary" @click="closeReasonModal">Close</AppButton>
+      </template>
+    </AppModal>
   </div>
 </template>
-
-<AppModal :show="reasonModal" title="Leave reason" @close="closeReasonModal">
-  <p class="text-sm text-gray-200 whitespace-pre-wrap">{{ reasonRow?.reason || '-' }}</p>
-  <template #footer>
-    <AppButton variant="secondary" @click="closeReasonModal">Close</AppButton>
-  </template>
-</AppModal>
 
 
