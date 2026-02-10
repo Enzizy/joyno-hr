@@ -2,6 +2,16 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import dashboardIcon from '@/assets/icons/dashboard-panel.svg?raw'
+import profileIcon from '@/assets/icons/profile.svg?raw'
+import leaveIcon from '@/assets/icons/leave.svg?raw'
+import payslipIcon from '@/assets/icons/payslip.svg?raw'
+import employeeManageIcon from '@/assets/icons/employee-manage.svg?raw'
+import leaveApprovalIcon from '@/assets/icons/leave-approval.svg?raw'
+import analyticsIcon from '@/assets/icons/analytics.svg?raw'
+import payrollIcon from '@/assets/icons/payroll.svg?raw'
+import userManagementIcon from '@/assets/icons/user-management.svg?raw'
+import settingsIcon from '@/assets/icons/settings.svg?raw'
+import auditLogsIcon from '@/assets/icons/audit-logs.svg?raw'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -30,6 +40,16 @@ const iconPaths = {
 
 const customIcons = {
   dashboard: dashboardIcon,
+  user: profileIcon,
+  leave: leaveIcon,
+  payslip: payslipIcon,
+  users: employeeManageIcon,
+  check: leaveApprovalIcon,
+  chart: analyticsIcon,
+  payroll: payrollIcon,
+  'user-cog': userManagementIcon,
+  settings: settingsIcon,
+  audit: auditLogsIcon,
 }
 
 function isActive(path) {
