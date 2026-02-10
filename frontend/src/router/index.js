@@ -30,6 +30,12 @@ const routes = [
         component: () => import('@/views/LeaveRequestView.vue'),
         meta: { roles: ['admin', 'hr', 'employee'] },
       },
+      {
+        path: 'payslips',
+        name: 'Payslips',
+        component: () => import('@/views/PayslipsView.vue'),
+        meta: { roles: ['admin', 'hr', 'employee'] },
+      },
       // HR
       {
         path: 'employees',
@@ -47,6 +53,12 @@ const routes = [
         path: 'reports',
         name: 'Reports',
         component: () => import('@/views/ReportsView.vue'),
+        meta: { roles: ['admin', 'hr'] },
+      },
+      {
+        path: 'payroll',
+        name: 'Payroll',
+        component: () => import('@/views/PayrollView.vue'),
         meta: { roles: ['admin', 'hr'] },
       },
       // Admin
