@@ -375,6 +375,69 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   res.json(created.rows[0] || { id: createdId })
 })
 
+app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
+  const { rows } = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const request = rows[0]
+  if (!request) return res.status(404).json({ message: 'Leave request not found' })
+  if (request.employee_id !== req.user.employee_id) {
+    return res.status(403).json({ message: 'Forbidden' })
+  }
+  if (request.status !== 'pending') {
+    return res.status(400).json({ message: 'Only pending requests can be edited' })
+  }
+
+  const { leave_type_id, start_date, end_date, reason } = req.body || {}
+  if (!leave_type_id || !start_date || !end_date || !reason) {
+    return res.status(400).json({ message: 'Missing required fields' })
+  }
+
+  const overlapResult = await db.query(
+    `SELECT id FROM leave_requests
+     WHERE employee_id = $1 AND status IN ('pending','approved')
+       AND start_date <= $2 AND end_date >= $3 AND id <> $4`,
+    [req.user.employee_id, end_date, start_date, id]
+  )
+  if (overlapResult.rows.length) {
+    return res.status(400).json({ message: 'Overlapping leave request exists' })
+  }
+
+  const ltResult = await db.query('SELECT * FROM leave_types WHERE id = $1', [leave_type_id])
+  const lt = ltResult.rows[0]
+
+  let attachmentName = request.attachment_name
+  let attachmentType = request.attachment_type
+  let attachmentData = request.attachment_data
+  if (req.file) {
+    attachmentName = req.file.originalname
+    attachmentType = req.file.mimetype
+    attachmentData = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+  }
+
+  await db.query(
+    `UPDATE leave_requests
+     SET leave_type_id=$1, leave_type_name=$2, start_date=$3, end_date=$4, reason=$5,
+         attachment_name=$6, attachment_type=$7, attachment_data=$8
+     WHERE id=$9`,
+    [
+      leave_type_id,
+      lt?.name || null,
+      start_date,
+      end_date,
+      reason,
+      attachmentName,
+      attachmentType,
+      attachmentData,
+      id,
+    ]
+  )
+
+  await addAuditLog(req.user.id, 'update_leave_request', 'leave_requests', id)
+  const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  res.json(updated.rows[0] || { id })
+})
+
 app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const id = req.params.id
   await db.query(

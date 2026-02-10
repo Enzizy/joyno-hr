@@ -92,6 +92,11 @@ export async function createLeaveRequest(data) {
   return request('/api/leave-requests', { method: 'POST', body: isFormData ? data : JSON.stringify(data) })
 }
 
+export async function updateLeaveRequest(id, data) {
+  const isFormData = typeof FormData !== 'undefined' && data instanceof FormData
+  return request(`/api/leave-requests/${id}`, { method: 'PUT', body: isFormData ? data : JSON.stringify(data) })
+}
+
 export async function approveLeaveRequest(id) {
   return request(`/api/leave-requests/${id}/approve`, { method: 'POST' })
 }

@@ -61,6 +61,10 @@ export async function createLeaveRequest(data) {
   return api.createLeaveRequest(data)
 }
 
+export async function updateLeaveRequest(id, data) {
+  return api.updateLeaveRequest(id, data)
+}
+
 export async function approveLeaveRequest(id) {
   return api.approveLeaveRequest(id)
 }

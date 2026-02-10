@@ -25,6 +25,11 @@ const cancelling = ref(false)
 const attachmentModal = ref(false)
 const attachmentUrl = ref('')
 const attachmentLoading = ref(false)
+const editModal = ref(false)
+const editingRow = ref(null)
+const editSubmitting = ref(false)
+const editAttachment = ref(null)
+const editForm = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -42,6 +47,7 @@ const todayISO = computed(() => {
   return `${year}-${month}-${day}`
 })
 const endMinDate = computed(() => form.value.start_date || todayISO.value)
+const editEndMinDate = computed(() => editForm.value.start_date || todayISO.value)
 
 function formatDate(value) {
   if (!value) return '-'
@@ -55,9 +61,10 @@ function formatRange(start, end) {
   return `${formatDate(start)} - ${formatDate(end)}`
 }
 
-function hasOverlap(startDate, endDate) {
+function hasOverlap(startDate, endDate, excludeId = null) {
   if (!startDate || !endDate) return false
   return myRequests.value.some((r) => {
+    if (excludeId && r.id === excludeId) return false
     if (!['pending', 'approved'].includes(r.status)) return false
     if (!r.start_date || !r.end_date) return false
     return startDate <= r.end_date && endDate >= r.start_date
@@ -124,6 +131,60 @@ function closeCancelModal() {
   cancellingRow.value = null
 }
 
+function openEditModal(row) {
+  editingRow.value = row
+  editForm.value = {
+    leave_type_id: row.leave_type_id,
+    start_date: row.start_date,
+    end_date: row.end_date,
+    reason: row.reason || '',
+  }
+  editAttachment.value = null
+  editModal.value = true
+}
+
+function closeEditModal() {
+  editModal.value = false
+  editingRow.value = null
+  editAttachment.value = null
+}
+
+async function submitEdit() {
+  if (!editingRow.value) return
+  if (hasOverlap(editForm.value.start_date, editForm.value.end_date, editingRow.value.id)) {
+    toast.warning('You already have a pending or approved leave that overlaps these dates.')
+    return
+  }
+  if (!editForm.value.leave_type_id || !editForm.value.start_date || !editForm.value.end_date) {
+    toast.warning('Please fill required fields.')
+    return
+  }
+  if (!(editForm.value.reason || '').trim()) {
+    toast.warning('Leave reason is required.')
+    return
+  }
+  editSubmitting.value = true
+  try {
+    if (editAttachment.value) {
+      const payload = new FormData()
+      payload.append('leave_type_id', editForm.value.leave_type_id)
+      payload.append('start_date', editForm.value.start_date)
+      payload.append('end_date', editForm.value.end_date)
+      payload.append('reason', editForm.value.reason)
+      payload.append('attachment', editAttachment.value)
+      await leaveStore.updateRequest(editingRow.value.id, payload)
+    } else {
+      await leaveStore.updateRequest(editingRow.value.id, { ...editForm.value })
+    }
+    toast.success('Leave request updated.')
+    closeEditModal()
+  } catch (err) {
+    toast.error(err.response?.data?.message || err.message || 'Failed to update request.')
+  } finally {
+    editSubmitting.value = false
+  }
+}
+
 async function confirmCancel() {
   if (!cancellingRow.value) return
   cancelling.value = true
@@ -161,6 +222,11 @@ function closeAttachment() {
   attachmentModal.value = false
   if (attachmentUrl.value) URL.revokeObjectURL(attachmentUrl.value)
   attachmentUrl.value = ''
+}
+
+function onEditAttachmentChange(event) {
+  const file = event?.target?.files && event.target.files[0]
+  editAttachment.value = file || null
 }
 </script>
 
@@ -260,14 +326,22 @@ function closeAttachment() {
             </td>
             <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
             <td class="px-4 py-3 text-right">
-              <AppButton
-                v-if="row.status === 'pending'"
-                variant="danger"
-                size="sm"
-                @click="openCancelModal(row)"
-              >
-                Cancel
-              </AppButton>
+              <div v-if="row.status === 'pending'" class="flex justify-end gap-2">
+                <AppButton
+                  variant="secondary"
+                  size="sm"
+                  @click="openEditModal(row)"
+                >
+                  Edit
+                </AppButton>
+                <AppButton
+                  variant="danger"
+                  size="sm"
+                  @click="openCancelModal(row)"
+                >
+                  Cancel
+                </AppButton>
+              </div>
               <span v-else class="text-sm text-gray-500">-</span>
             </td>
           </tr>
@@ -288,6 +362,57 @@ function closeAttachment() {
       <AppButton variant="secondary" @click="closeCancelModal">Close</AppButton>
       <AppButton variant="danger" :loading="cancelling" @click="confirmCancel">Cancel request</AppButton>
     </template>
+  </AppModal>
+  <AppModal :show="editModal" title="Edit leave request" @close="closeEditModal">
+    <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submitEdit">
+      <div class="sm:col-span-2">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Leave type *</label>
+        <select
+          v-model="editForm.leave_type_id"
+          required
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+        >
+          <option value="" class="bg-gray-900 text-primary-200">Select type</option>
+          <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
+        </select>
+      </div>
+      <AppDatePicker
+        v-model="editForm.start_date"
+        label="Start date"
+        required
+        :min="todayISO"
+      />
+      <AppDatePicker
+        v-model="editForm.end_date"
+        label="End date"
+        required
+        :min="editEndMinDate"
+      />
+      <div class="sm:col-span-2">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Reason <span class="text-red-500">*</span></label>
+        <textarea
+          v-model="editForm.reason"
+          rows="3"
+          required
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 placeholder:text-gray-500 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+          placeholder="Reason for leave"
+        />
+      </div>
+      <div class="sm:col-span-2">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Replace attachment (optional)</label>
+        <input
+          type="file"
+          accept="image/*"
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+          @change="onEditAttachmentChange"
+        />
+        <p class="mt-1 text-xs text-gray-400">Leave empty to keep current attachment.</p>
+      </div>
+      <div class="sm:col-span-2 flex justify-end gap-2">
+        <AppButton type="button" variant="secondary" @click="closeEditModal">Close</AppButton>
+        <AppButton type="submit" :loading="editSubmitting">Save changes</AppButton>
+      </div>
+    </form>
   </AppModal>
   <AppModal :show="attachmentModal" title="Attachment" @close="closeAttachment">
     <div v-if="attachmentLoading" class="flex items-center justify-center py-8">

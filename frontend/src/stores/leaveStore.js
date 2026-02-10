@@ -10,6 +10,7 @@ import {
   approveLeaveRequest,
   rejectLeaveRequest,
   cancelLeaveRequest,
+  updateLeaveRequest as updateLeaveRequestApi,
 } from '@/services/firestore'
 
 export const useLeaveStore = defineStore('leave', () => {
@@ -66,6 +67,14 @@ export const useLeaveStore = defineStore('leave', () => {
     return data
   }
 
+  async function updateRequest(id, payload) {
+    const isFormData = typeof FormData !== 'undefined' && payload instanceof FormData
+    const data = await updateLeaveRequestApi(id, isFormData ? payload : payload)
+    const idx = requests.value.findIndex((r) => r.id === id)
+    if (idx !== -1) requests.value[idx] = data
+    return data
+  }
+
   async function approve(id) {
     const data = await approveLeaveRequest(id)
     const idx = requests.value.findIndex((r) => r.id === id)
@@ -97,6 +106,7 @@ export const useLeaveStore = defineStore('leave', () => {
     fetchBalances,
     fetchRequests,
     createRequest,
+    updateRequest,
     approve,
     reject,
     cancel,
