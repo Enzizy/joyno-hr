@@ -8,13 +8,39 @@ const dateFrom = ref(new Date().toISOString().slice(0, 10))
 const dateTo = ref(new Date().toISOString().slice(0, 10))
 const loading = ref(false)
 const leaveData = ref([])
+const exporting = ref(false)
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
 function downloadReport() {
+  if (!leaveData.value.length || exporting.value) return
+  exporting.value = true
   const params = new URLSearchParams()
   if (dateFrom.value) params.set('from', dateFrom.value)
   if (dateTo.value) params.set('to', dateTo.value)
-  const url = `/api/reports/leave.xlsx?${params.toString()}`
-  window.open(url, '_blank', 'noopener')
+  const url = `${API_BASE}/api/reports/leave.xlsx?${params.toString()}`
+  const token = localStorage.getItem('token')
+  fetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('Failed to export report')
+      const blob = await res.blob()
+      const downloadUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      const from = dateFrom.value || 'from'
+      const to = dateTo.value || 'to'
+      link.href = downloadUrl
+      link.download = `leave-report-${from}-to-${to}.xlsx`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(downloadUrl)
+    })
+    .catch(() => {})
+    .finally(() => {
+      exporting.value = false
+    })
 }
 
 async function loadLeave() {
@@ -47,7 +73,9 @@ async function loadLeave() {
       <AppDatePicker v-model="dateFrom" label="From" />
       <AppDatePicker v-model="dateTo" label="To" />
       <AppButton @click="loadLeave" :loading="loading">Run report</AppButton>
-      <AppButton variant="secondary" :disabled="!leaveData.length" @click="downloadReport">Export XLSX</AppButton>
+      <AppButton variant="secondary" :disabled="!leaveData.length || exporting" :loading="exporting" @click="downloadReport">
+        Export XLSX
+      </AppButton>
     </div>
     <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
       <div v-if="loading" class="flex justify-center py-12">
