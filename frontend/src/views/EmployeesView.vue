@@ -13,6 +13,8 @@ const toast = useToastStore()
 const showModal = ref(false)
 const editingId = ref(null)
 const departmentFilter = ref('all')
+const statusFilter = ref('all')
+const searchQuery = ref('')
 const departmentOptions = ['Marketing', 'IT', 'Sales', 'CSR']
 const form = ref({
   employee_code: '',
@@ -29,8 +31,23 @@ const form = ref({
 onMounted(() => employeeStore.fetchList())
 
 const filteredEmployees = computed(() => {
-  if (departmentFilter.value === 'all') return employeeStore.list
-  return employeeStore.list.filter((e) => (e.department || '') === departmentFilter.value)
+  let rows = employeeStore.list
+  if (departmentFilter.value !== 'all') {
+    rows = rows.filter((e) => (e.department || '') === departmentFilter.value)
+  }
+  if (statusFilter.value !== 'all') {
+    rows = rows.filter((e) => (e.status || '') === statusFilter.value)
+  }
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    rows = rows.filter((e) => {
+      const name = `${e.first_name || ''} ${e.last_name || ''}`.trim().toLowerCase()
+      const code = String(e.employee_code || '').toLowerCase()
+      const dept = String(e.department || '').toLowerCase()
+      return name.includes(q) || code.includes(q) || dept.includes(q)
+    })
+  }
+  return rows
 })
 
 function openCreate() {
@@ -99,6 +116,15 @@ async function remove(row) {
         <p class="mt-1 text-sm text-gray-400">Create, edit, and manage employees.</p>
       </div>
       <div class="flex flex-wrap items-center gap-3">
+        <div class="min-w-[220px]">
+          <label class="mb-1 block text-xs font-medium text-gray-400">Search</label>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Name, code, department"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+          />
+        </div>
         <div class="min-w-[180px]">
           <label class="mb-1 block text-xs font-medium text-gray-400">Department</label>
           <select
@@ -109,7 +135,31 @@ async function remove(row) {
             <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
           </select>
         </div>
-        <AppButton variant="secondary" @click="departmentFilter = 'all'">Reset</AppButton>
+        <div class="min-w-[160px]">
+          <label class="mb-1 block text-xs font-medium text-gray-400">Status</label>
+          <select
+            v-model="statusFilter"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+          >
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="resigned">Resigned</option>
+            <option value="on_leave">On leave</option>
+          </select>
+        </div>
+        <AppButton
+          variant="secondary"
+          @click="
+            () => {
+              departmentFilter = 'all'
+              statusFilter = 'all'
+              searchQuery = ''
+            }
+          "
+        >
+          Reset
+        </AppButton>
         <AppButton @click="openCreate">Add employee</AppButton>
       </div>
     </div>
