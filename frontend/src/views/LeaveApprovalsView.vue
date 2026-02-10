@@ -21,6 +21,8 @@ const attachmentUrl = ref('')
 const attachmentLoading = ref(false)
 const statusFilter = ref('all')
 const typeFilter = ref('all')
+const page = ref(1)
+const pageSize = 5
 
 function formatDate(value) {
   if (!value) return '-'
@@ -55,6 +57,30 @@ const filteredRequests = computed(() => {
     return true
   })
 })
+
+const pagedRequests = computed(() => {
+  const start = (page.value - 1) * pageSize
+  return filteredRequests.value.slice(start, start + pageSize)
+})
+
+const canPrev = computed(() => page.value > 1)
+const canNext = computed(() => filteredRequests.value.length > page.value * pageSize)
+
+function resetFilters() {
+  statusFilter.value = 'all'
+  typeFilter.value = 'all'
+  page.value = 1
+}
+
+function nextPage() {
+  if (!canNext.value) return
+  page.value += 1
+}
+
+function prevPage() {
+  if (!canPrev.value) return
+  page.value -= 1
+}
 
 async function approve(row) {
   try {
@@ -162,7 +188,7 @@ async function confirmReject() {
           <option v-for="type in typeOptions" :key="type" :value="type">{{ type }}</option>
         </select>
       </div>
-      <AppButton variant="secondary" @click="() => { statusFilter = 'all'; typeFilter = 'all' }">Reset</AppButton>
+      <AppButton variant="secondary" @click="resetFilters">Reset</AppButton>
     </div>
     <AppTable :loading="leaveStore.loading">
       <thead class="bg-gray-950">
@@ -178,7 +204,7 @@ async function confirmReject() {
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
-        <tr v-for="row in filteredRequests" :key="row.id" class="hover:bg-gray-950">
+        <tr v-for="row in pagedRequests" :key="row.id" class="hover:bg-gray-950">
           <td class="px-4 py-3 text-sm font-medium text-primary-200">
             {{ row.employee_name ?? `${row.employee?.first_name || ''} ${row.employee?.last_name || ''}`.trim() }}
           </td>
@@ -217,11 +243,28 @@ async function confirmReject() {
             <span v-else class="text-sm text-gray-400">-</span>
           </td>
         </tr>
-        <tr v-if="!filteredRequests.length && !leaveStore.loading">
+        <tr v-if="!pagedRequests.length && !leaveStore.loading">
           <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
         </tr>
       </tbody>
     </AppTable>
+    <div class="flex items-center justify-end gap-2">
+      <button
+        class="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200 transition hover:border-primary-400 disabled:cursor-not-allowed disabled:opacity-40"
+        :disabled="!canPrev"
+        @click="prevPage"
+      >
+        &larr;
+      </button>
+      <span class="text-sm text-gray-400">Page {{ page }}</span>
+      <button
+        class="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200 transition hover:border-primary-400 disabled:cursor-not-allowed disabled:opacity-40"
+        :disabled="!canNext"
+        @click="nextPage"
+      >
+        &rarr;
+      </button>
+    </div>
 
     <AppModal :show="rejectModal" title="Reject leave request" @close="closeRejectModal">
       <p v-if="rejectingRow" class="mb-3 text-sm text-gray-300">
