@@ -210,7 +210,7 @@ async function confirmReject() {
           </td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ formatRange(row.start_date, row.end_date) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
-          <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate">
+          <td class="px-4 py-3 text-sm text-gray-300 max-w-[140px] truncate">
             <button
               v-if="row.reason"
               class="text-left text-gray-300 hover:text-primary-200"
