@@ -82,6 +82,7 @@ async function confirmReject() {
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Dates</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Reason</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Rejection reason</th>
           <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
@@ -95,6 +96,18 @@ async function confirmReject() {
           <td class="px-4 py-3 text-sm text-gray-300">{{ formatRange(row.start_date, row.end_date) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
           <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.reason">{{ row.reason || '-' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">
+            <a
+              v-if="row.attachment_data"
+              :href="row.attachment_data"
+              target="_blank"
+              rel="noopener"
+              class="text-primary-300 hover:text-primary-200"
+            >
+              View
+            </a>
+            <span v-else>-</span>
+          </td>
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
           </td>
@@ -108,7 +121,7 @@ async function confirmReject() {
           </td>
         </tr>
         <tr v-if="!leaveStore.requests.length && !leaveStore.loading">
-          <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
+          <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
         </tr>
       </tbody>
     </AppTable>

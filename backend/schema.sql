@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS leave_requests (
   approved_by_name VARCHAR(150),
   approved_by_role VARCHAR(50),
   rejection_comment TEXT,
+  attachment_name VARCHAR(255),
+  attachment_type VARCHAR(100),
+  attachment_data TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT fk_leave_requests_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
   CONSTRAINT fk_leave_requests_type FOREIGN KEY (leave_type_id) REFERENCES leave_types(id) ON DELETE RESTRICT

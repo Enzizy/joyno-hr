@@ -3,6 +3,7 @@ const express = require('express')
 const cors = require('cors')
 const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
+const multer = require('multer')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const db = require('./db')
@@ -40,6 +41,26 @@ const loginLimiter = rateLimit({
 })
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype && file.mimetype.startsWith('image/')) return cb(null, true)
+    return cb(new Error('Only image attachments are allowed'))
+  },
+})
+
+function uploadAttachment(req, res, next) {
+  if (!req.is('multipart/form-data')) return next()
+  return upload.single('attachment')(req, res, (err) => {
+    if (!err) return next()
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ message: 'Attachment too large (max 1MB)' })
+    }
+    return res.status(400).json({ message: err.message || 'Invalid attachment' })
+  })
+}
 
 async function ensureDefaultLeaveTypes() {
   try {
@@ -269,7 +290,7 @@ app.get('/api/leave-requests', authRequired, async (req, res) => {
   res.json(rows)
 })
 
-app.post('/api/leave-requests', authRequired, async (req, res) => {
+app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res) => {
   const user = req.user
   const { leave_type_id, start_date, end_date, reason } = req.body || {}
   if (!leave_type_id || !start_date || !end_date || !reason) {
@@ -293,10 +314,19 @@ app.post('/api/leave-requests', authRequired, async (req, res) => {
 
   const ltResult = await db.query('SELECT * FROM leave_types WHERE id = $1', [leave_type_id])
   const lt = ltResult.rows[0]
+  let attachmentName = null
+  let attachmentType = null
+  let attachmentData = null
+  if (req.file) {
+    attachmentName = req.file.originalname
+    attachmentType = req.file.mimetype
+    attachmentData = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+  }
+
   const { rows } = await db.query(
     `INSERT INTO leave_requests
-     (employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending')
+     (employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, attachment_name, attachment_type, attachment_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11)
      RETURNING id`,
     [
       user.employee_id,
@@ -307,6 +337,9 @@ app.post('/api/leave-requests', authRequired, async (req, res) => {
       start_date,
       end_date,
       reason,
+      attachmentName,
+      attachmentType,
+      attachmentData,
     ]
   )
 

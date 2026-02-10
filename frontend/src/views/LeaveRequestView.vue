@@ -16,6 +16,11 @@ const toast = useToastStore()
 const form = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
 const submitting = ref(false)
 const isOnLeave = computed(() => authStore.user?.status === 'on_leave')
+const attachment = ref(null)
+function onAttachmentChange(event) {
+  const file = event?.target?.files && event.target.files[0]
+  attachment.value = file || null
+}
 const myRequests = computed(() => {
   const employeeId = authStore.user?.employee_id
   if (!employeeId) return []
@@ -67,9 +72,18 @@ async function submit() {
   }
   submitting.value = true
   try {
-    await leaveStore.createRequest(form.value)
+    const payload = new FormData()
+    payload.append('leave_type_id', form.value.leave_type_id)
+    payload.append('start_date', form.value.start_date)
+    payload.append('end_date', form.value.end_date)
+    payload.append('reason', form.value.reason)
+    if (attachment.value) {
+      payload.append('attachment', attachment.value)
+    }
+    await leaveStore.createRequest(payload)
     toast.success('Leave request submitted.')
     form.value = { leave_type_id: '', start_date: '', end_date: '', reason: '' }
+    attachment.value = null
   } catch (err) {
     const code = err?.code || err?.response?.data?.code
     if (code === 'permission-denied') {
@@ -120,6 +134,17 @@ async function submit() {
           />
         </div>
         <div class="sm:col-span-2">
+          <label class="mb-1 block text-sm font-medium text-gray-200">Attachment (optional)</label>
+          <input
+            type="file"
+            accept="image/*"
+            :disabled="isOnLeave || submitting"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            @change="onAttachmentChange"
+          />
+          <p class="mt-1 text-xs text-gray-400">Images only. Max 1MB.</p>
+        </div>
+        <div class="sm:col-span-2">
           <AppButton type="submit" :loading="submitting" :disabled="isOnLeave">Submit request</AppButton>
         </div>
       </form>
@@ -132,6 +157,7 @@ async function submit() {
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Dates</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Rejection reason</th>
           </tr>
         </thead>
@@ -142,10 +168,22 @@ async function submit() {
             <td class="px-4 py-3">
               <StatusBadge :status="row.status" />
             </td>
+            <td class="px-4 py-3 text-sm text-gray-300">
+              <a
+                v-if="row.attachment_data"
+                :href="row.attachment_data"
+                target="_blank"
+                rel="noopener"
+                class="text-primary-300 hover:text-primary-200"
+              >
+                View
+              </a>
+              <span v-else>-</span>
+            </td>
             <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
           </tr>
           <tr v-if="!myRequests.length && !leaveStore.loading">
-            <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
+            <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
           </tr>
         </tbody>
       </AppTable>
