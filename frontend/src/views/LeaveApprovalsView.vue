@@ -208,7 +208,6 @@ async function confirmReject() {
           <option value="pending">Pending</option>
           <option value="approved">Approved</option>
           <option value="rejected">Rejected</option>
-          <option value="cancelled">Cancelled</option>
         </select>
       </div>
       <div class="min-w-[200px]">

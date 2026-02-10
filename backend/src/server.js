@@ -415,10 +415,9 @@ app.post('/api/leave-requests/:id/cancel', authRequired, async (req, res) => {
   if (request.status !== 'pending') {
     return res.status(400).json({ message: 'Only pending requests can be cancelled' })
   }
-  await db.query(`UPDATE leave_requests SET status='cancelled' WHERE id=$1`, [id])
-  await addAuditLog(req.user.id, 'cancel_leave_request', 'leave_requests', id)
-  const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
-  res.json(updated.rows[0] || { id })
+  await db.query('DELETE FROM leave_requests WHERE id = $1', [id])
+  await addAuditLog(req.user.id, 'delete_leave_request', 'leave_requests', id)
+  res.json({ message: 'Leave request deleted' })
 })
 
 app.get('/api/leave-requests/:id/attachment', authRequired, async (req, res) => {

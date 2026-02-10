@@ -82,10 +82,9 @@ export const useLeaveStore = defineStore('leave', () => {
   }
 
   async function cancel(id) {
-    const data = await cancelLeaveRequest(id)
-    const idx = requests.value.findIndex((r) => r.id === id)
-    if (idx !== -1) requests.value[idx] = data
-    return data
+    await cancelLeaveRequest(id)
+    requests.value = requests.value.filter((r) => r.id !== id)
+    return true
   }
 
   return {
