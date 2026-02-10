@@ -45,12 +45,12 @@ export async function getLeaveBalances() {
   return []
 }
 
-export async function getLeaveRequests() {
-  return api.getLeaveRequests()
+export async function getLeaveRequests(options = {}) {
+  return api.getLeaveRequests(options)
 }
 
 export async function getLeaveRequestsForEmployee() {
-  return api.getLeaveRequests()
+  return api.getLeaveRequests({ scope: 'mine' })
 }
 
 export async function createLeaveRequest(data) {

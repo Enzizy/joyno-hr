@@ -249,6 +249,15 @@ app.post('/api/leave-types', authRequired, requireRole(['admin']), async (req, r
 // Leave requests
 app.get('/api/leave-requests', authRequired, async (req, res) => {
   const user = req.user
+  const scope = String(req.query.scope || '').toLowerCase()
+  if (scope === 'mine') {
+    if (!user.employee_id) return res.json([])
+    const { rows } = await db.query(
+      `SELECT * FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,
+      [user.employee_id]
+    )
+    return res.json(rows)
+  }
   if (user.role === 'employee') {
     const { rows } = await db.query(
       `SELECT * FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,

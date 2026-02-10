@@ -74,8 +74,11 @@ export async function createLeaveType(data) {
   return request('/api/leave-types', { method: 'POST', body: JSON.stringify(data) })
 }
 
-export async function getLeaveRequests() {
-  return request('/api/leave-requests')
+export async function getLeaveRequests(options = {}) {
+  const params = new URLSearchParams()
+  if (options.scope) params.set('scope', options.scope)
+  const qs = params.toString()
+  return request(`/api/leave-requests${qs ? `?${qs}` : ''}`)
 }
 
 export async function createLeaveRequest(data) {

@@ -14,6 +14,18 @@ const rejectingRow = ref(null)
 const rejectionComment = ref('')
 const rejecting = ref(false)
 
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
+}
+
+function formatRange(start, end) {
+  if (!start && !end) return '-'
+  return `${formatDate(start)} - ${formatDate(end)}`
+}
+
 onMounted(() => leaveStore.fetchRequests())
 
 async function approve(row) {
@@ -80,7 +92,7 @@ async function confirmReject() {
           <td class="px-4 py-3 text-sm font-medium text-primary-200">
             {{ row.employee_name ?? `${row.employee?.first_name || ''} ${row.employee?.last_name || ''}`.trim() }}
           </td>
-          <td class="px-4 py-3 text-sm text-gray-300">{{ row.start_date }} - {{ row.end_date }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ formatRange(row.start_date, row.end_date) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
           <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.reason">{{ row.reason || '-' }}</td>
           <td class="px-4 py-3">
@@ -104,7 +116,7 @@ async function confirmReject() {
     <AppModal :show="rejectModal" title="Reject leave request" @close="closeRejectModal">
       <p v-if="rejectingRow" class="mb-3 text-sm text-gray-300">
         Rejecting leave for <strong>{{ rejectingRow.employee_name || 'Employee' }}</strong>
-        ({{ rejectingRow.start_date }} - {{ rejectingRow.end_date }})?
+        ({{ formatRange(rejectingRow.start_date, rejectingRow.end_date) }})?
       </p>
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-200">Reason for rejection <span class="text-red-500">*</span></label>

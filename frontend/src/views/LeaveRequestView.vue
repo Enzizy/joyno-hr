@@ -17,6 +17,18 @@ const form = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' }
 const submitting = ref(false)
 const isOnLeave = computed(() => authStore.user?.status === 'on_leave')
 
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
+}
+
+function formatRange(start, end) {
+  if (!start && !end) return '-'
+  return `${formatDate(start)} - ${formatDate(end)}`
+}
+
 function hasOverlap(startDate, endDate) {
   if (!startDate || !endDate) return false
   return leaveStore.requests.some((r) => {
@@ -120,7 +132,7 @@ async function submit() {
         </thead>
         <tbody class="divide-y divide-gray-800 bg-gray-900">
           <tr v-for="row in leaveStore.requests" :key="row.id" class="hover:bg-gray-950">
-            <td class="px-4 py-3 text-sm text-primary-200">{{ row.start_date }} - {{ row.end_date }}</td>
+            <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
             <td class="px-4 py-3">
               <StatusBadge :status="row.status" />

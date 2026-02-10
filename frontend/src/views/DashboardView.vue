@@ -31,6 +31,18 @@ const currentLeaveEnd = computed(() => {
   return active?.end_date ?? null
 })
 
+function formatDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
+}
+
+function formatRange(start, end) {
+  if (!start && !end) return '-'
+  return `${formatDate(start)} - ${formatDate(end)}`
+}
+
 function employeeLabel(row) {
   if (row.employee_name) return row.employee_name
   if (row.employee) {
@@ -92,7 +104,7 @@ function actionLabel(row) {
         <p class="mt-1">
           <StatusBadge :status="statusLabel" />
         </p>
-        <p v-if="currentLeaveEnd" class="mt-2 text-xs text-gray-400">On leave until {{ currentLeaveEnd }}</p>
+        <p v-if="currentLeaveEnd" class="mt-2 text-xs text-gray-400">On leave until {{ formatDate(currentLeaveEnd) }}</p>
       </div>
     </div>
 
@@ -116,7 +128,7 @@ function actionLabel(row) {
           </thead>
           <tbody class="divide-y divide-gray-800">
             <tr v-for="row in activityItems" :key="row.id" class="hover:bg-gray-950">
-              <td class="px-4 py-3 text-sm text-primary-200">{{ row.start_date }} - {{ row.end_date }}</td>
+              <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
               <td class="px-4 py-3">
                 <StatusBadge :status="row.status" />
@@ -153,7 +165,7 @@ function actionLabel(row) {
               <td class="px-4 py-3 text-sm text-primary-200">
                 {{ employeeLabel(row) }}
               </td>
-              <td class="px-4 py-3 text-sm text-primary-200">{{ row.start_date }} - {{ row.end_date }}</td>
+              <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
               <td class="px-4 py-3">
                 <StatusBadge :status="row.status" />
