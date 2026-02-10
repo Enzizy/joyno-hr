@@ -53,7 +53,8 @@ const upload = multer({
 })
 
 function uploadAttachment(req, res, next) {
-  if (!req.is('multipart/form-data')) return next()
+  const contentType = req.headers['content-type'] || ''
+  if (!contentType.includes('multipart/form-data')) return next()
   return upload.single('attachment')(req, res, (err) => {
     if (!err) return next()
     if (err.code === 'LIMIT_FILE_SIZE') {

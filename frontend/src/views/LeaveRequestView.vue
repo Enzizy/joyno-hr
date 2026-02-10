@@ -72,15 +72,17 @@ async function submit() {
   }
   submitting.value = true
   try {
-    const payload = new FormData()
-    payload.append('leave_type_id', form.value.leave_type_id)
-    payload.append('start_date', form.value.start_date)
-    payload.append('end_date', form.value.end_date)
-    payload.append('reason', form.value.reason)
     if (attachment.value) {
+      const payload = new FormData()
+      payload.append('leave_type_id', form.value.leave_type_id)
+      payload.append('start_date', form.value.start_date)
+      payload.append('end_date', form.value.end_date)
+      payload.append('reason', form.value.reason)
       payload.append('attachment', attachment.value)
+      await leaveStore.createRequest(payload)
+    } else {
+      await leaveStore.createRequest({ ...form.value })
     }
-    await leaveStore.createRequest(payload)
     toast.success('Leave request submitted.')
     form.value = { leave_type_id: '', start_date: '', end_date: '', reason: '' }
     attachment.value = null
