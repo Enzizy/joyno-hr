@@ -453,13 +453,16 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
 
 // Audit logs
 app.get('/api/audit-logs', authRequired, requireRole(['admin']), async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50)
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
   const { rows } = await db.query(
     `SELECT a.*, u.email, e.first_name, e.last_name
      FROM audit_logs a
      LEFT JOIN users u ON a.user_id = u.id
      LEFT JOIN employees e ON u.employee_id = e.id
      ORDER BY a.created_at DESC
-     LIMIT 200`
+     LIMIT $1 OFFSET $2`,
+    [limit, offset]
   )
   res.json(rows)
 })

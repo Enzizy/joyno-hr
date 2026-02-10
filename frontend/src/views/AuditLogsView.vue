@@ -5,13 +5,16 @@ import AppTable from '@/components/ui/AppTable.vue'
 
 const list = ref([])
 const loading = ref(false)
+const page = ref(1)
+const pageSize = 10
 
 onMounted(load)
 
 async function load() {
   loading.value = true
   try {
-    list.value = await getAuditLogs()
+    const offset = (page.value - 1) * pageSize
+    list.value = await getAuditLogs({ limit: pageSize, offset })
   } catch {
     list.value = []
   } finally {
@@ -66,6 +69,21 @@ const rows = computed(() =>
     userLabel: userLabel(row),
   }))
 )
+
+const canPrev = computed(() => page.value > 1)
+const canNext = computed(() => list.value.length === pageSize)
+
+async function nextPage() {
+  if (!canNext.value) return
+  page.value += 1
+  await load()
+}
+
+async function prevPage() {
+  if (!canPrev.value) return
+  page.value -= 1
+  await load()
+}
 </script>
 
 <template>
@@ -95,6 +113,23 @@ const rows = computed(() =>
         </tr>
       </tbody>
     </AppTable>
+    <div class="flex items-center justify-end gap-2">
+      <button
+        class="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200 transition hover:border-primary-400 disabled:cursor-not-allowed disabled:opacity-40"
+        :disabled="!canPrev || loading"
+        @click="prevPage"
+      >
+        ←
+      </button>
+      <span class="text-sm text-gray-400">Page {{ page }}</span>
+      <button
+        class="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200 transition hover:border-primary-400 disabled:cursor-not-allowed disabled:opacity-40"
+        :disabled="!canNext || loading"
+        @click="nextPage"
+      >
+        →
+      </button>
+    </div>
   </div>
 </template>
 

@@ -103,6 +103,10 @@ export async function getLeaveReport(from, to) {
   return request(`/api/reports/leave${qs ? `?${qs}` : ''}`)
 }
 
-export async function getAuditLogs() {
-  return request('/api/audit-logs')
+export async function getAuditLogs(options = {}) {
+  const params = new URLSearchParams()
+  if (options.limit) params.set('limit', options.limit)
+  if (options.offset) params.set('offset', options.offset)
+  const qs = params.toString()
+  return request(`/api/audit-logs${qs ? `?${qs}` : ''}`)
 }

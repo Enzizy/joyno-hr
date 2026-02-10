@@ -1,8 +1,8 @@
 ﻿import { useAuthStore } from '@/stores/authStore'
 import * as api from '@/services/api'
 
-export async function getAuditLogs() {
-  return api.getAuditLogs()
+export async function getAuditLogs(options = {}) {
+  return api.getAuditLogs(options)
 }
 
 export async function addAuditLog() {
