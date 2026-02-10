@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useToastStore } from '@/stores/toastStore'
 import AppTable from '@/components/ui/AppTable.vue'
@@ -15,6 +15,8 @@ const rejectionComment = ref('')
 const rejecting = ref(false)
 const reasonModal = ref(false)
 const reasonRow = ref(null)
+const statusFilter = ref('all')
+const typeFilter = ref('all')
 
 function formatDate(value) {
   if (!value) return '-'
@@ -29,6 +31,26 @@ function formatRange(start, end) {
 }
 
 onMounted(() => leaveStore.fetchRequests())
+
+const typeOptions = computed(() => {
+  const set = new Set()
+  leaveStore.requests.forEach((r) => {
+    const name = r.leave_type_name || r.leave_type_id
+    if (name) set.add(String(name))
+  })
+  return Array.from(set)
+})
+
+const filteredRequests = computed(() => {
+  return leaveStore.requests.filter((r) => {
+    if (statusFilter.value !== 'all' && r.status !== statusFilter.value) return false
+    if (typeFilter.value !== 'all') {
+      const name = String(r.leave_type_name || r.leave_type_id || '')
+      if (name !== typeFilter.value) return false
+    }
+    return true
+  })
+})
 
 async function approve(row) {
   try {
@@ -87,6 +109,32 @@ async function confirmReject() {
       <h1 class="text-2xl font-bold text-primary-200">Leave Approvals</h1>
       <p class="mt-1 text-sm text-gray-400">Approve or reject leave requests.</p>
     </div>
+    <div class="flex flex-wrap items-end gap-4 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+      <div class="min-w-[180px]">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
+        <select
+          v-model="statusFilter"
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+        >
+          <option value="all">All</option>
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+      <div class="min-w-[200px]">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Type</label>
+        <select
+          v-model="typeFilter"
+          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+        >
+          <option value="all">All</option>
+          <option v-for="type in typeOptions" :key="type" :value="type">{{ type }}</option>
+        </select>
+      </div>
+      <AppButton variant="secondary" @click="() => { statusFilter = 'all'; typeFilter = 'all' }">Reset</AppButton>
+    </div>
     <AppTable :loading="leaveStore.loading">
       <thead class="bg-gray-950">
         <tr>
@@ -101,7 +149,7 @@ async function confirmReject() {
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
-        <tr v-for="row in leaveStore.requests" :key="row.id" class="hover:bg-gray-950">
+        <tr v-for="row in filteredRequests" :key="row.id" class="hover:bg-gray-950">
           <td class="px-4 py-3 text-sm font-medium text-primary-200">
             {{ row.employee_name ?? `${row.employee?.first_name || ''} ${row.employee?.last_name || ''}`.trim() }}
           </td>
@@ -142,7 +190,7 @@ async function confirmReject() {
             <span v-else class="text-sm text-gray-400">-</span>
           </td>
         </tr>
-        <tr v-if="!leaveStore.requests.length && !leaveStore.loading">
+        <tr v-if="!filteredRequests.length && !leaveStore.loading">
           <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
         </tr>
       </tbody>
