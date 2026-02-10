@@ -4,6 +4,7 @@ const cors = require('cors')
 const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
 const multer = require('multer')
+const ExcelJS = require('exceljs')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const db = require('./db')
@@ -394,6 +395,60 @@ app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async 
   sql += ' ORDER BY start_date DESC'
   const { rows } = await db.query(sql, params)
   res.json(rows)
+})
+
+app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const { from, to } = req.query
+  let sql = 'SELECT * FROM leave_requests WHERE 1=1'
+  const params = []
+  if (from) {
+    params.push(from)
+    sql += ` AND start_date >= $${params.length}`
+  }
+  if (to) {
+    params.push(to)
+    sql += ` AND start_date <= $${params.length}`
+  }
+  sql += ' ORDER BY start_date DESC'
+  const { rows } = await db.query(sql, params)
+
+  const workbook = new ExcelJS.Workbook()
+  const sheet = workbook.addWorksheet('Leave Report')
+  sheet.columns = [
+    { header: 'Employee', key: 'employee', width: 28 },
+    { header: 'Leave type', key: 'type', width: 20 },
+    { header: 'Reason', key: 'reason', width: 40 },
+    { header: 'Days', key: 'days', width: 10 },
+  ]
+
+  const headerRow = sheet.getRow(1)
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+  headerRow.alignment = { vertical: 'middle', horizontal: 'left' }
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } }
+  })
+
+  rows.forEach((r) => {
+    const days =
+      r.start_date && r.end_date
+        ? Math.max(
+            1,
+            Math.ceil((new Date(r.end_date) - new Date(r.start_date)) / (24 * 60 * 60 * 1000)) + 1
+          )
+        : ''
+    sheet.addRow({
+      employee: r.employee_name || r.employee_id || '',
+      type: r.leave_type_name || r.leave_type_id || '',
+      reason: r.reason || '',
+      days,
+    })
+  })
+
+  const filename = `leave-report-${from || 'from'}-to-${to || 'to'}.xlsx`
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  await workbook.xlsx.write(res)
+  res.end()
 })
 
 // Audit logs

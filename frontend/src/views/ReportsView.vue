@@ -3,49 +3,18 @@ import { ref } from 'vue'
 import { getLeaveReport } from '@/services/firestore'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
-import * as XLSX from 'xlsx'
 
 const dateFrom = ref(new Date().toISOString().slice(0, 10))
 const dateTo = ref(new Date().toISOString().slice(0, 10))
 const loading = ref(false)
 const leaveData = ref([])
 
-function exportXlsx() {
-  if (!leaveData.value.length) return
-  const headers = ['Employee', 'Leave type', 'Reason', 'Days']
-  const rows = leaveData.value.map((row) => [
-    row.employee_name ?? row.employee_id ?? '',
-    row.leave_type_name ?? row.leave_type_id ?? '',
-    row.reason ?? '',
-    row.days ?? '',
-  ])
-  const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows])
-
-  const headerStyle = {
-    font: { bold: true, color: { rgb: 'FFFFFF' } },
-    fill: { fgColor: { rgb: '1F2937' } },
-    alignment: { vertical: 'center', horizontal: 'left' },
-  }
-  headers.forEach((_, idx) => {
-    const cell = worksheet[XLSX.utils.encode_cell({ r: 0, c: idx })]
-    if (cell) cell.s = headerStyle
-  })
-
-  const colWidths = headers.map((h, idx) => {
-    let maxLen = String(h).length
-    rows.forEach((row) => {
-      const len = row[idx] == null ? 0 : String(row[idx]).length
-      if (len > maxLen) maxLen = len
-    })
-    return { wch: Math.min(Math.max(maxLen + 2, 12), 60) }
-  })
-  worksheet['!cols'] = colWidths
-
-  const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Leave Report')
-  const from = dateFrom.value || 'from'
-  const to = dateTo.value || 'to'
-  XLSX.writeFile(workbook, `leave-report-${from}-to-${to}.xlsx`)
+function downloadReport() {
+  const params = new URLSearchParams()
+  if (dateFrom.value) params.set('from', dateFrom.value)
+  if (dateTo.value) params.set('to', dateTo.value)
+  const url = `/api/reports/leave.xlsx?${params.toString()}`
+  window.open(url, '_blank', 'noopener')
 }
 
 async function loadLeave() {
@@ -78,7 +47,7 @@ async function loadLeave() {
       <AppDatePicker v-model="dateFrom" label="From" />
       <AppDatePicker v-model="dateTo" label="To" />
       <AppButton @click="loadLeave" :loading="loading">Run report</AppButton>
-      <AppButton variant="secondary" :disabled="!leaveData.length" @click="exportXlsx">Export XLSX</AppButton>
+      <AppButton variant="secondary" :disabled="!leaveData.length" @click="downloadReport">Export XLSX</AppButton>
     </div>
     <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
       <div v-if="loading" class="flex justify-center py-12">
