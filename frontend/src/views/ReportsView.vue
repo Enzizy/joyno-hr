@@ -14,10 +14,11 @@ async function loadLeave() {
   try {
     const rows = await getLeaveReport(dateFrom.value, dateTo.value)
     leaveData.value = rows.map((r) => ({
-      employee_name: r.employee_id,
+      employee_name: r.employee_name || r.employee_id,
       employee_id: r.employee_id,
-      leave_type_name: r.leave_type_id,
+      leave_type_name: r.leave_type_name || r.leave_type_id,
       leave_type_id: r.leave_type_id,
+      reason: r.reason || '-',
       days: r.start_date && r.end_date ? Math.max(1, Math.ceil((new Date(r.end_date) - new Date(r.start_date)) / (24 * 60 * 60 * 1000)) + 1) : '-',
     }))
   } catch {
@@ -49,6 +50,7 @@ async function loadLeave() {
             <tr>
               <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Leave type</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Reason</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Days</th>
             </tr>
           </thead>
@@ -56,10 +58,11 @@ async function loadLeave() {
             <tr v-for="(row, i) in leaveData" :key="i" class="hover:bg-gray-950">
               <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name ?? row.employee_id }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type_id }}</td>
+              <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.reason">{{ row.reason }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.days ?? '-' }}</td>
             </tr>
             <tr v-if="!leaveData.length && !loading">
-              <td colspan="3" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see data.</td>
+              <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see data.</td>
             </tr>
           </tbody>
         </table>
