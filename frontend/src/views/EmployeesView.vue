@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useToastStore } from '@/stores/toastStore'
 import AppButton from '@/components/ui/AppButton.vue'
@@ -12,6 +12,8 @@ const employeeStore = useEmployeeStore()
 const toast = useToastStore()
 const showModal = ref(false)
 const editingId = ref(null)
+const departmentFilter = ref('all')
+const departmentOptions = ['Marketing', 'IT', 'Sales', 'CSR']
 const form = ref({
   employee_code: '',
   first_name: '',
@@ -25,6 +27,11 @@ const form = ref({
 })
 
 onMounted(() => employeeStore.fetchList())
+
+const filteredEmployees = computed(() => {
+  if (departmentFilter.value === 'all') return employeeStore.list
+  return employeeStore.list.filter((e) => (e.department || '') === departmentFilter.value)
+})
 
 function openCreate() {
   editingId.value = null
@@ -91,7 +98,20 @@ async function remove(row) {
         <h1 class="text-2xl font-bold text-primary-200">Employee Management</h1>
         <p class="mt-1 text-sm text-gray-400">Create, edit, and manage employees.</p>
       </div>
-      <AppButton @click="openCreate">Add employee</AppButton>
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="min-w-[180px]">
+          <label class="mb-1 block text-xs font-medium text-gray-400">Department</label>
+          <select
+            v-model="departmentFilter"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+          >
+            <option value="all">All</option>
+            <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
+          </select>
+        </div>
+        <AppButton variant="secondary" @click="departmentFilter = 'all'">Reset</AppButton>
+        <AppButton @click="openCreate">Add employee</AppButton>
+      </div>
     </div>
     <AppTable :loading="employeeStore.loading">
       <thead class="bg-gray-950">
@@ -105,7 +125,7 @@ async function remove(row) {
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
-        <tr v-for="row in employeeStore.list" :key="row.id" class="hover:bg-gray-950">
+        <tr v-for="row in filteredEmployees" :key="row.id" class="hover:bg-gray-950">
           <td class="px-4 py-3 text-sm font-medium text-primary-200">{{ row.employee_code }}</td>
           <td class="px-4 py-3 text-sm text-primary-200">{{ row.first_name }} {{ row.last_name }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.department }}</td>
@@ -118,7 +138,7 @@ async function remove(row) {
             <AppButton variant="danger" size="sm" class="ml-1" @click="remove(row)">Delete</AppButton>
           </td>
         </tr>
-        <tr v-if="!employeeStore.list.length && !employeeStore.loading">
+        <tr v-if="!filteredEmployees.length && !employeeStore.loading">
           <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">No employees yet.</td>
         </tr>
       </tbody>
@@ -129,7 +149,19 @@ async function remove(row) {
         <AppInput v-model="form.employee_code" label="Employee code" required />
         <AppInput v-model="form.first_name" label="First name" required />
         <AppInput v-model="form.last_name" label="Last name" required />
-        <AppInput v-model="form.department" label="Department" required />
+        <div>
+          <label class="mb-1 block text-sm font-medium text-gray-200">Department</label>
+          <select
+            v-model="form.department"
+            required
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+          >
+            <option value="" class="bg-gray-900 text-primary-200">Select department</option>
+            <option v-for="dept in departmentOptions" :key="dept" :value="dept" class="bg-gray-900 text-primary-200">
+              {{ dept }}
+            </option>
+          </select>
+        </div>
         <AppInput v-model="form.position" label="Position" required />
         <div>
           <label class="mb-1 block text-sm font-medium text-gray-200">Salary type</label>
