@@ -24,9 +24,16 @@ const todayISO = computed(() => {
   return `${year}-${month}-${day}`
 })
 const currentLeaveEnd = computed(() => {
+  if (!authStore.user?.employee_id) return null
   const today = todayISO.value
   const active = leaveStore.requests.find(
-    (r) => r.status === 'approved' && r.start_date && r.end_date && r.start_date <= today && today <= r.end_date
+    (r) =>
+      r.employee_id === authStore.user?.employee_id &&
+      r.status === 'approved' &&
+      r.start_date &&
+      r.end_date &&
+      r.start_date <= today &&
+      today <= r.end_date
   )
   return active?.end_date ?? null
 })

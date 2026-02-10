@@ -36,7 +36,14 @@ export const useLeaveStore = defineStore('leave', () => {
   async function fetchRequests(options = {}) {
     loading.value = true
     try {
+      const authStore = useAuthStore()
+      const employeeId = authStore.user?.employee_id
       if (options.scope === 'mine') {
+        if (!employeeId) {
+          requests.value = []
+          total.value = 0
+          return requests.value
+        }
         requests.value = await getLeaveRequestsForEmployee()
       } else {
         requests.value = await getLeaveRequests()

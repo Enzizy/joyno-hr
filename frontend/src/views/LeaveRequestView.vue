@@ -16,6 +16,11 @@ const toast = useToastStore()
 const form = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
 const submitting = ref(false)
 const isOnLeave = computed(() => authStore.user?.status === 'on_leave')
+const myRequests = computed(() => {
+  const employeeId = authStore.user?.employee_id
+  if (!employeeId) return []
+  return leaveStore.requests.filter((r) => r.employee_id === employeeId)
+})
 
 function formatDate(value) {
   if (!value) return '-'
@@ -31,7 +36,7 @@ function formatRange(start, end) {
 
 function hasOverlap(startDate, endDate) {
   if (!startDate || !endDate) return false
-  return leaveStore.requests.some((r) => {
+  return myRequests.value.some((r) => {
     if (!['pending', 'approved'].includes(r.status)) return false
     if (!r.start_date || !r.end_date) return false
     return startDate <= r.end_date && endDate >= r.start_date
@@ -131,7 +136,7 @@ async function submit() {
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-800 bg-gray-900">
-          <tr v-for="row in leaveStore.requests" :key="row.id" class="hover:bg-gray-950">
+          <tr v-for="row in myRequests" :key="row.id" class="hover:bg-gray-950">
             <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
             <td class="px-4 py-3">
@@ -139,7 +144,7 @@ async function submit() {
             </td>
             <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
           </tr>
-          <tr v-if="!leaveStore.requests.length && !leaveStore.loading">
+          <tr v-if="!myRequests.length && !leaveStore.loading">
             <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
           </tr>
         </tbody>
