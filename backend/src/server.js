@@ -457,10 +457,18 @@ app.get('/api/audit-logs', authRequired, requireRole(['admin']), async (req, res
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50)
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
   const { rows } = await db.query(
-    `SELECT a.*, u.email, e.first_name, e.last_name
+    `SELECT a.*, u.email, e.first_name, e.last_name,
+            te.first_name AS target_employee_first_name,
+            te.last_name AS target_employee_last_name,
+            tu.email AS target_user_email,
+            tlr.employee_name AS target_leave_employee_name,
+            tlr.leave_type_name AS target_leave_type_name
      FROM audit_logs a
      LEFT JOIN users u ON a.user_id = u.id
      LEFT JOIN employees e ON u.employee_id = e.id
+     LEFT JOIN employees te ON a.target_table = 'employees' AND a.target_id = te.id
+     LEFT JOIN users tu ON a.target_table = 'users' AND a.target_id = tu.id
+     LEFT JOIN leave_requests tlr ON a.target_table = 'leave_requests' AND a.target_id = tlr.id
      ORDER BY a.created_at DESC
      LIMIT $1 OFFSET $2`,
     [limit, offset]

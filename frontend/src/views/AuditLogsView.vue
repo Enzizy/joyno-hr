@@ -52,6 +52,23 @@ function formatTarget(table, id) {
   return `${name} #${id}`
 }
 
+function targetLabel(row) {
+  if (row.target_table === 'employees') {
+    const name = `${row.target_employee_first_name || ''} ${row.target_employee_last_name || ''}`.trim()
+    return name || formatTarget(row.target_table, row.target_id)
+  }
+  if (row.target_table === 'users') {
+    return row.target_user_email || formatTarget(row.target_table, row.target_id)
+  }
+  if (row.target_table === 'leave_requests') {
+    const parts = []
+    if (row.target_leave_employee_name) parts.push(row.target_leave_employee_name)
+    if (row.target_leave_type_name) parts.push(row.target_leave_type_name)
+    return parts.length ? parts.join(' • ') : formatTarget(row.target_table, row.target_id)
+  }
+  return formatTarget(row.target_table, row.target_id)
+}
+
 function userLabel(row) {
   const fullName = `${row.first_name || ''} ${row.last_name || ''}`.trim()
   if (fullName) return fullName
@@ -65,7 +82,7 @@ const rows = computed(() =>
     ...row,
     timeLabel: formatDate(row.created_at),
     actionLabel: formatAction(row.action),
-    targetLabel: formatTarget(row.target_table, row.target_id),
+    targetLabel: targetLabel(row),
     userLabel: userLabel(row),
   }))
 )
@@ -119,7 +136,7 @@ async function prevPage() {
         :disabled="!canPrev || loading"
         @click="prevPage"
       >
-        ←
+        &larr;
       </button>
       <span class="text-sm text-gray-400">Page {{ page }}</span>
       <button
@@ -127,10 +144,11 @@ async function prevPage() {
         :disabled="!canNext || loading"
         @click="nextPage"
       >
-        →
+        &rarr;
       </button>
     </div>
   </div>
 </template>
+
 
 
