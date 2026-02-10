@@ -380,6 +380,23 @@ app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', '
   res.json(updated.rows[0] || { id })
 })
 
+app.post('/api/leave-requests/:id/cancel', authRequired, async (req, res) => {
+  const id = req.params.id
+  const { rows } = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const request = rows[0]
+  if (!request) return res.status(404).json({ message: 'Leave request not found' })
+  if (request.employee_id !== req.user.employee_id) {
+    return res.status(403).json({ message: 'Forbidden' })
+  }
+  if (request.status !== 'pending') {
+    return res.status(400).json({ message: 'Only pending requests can be cancelled' })
+  }
+  await db.query(`UPDATE leave_requests SET status='cancelled' WHERE id=$1`, [id])
+  await addAuditLog(req.user.id, 'cancel_leave_request', 'leave_requests', id)
+  const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  res.json(updated.rows[0] || { id })
+})
+
 // Reports
 app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { from, to } = req.query

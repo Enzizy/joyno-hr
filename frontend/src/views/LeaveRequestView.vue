@@ -7,6 +7,7 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
 import AppTable from '@/components/ui/AppTable.vue'
+import AppModal from '@/components/ui/AppModal.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
 const leaveStore = useLeaveStore()
@@ -17,6 +18,9 @@ const form = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' }
 const submitting = ref(false)
 const isOnLeave = computed(() => authStore.user?.status === 'on_leave')
 const attachment = ref(null)
+const cancelModal = ref(false)
+const cancellingRow = ref(null)
+const cancelling = ref(false)
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -97,6 +101,30 @@ async function submit() {
     submitting.value = false
   }
 }
+
+function openCancelModal(row) {
+  cancellingRow.value = row
+  cancelModal.value = true
+}
+
+function closeCancelModal() {
+  cancelModal.value = false
+  cancellingRow.value = null
+}
+
+async function confirmCancel() {
+  if (!cancellingRow.value) return
+  cancelling.value = true
+  try {
+    await leaveStore.cancel(cancellingRow.value.id)
+    toast.success('Leave request cancelled.')
+    closeCancelModal()
+  } catch (err) {
+    toast.error(err.response?.data?.message || err.message || 'Failed to cancel request.')
+  } finally {
+    cancelling.value = false
+  }
+}
 </script>
 
 <template>
@@ -161,6 +189,7 @@ async function submit() {
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Rejection reason</th>
+            <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Action</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-800 bg-gray-900">
@@ -183,14 +212,36 @@ async function submit() {
               <span v-else>-</span>
             </td>
             <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
+            <td class="px-4 py-3 text-right">
+              <AppButton
+                v-if="row.status === 'pending'"
+                variant="danger"
+                size="sm"
+                @click="openCancelModal(row)"
+              >
+                Cancel
+              </AppButton>
+              <span v-else class="text-sm text-gray-500">-</span>
+            </td>
           </tr>
           <tr v-if="!myRequests.length && !leaveStore.loading">
-            <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
+            <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
           </tr>
         </tbody>
       </AppTable>
     </div>
   </div>
+
+  <AppModal :show="cancelModal" title="Cancel leave request" @close="closeCancelModal">
+    <p v-if="cancellingRow" class="text-sm text-gray-300">
+      Cancel leave request for
+      <strong>{{ formatRange(cancellingRow.start_date, cancellingRow.end_date) }}</strong>?
+    </p>
+    <template #footer>
+      <AppButton variant="secondary" @click="closeCancelModal">Close</AppButton>
+      <AppButton variant="danger" :loading="cancelling" @click="confirmCancel">Cancel request</AppButton>
+    </template>
+  </AppModal>
 </template>
 
 

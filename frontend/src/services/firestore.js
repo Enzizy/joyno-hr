@@ -65,6 +65,10 @@ export async function rejectLeaveRequest(id, comment) {
   return api.rejectLeaveRequest(id, comment)
 }
 
+export async function cancelLeaveRequest(id) {
+  return api.cancelLeaveRequest(id)
+}
+
 export async function getLeaveReport(from, to) {
   return api.getLeaveReport(from, to)
 }

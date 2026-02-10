@@ -95,6 +95,10 @@ export async function rejectLeaveRequest(id, comment) {
   return request(`/api/leave-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ comment }) })
 }
 
+export async function cancelLeaveRequest(id) {
+  return request(`/api/leave-requests/${id}/cancel`, { method: 'POST' })
+}
+
 export async function getLeaveReport(from, to) {
   const params = new URLSearchParams()
   if (from) params.set('from', from)

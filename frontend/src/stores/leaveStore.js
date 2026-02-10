@@ -9,6 +9,7 @@ import {
   createLeaveRequest as createRequestApi,
   approveLeaveRequest,
   rejectLeaveRequest,
+  cancelLeaveRequest,
 } from '@/services/firestore'
 
 export const useLeaveStore = defineStore('leave', () => {
@@ -79,6 +80,13 @@ export const useLeaveStore = defineStore('leave', () => {
     return data
   }
 
+  async function cancel(id) {
+    const data = await cancelLeaveRequest(id)
+    const idx = requests.value.findIndex((r) => r.id === id)
+    if (idx !== -1) requests.value[idx] = data
+    return data
+  }
+
   return {
     leaveTypes,
     balances,
@@ -91,5 +99,6 @@ export const useLeaveStore = defineStore('leave', () => {
     createRequest,
     approve,
     reject,
+    cancel,
   }
 })
