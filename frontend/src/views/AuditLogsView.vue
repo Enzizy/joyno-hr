@@ -49,12 +49,21 @@ function formatTarget(table, id) {
   return `${name} #${id}`
 }
 
+function userLabel(row) {
+  const fullName = `${row.first_name || ''} ${row.last_name || ''}`.trim()
+  if (fullName) return fullName
+  if (row.email) return row.email
+  if (row.user_id != null) return `User #${row.user_id}`
+  return '-'
+}
+
 const rows = computed(() =>
   list.value.map((row) => ({
     ...row,
     timeLabel: formatDate(row.created_at),
     actionLabel: formatAction(row.action),
     targetLabel: formatTarget(row.target_table, row.target_id),
+    userLabel: userLabel(row),
   }))
 )
 </script>
@@ -77,10 +86,7 @@ const rows = computed(() =>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
         <tr v-for="row in rows" :key="row.id" class="hover:bg-gray-950">
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.timeLabel }}</td>
-          <td class="px-4 py-3 text-sm text-primary-200">
-            <span v-if="row.user_id != null">User #{{ row.user_id }}</span>
-            <span v-else>-</span>
-          </td>
+          <td class="px-4 py-3 text-sm text-primary-200">{{ row.userLabel }}</td>
           <td class="px-4 py-3 text-sm text-primary-200">{{ row.actionLabel }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.targetLabel }}</td>
         </tr>
