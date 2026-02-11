@@ -4,11 +4,9 @@ import { useRoute } from 'vue-router'
 import dashboardIcon from '@/assets/icons/dashboard-panel.svg?raw'
 import profileIcon from '@/assets/icons/profile.svg?raw'
 import leaveRequestIcon from '@/assets/icons/leave-request.svg?raw'
-import payslipIcon from '@/assets/icons/payslip.svg?raw'
 import employeeManageIcon from '@/assets/icons/employee-manage.svg?raw'
 import leaveApprovalIcon from '@/assets/icons/leave-approval.svg?raw'
 import analyticsIcon from '@/assets/icons/analytics.svg?raw'
-import payrollIcon from '@/assets/icons/payroll.svg?raw'
 import userManagementIcon from '@/assets/icons/user-management.svg?raw'
 import settingsIcon from '@/assets/icons/settings.svg?raw'
 import auditLogsIcon from '@/assets/icons/audit-logs.svg?raw'
@@ -34,19 +32,15 @@ const iconPaths = {
   'user-cog': ['M12 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0z', 'M3 20a8 8 0 0 1 12-5.5', 'M18.5 17.5a2.5 2.5 0 1 0 0 .01', 'M18.5 14.5v1.6m0 4.8V21m-2.4-3.5H15m6 0h-1.1m-1.2-2.4-.9-.9'],
   settings: ['M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8z', 'M3 12h2.5m13 0H21', 'M6.8 6.8l1.8 1.8m6.8 6.8 1.8 1.8', 'M6.8 17.2l1.8-1.8m6.8-6.8 1.8-1.8'],
   audit: ['M7 4h7l4 4v12H7z', 'M10 12h6', 'M10 16h6', 'M10 8h2'],
-  payroll: ['M4 7h16v10H4z', 'M7 10h4', 'M13 10h4', 'M7 14h4', 'M13 14h4'],
-  payslip: ['M6 4h9l3 3v13H6z', 'M9 11h6', 'M9 15h6', 'M9 19h3'],
 }
 
 const customIcons = {
   dashboard: dashboardIcon,
   user: profileIcon,
   leave: leaveRequestIcon,
-  payslip: payslipIcon,
   users: employeeManageIcon,
   check: leaveApprovalIcon,
   chart: analyticsIcon,
-  payroll: payrollIcon,
   'user-cog': userManagementIcon,
   settings: settingsIcon,
   audit: auditLogsIcon,

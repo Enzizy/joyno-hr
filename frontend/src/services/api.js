@@ -124,18 +124,3 @@ export async function getAuditLogs(options = {}) {
   const qs = params.toString()
   return request(`/api/audit-logs${qs ? `?${qs}` : ''}`)
 }
-
-export async function createPayrollRun(data) {
-  return request('/api/payroll-runs', { method: 'POST', body: JSON.stringify(data) })
-}
-
-export async function getPayrollRuns() {
-  return request('/api/payroll-runs')
-}
-
-export async function getPayslips(options = {}) {
-  const params = new URLSearchParams()
-  if (options.mine) params.set('mine', '1')
-  const qs = params.toString()
-  return request(`/api/payslips${qs ? `?${qs}` : ''}`)
-}

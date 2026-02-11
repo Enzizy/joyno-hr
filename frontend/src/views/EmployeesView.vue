@@ -14,17 +14,17 @@ const showModal = ref(false)
 const editingId = ref(null)
 const departmentFilter = ref('all')
 const statusFilter = ref('all')
+const shiftFilter = ref('all')
 const searchQuery = ref('')
 const departmentOptions = ['Marketing', 'IT', 'Sales', 'CSR']
+const shiftOptions = ['day', 'night']
 const form = ref({
   employee_code: '',
   first_name: '',
   last_name: '',
   department: '',
   position: '',
-  salary_type: 'monthly',
-  salary_amount: '',
-  weekly_allowance: '',
+  shift: 'day',
   date_hired: '',
   status: 'active',
 })
@@ -38,6 +38,9 @@ const filteredEmployees = computed(() => {
   }
   if (statusFilter.value !== 'all') {
     rows = rows.filter((e) => (e.status || '') === statusFilter.value)
+  }
+  if (shiftFilter.value !== 'all') {
+    rows = rows.filter((e) => (e.shift || 'day') === shiftFilter.value)
   }
   const q = searchQuery.value.trim().toLowerCase()
   if (q) {
@@ -59,9 +62,7 @@ function openCreate() {
     last_name: '',
     department: '',
     position: '',
-    salary_type: 'monthly',
-    salary_amount: '',
-    weekly_allowance: '',
+    shift: 'day',
     date_hired: '',
     status: 'active',
   }
@@ -76,9 +77,7 @@ function openEdit(row) {
     last_name: row.last_name,
     department: row.department,
     position: row.position,
-    salary_type: row.salary_type,
-    salary_amount: row.salary_amount,
-    weekly_allowance: row.weekly_allowance ?? '',
+    shift: row.shift || 'day',
     date_hired: row.date_hired?.slice(0, 10) ?? '',
     status: row.status,
   }
@@ -139,6 +138,17 @@ async function remove(row) {
           </select>
         </div>
         <div class="min-w-[160px]">
+          <label class="mb-1 block text-xs font-medium text-gray-400">Shift</label>
+          <select
+            v-model="shiftFilter"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
+          >
+            <option value="all">All</option>
+            <option value="day">Day</option>
+            <option value="night">Night</option>
+          </select>
+        </div>
+        <div class="min-w-[160px]">
           <label class="mb-1 block text-xs font-medium text-gray-400">Status</label>
           <select
             v-model="statusFilter"
@@ -156,6 +166,7 @@ async function remove(row) {
           @click="
             () => {
               departmentFilter = 'all'
+              shiftFilter = 'all'
               statusFilter = 'all'
               searchQuery = ''
             }
@@ -172,6 +183,7 @@ async function remove(row) {
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Code</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Name</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Department</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Shift</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Position</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
           <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
@@ -182,6 +194,7 @@ async function remove(row) {
           <td class="px-4 py-3 text-sm font-medium text-primary-200">{{ row.employee_code }}</td>
           <td class="px-4 py-3 text-sm text-primary-200">{{ row.first_name }} {{ row.last_name }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.department }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300 capitalize">{{ row.shift || 'day' }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.position }}</td>
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
@@ -192,7 +205,7 @@ async function remove(row) {
           </td>
         </tr>
         <tr v-if="!filteredEmployees.length && !employeeStore.loading">
-          <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">No employees yet.</td>
+          <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">No employees yet.</td>
         </tr>
       </tbody>
     </AppTable>
@@ -217,17 +230,16 @@ async function remove(row) {
         </div>
         <AppInput v-model="form.position" label="Position" required />
         <div>
-          <label class="mb-1 block text-sm font-medium text-gray-200">Salary type</label>
+          <label class="mb-1 block text-sm font-medium text-gray-200">Shift</label>
           <select
-            v-model="form.salary_type"
+            v-model="form.shift"
             class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
           >
-            <option value="monthly" class="bg-gray-900 text-primary-200">Monthly</option>
-            <option value="hourly" class="bg-gray-900 text-primary-200">Hourly</option>
+            <option v-for="shift in shiftOptions" :key="shift" :value="shift" class="bg-gray-900 text-primary-200">
+              {{ shift.charAt(0).toUpperCase() + shift.slice(1) }}
+            </option>
           </select>
         </div>
-        <AppInput v-model="form.salary_amount" type="number" label="Salary amount" required />
-        <AppInput v-model="form.weekly_allowance" type="number" label="Weekly allowance" />
         <AppInput v-model="form.date_hired" type="date" label="Date hired" required />
         <div>
           <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>

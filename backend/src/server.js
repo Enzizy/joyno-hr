@@ -5,7 +5,6 @@ const helmet = require('helmet')
 const rateLimit = require('express-rate-limit')
 const multer = require('multer')
 const ExcelJS = require('exceljs')
-const PDFDocument = require('pdfkit')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const db = require('./db')
@@ -127,7 +126,7 @@ function requireRole(roles) {
 
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department
+    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department, e.shift
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
      WHERE u.id = $1`,
@@ -224,8 +223,8 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
   const e = req.body || {}
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, salary_type, salary_amount, weekly_allowance, date_hired, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     (employee_code, first_name, last_name, department, position, shift, date_hired, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING id`,
     [
       e.employee_code,
@@ -233,9 +232,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
       e.last_name,
       e.department,
       e.position,
-      e.salary_type || 'monthly',
-      e.salary_amount || 0,
-      e.weekly_allowance || 0,
+      e.shift || 'day',
       e.date_hired,
       e.status || 'active',
     ]
@@ -250,17 +247,15 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
   const e = req.body || {}
   await db.query(
     `UPDATE employees
-     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, salary_type=$6, salary_amount=$7, weekly_allowance=$8, date_hired=$9, status=$10
-     WHERE id=$11`,
+     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, date_hired=$7, status=$8
+     WHERE id=$9`,
     [
       e.employee_code,
       e.first_name,
       e.last_name,
       e.department,
       e.position,
-      e.salary_type || 'monthly',
-      e.salary_amount || 0,
-      e.weekly_allowance || 0,
+      e.shift || 'day',
       e.date_hired,
       e.status || 'active',
       req.params.id,
@@ -578,128 +573,6 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
 })
 
 // Payroll
-app.post('/api/payroll-runs', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const { period_start, period_end } = req.body || {}
-  if (!period_start || !period_end) {
-    return res.status(400).json({ message: 'Missing required fields' })
-  }
-  const runResult = await db.query(
-    `INSERT INTO payroll_runs (period_start, period_end, status, created_by)
-     VALUES ($1,$2,'finalized',$3)
-     RETURNING id`,
-    [period_start, period_end, req.user.id]
-  )
-  const runId = runResult.rows[0]?.id
-
-  const empRows = await db.query('SELECT * FROM employees ORDER BY id ASC')
-  const employees = empRows.rows || []
-  if (!employees.length) {
-    return res.json({ run_id: runId, count: 0, weeks: 0 })
-  }
-
-  const startDate = new Date(period_start)
-  const endDate = new Date(period_end)
-  const days = Math.max(1, Math.floor((endDate - startDate) / (24 * 60 * 60 * 1000)) + 1)
-  const weeks = Math.max(1, Math.ceil(days / 7))
-
-  const saved = []
-  for (const emp of employees) {
-    const employeeId = Number(emp.id)
-    const baseSalary = Number(emp.salary_amount || 0)
-    const weeklyAllowance = Number(emp.weekly_allowance || 0)
-    const totalAllowance = weeklyAllowance * weeks
-    const gross = baseSalary + totalAllowance
-    const { rows } = await db.query(
-      `INSERT INTO payroll_payslips
-       (run_id, employee_id, employee_name, department, base_salary, weekly_allowance, allowance_weeks, total_allowance, gross_pay, net_pay)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING *`,
-      [
-        runId,
-        employeeId,
-        `${emp.first_name || ''} ${emp.last_name || ''}`.trim(),
-        emp.department || null,
-        baseSalary,
-        weeklyAllowance,
-        weeks,
-        totalAllowance,
-        gross,
-        gross,
-      ]
-    )
-    saved.push(rows[0])
-  }
-
-  await addAuditLog(req.user.id, 'create_payroll_run', 'payroll_runs', runId)
-  res.json({ run_id: runId, count: saved.length, weeks })
-})
-
-app.get('/api/payroll-runs', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM payroll_runs ORDER BY created_at DESC LIMIT 50')
-  res.json(rows)
-})
-
-app.get('/api/payslips', authRequired, async (req, res) => {
-  const mine = String(req.query.mine || '') === '1'
-  if (mine || req.user.role === 'employee') {
-    if (!req.user.employee_id) return res.json([])
-    const { rows } = await db.query(
-      `SELECT p.*, r.period_start, r.period_end
-       FROM payroll_payslips p
-       JOIN payroll_runs r ON p.run_id = r.id
-       WHERE p.employee_id = $1
-       ORDER BY r.period_start DESC`,
-      [req.user.employee_id]
-    )
-    return res.json(rows)
-  }
-  if (!['admin', 'hr'].includes(req.user.role)) return res.status(403).json({ message: 'Forbidden' })
-  const { rows } = await db.query(
-    `SELECT p.*, r.period_start, r.period_end
-     FROM payroll_payslips p
-     JOIN payroll_runs r ON p.run_id = r.id
-     ORDER BY r.period_start DESC
-     LIMIT 200`
-  )
-  res.json(rows)
-})
-
-app.get('/api/payslips/:id.pdf', authRequired, async (req, res) => {
-  const id = req.params.id
-  const { rows } = await db.query(
-    `SELECT p.*, r.period_start, r.period_end
-     FROM payroll_payslips p
-     JOIN payroll_runs r ON p.run_id = r.id
-     WHERE p.id = $1`,
-    [id]
-  )
-  const slip = rows[0]
-  if (!slip) return res.status(404).json({ message: 'Payslip not found' })
-  const isOwner = slip.employee_id === req.user.employee_id
-  const isPrivileged = ['admin', 'hr'].includes(req.user.role)
-  if (!isOwner && !isPrivileged) return res.status(403).json({ message: 'Forbidden' })
-
-  res.setHeader('Content-Type', 'application/pdf')
-  res.setHeader('Content-Disposition', `inline; filename="payslip-${slip.id}.pdf"`)
-
-  const doc = new PDFDocument({ size: 'A4', margin: 50 })
-  doc.pipe(res)
-  doc.fontSize(18).text('Payslip', { align: 'center' })
-  doc.moveDown()
-  doc.fontSize(12).text(`Employee: ${slip.employee_name || ''}`)
-  doc.text(`Department: ${slip.department || '-'}`)
-  doc.text(`Period: ${slip.period_start} to ${slip.period_end}`)
-  doc.moveDown()
-  doc.text(`Base Salary: ${Number(slip.base_salary).toFixed(2)}`)
-  doc.text(`Weekly Travel Allowance: ${Number(slip.weekly_allowance).toFixed(2)}`)
-  doc.text(`Allowance Weeks: ${slip.allowance_weeks}`)
-  doc.text(`Total Allowance: ${Number(slip.total_allowance).toFixed(2)}`)
-  doc.moveDown()
-  doc.fontSize(13).text(`Gross Pay: ${Number(slip.gross_pay).toFixed(2)}`)
-  doc.text(`Net Pay: ${Number(slip.net_pay).toFixed(2)}`)
-  doc.end()
-})
-
 // Audit logs
 app.get('/api/audit-logs', authRequired, requireRole(['admin']), async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50)
