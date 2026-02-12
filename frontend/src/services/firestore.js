@@ -87,3 +87,31 @@ export async function fetchMe() {
   authStore.userProfile = data.user
   return data.user
 }
+
+export async function getLeads(options = {}) {
+  return api.getLeads(options)
+}
+
+export async function createLead(data) {
+  return api.createLead(data)
+}
+
+export async function updateLead(id, data) {
+  return api.updateLead(id, data)
+}
+
+export async function deleteLead(id) {
+  return api.deleteLead(id)
+}
+
+export async function getLeadConversations(id) {
+  return api.getLeadConversations(id)
+}
+
+export async function createLeadConversation(id, data) {
+  return api.createLeadConversation(id, data)
+}
+
+export async function convertLead(id, data) {
+  return api.convertLead(id, data)
+}

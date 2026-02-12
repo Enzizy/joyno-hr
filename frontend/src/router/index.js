@@ -33,8 +33,7 @@ const routes = [
       {
         path: 'leads',
         name: 'Leads',
-        component: () => import('@/views/ComingSoonView.vue'),
-        props: { title: 'Leads', description: 'Lead pipeline and conversion workflow.' },
+        component: () => import('@/views/LeadsView.vue'),
         meta: { roles: ['admin', 'hr'] },
       },
       {

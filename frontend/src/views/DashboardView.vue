@@ -269,8 +269,9 @@ function actionLabel(row) {
 
     <!-- Recent leave requests (Admin/HR) -->
     <div v-if="authStore.isHR || authStore.isAdmin" class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
-      <div class="border-b border-gray-800 px-4 py-3">
+      <div class="flex items-center justify-between border-b border-gray-800 px-4 py-3">
         <h2 class="text-lg font-semibold text-primary-200">Recent Leave Requests</h2>
+        <RouterLink to="/leave-approvals" class="text-xs font-medium text-primary-300 hover:text-primary-200">View Leave</RouterLink>
       </div>
       <div class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-800">

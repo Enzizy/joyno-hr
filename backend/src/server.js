@@ -272,6 +272,183 @@ app.delete('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), asy
   res.json({ message: 'Employee deleted' })
 })
 
+// Leads (CRM)
+app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const status = String(req.query.status || '').trim().toLowerCase()
+  const source = String(req.query.source || '').trim().toLowerCase()
+  const search = String(req.query.search || '').trim()
+  let sql = 'SELECT * FROM leads WHERE 1=1'
+  const params = []
+  if (status) {
+    params.push(status)
+    sql += ` AND status = $${params.length}`
+  }
+  if (source) {
+    params.push(source)
+    sql += ` AND source = $${params.length}`
+  }
+  if (search) {
+    params.push(`%${search}%`)
+    sql += ` AND (company_name ILIKE $${params.length} OR contact_name ILIKE $${params.length} OR email ILIKE $${params.length})`
+  }
+  sql += ' ORDER BY created_at DESC'
+  const { rows } = await db.query(sql, params)
+  res.json(rows)
+})
+
+app.post('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const payload = req.body || {}
+  if (!payload.company_name || !payload.contact_name || !payload.email) {
+    return res.status(400).json({ message: 'Company name, contact name, and email are required' })
+  }
+  const interestedServices = Array.isArray(payload.interested_services) ? payload.interested_services : []
+  const { rows } = await db.query(
+    `INSERT INTO leads
+     (company_name, contact_name, email, phone, source, status, interested_services, estimated_value, next_follow_up, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10)
+     RETURNING *`,
+    [
+      payload.company_name,
+      payload.contact_name,
+      payload.email,
+      payload.phone || null,
+      payload.source || null,
+      payload.status || 'new',
+      JSON.stringify(interestedServices),
+      payload.estimated_value || 0,
+      payload.next_follow_up || null,
+      payload.notes || null,
+    ]
+  )
+  const created = rows[0]
+  await addAuditLog(req.user.id, 'create_lead', 'leads', created?.id)
+  res.json(created)
+})
+
+app.put('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid lead id' })
+  const payload = req.body || {}
+  if (!payload.company_name || !payload.contact_name || !payload.email) {
+    return res.status(400).json({ message: 'Company name, contact name, and email are required' })
+  }
+  const interestedServices = Array.isArray(payload.interested_services) ? payload.interested_services : []
+  const { rows } = await db.query(
+    `UPDATE leads SET
+      company_name=$1, contact_name=$2, email=$3, phone=$4, source=$5, status=$6,
+      interested_services=$7::jsonb, estimated_value=$8, next_follow_up=$9, notes=$10
+     WHERE id=$11
+     RETURNING *`,
+    [
+      payload.company_name,
+      payload.contact_name,
+      payload.email,
+      payload.phone || null,
+      payload.source || null,
+      payload.status || 'new',
+      JSON.stringify(interestedServices),
+      payload.estimated_value || 0,
+      payload.next_follow_up || null,
+      payload.notes || null,
+      id,
+    ]
+  )
+  if (!rows.length) return res.status(404).json({ message: 'Lead not found' })
+  await addAuditLog(req.user.id, 'update_lead', 'leads', id)
+  res.json(rows[0])
+})
+
+app.delete('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid lead id' })
+  const { rows } = await db.query('DELETE FROM leads WHERE id = $1 RETURNING id', [id])
+  if (!rows.length) return res.status(404).json({ message: 'Lead not found' })
+  await addAuditLog(req.user.id, 'delete_lead', 'leads', id)
+  res.json({ message: 'Lead deleted' })
+})
+
+app.get('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid lead id' })
+  const { rows } = await db.query(
+    `SELECT c.*, u.email AS created_by_email
+     FROM lead_conversations c
+     LEFT JOIN users u ON c.created_by = u.id
+     WHERE c.lead_id = $1
+     ORDER BY c.happened_at DESC, c.id DESC`,
+    [id]
+  )
+  res.json(rows)
+})
+
+app.post('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid lead id' })
+  const payload = req.body || {}
+  if (!payload.summary) return res.status(400).json({ message: 'Summary is required' })
+  const { rows } = await db.query(
+    `INSERT INTO lead_conversations (lead_id, type, happened_at, summary, outcome, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     RETURNING *`,
+    [
+      id,
+      payload.type || 'other',
+      payload.happened_at || new Date().toISOString(),
+      payload.summary,
+      payload.outcome || null,
+      req.user.id,
+    ]
+  )
+  await addAuditLog(req.user.id, 'create_lead_conversation', 'lead_conversations', rows[0]?.id)
+  res.json(rows[0])
+})
+
+app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid lead id' })
+  const payload = req.body || {}
+  const { rows } = await db.query('SELECT * FROM leads WHERE id = $1', [id])
+  const lead = rows[0]
+  if (!lead) return res.status(404).json({ message: 'Lead not found' })
+  if (lead.status === 'converted') return res.status(400).json({ message: 'Lead already converted' })
+
+  const contractStart = payload.contract_start_date || null
+  let contractEnd = null
+  if (contractStart && payload.contract_duration_months) {
+    const startDate = new Date(contractStart)
+    if (!Number.isNaN(startDate.getTime())) {
+      startDate.setMonth(startDate.getMonth() + Number(payload.contract_duration_months))
+      contractEnd = startDate.toISOString().slice(0, 10)
+    }
+  }
+  const selectedServices = Array.isArray(payload.services) ? payload.services : []
+  const clientResult = await db.query(
+    `INSERT INTO clients
+     (lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,'active')
+     RETURNING *`,
+    [
+      id,
+      lead.company_name,
+      lead.contact_name,
+      lead.email,
+      lead.phone || null,
+      payload.package_name || 'custom',
+      payload.monthly_value || 0,
+      payload.package_details || null,
+      JSON.stringify(selectedServices),
+      contractStart,
+      contractEnd,
+      payload.address || null,
+    ]
+  )
+  const client = clientResult.rows[0]
+  await db.query('UPDATE leads SET status = $1, converted_client_id = $2 WHERE id = $3', ['converted', client.id, id])
+
+  await addAuditLog(req.user.id, 'convert_lead', 'leads', id)
+  res.json({ client_id: client.id, lead_id: id })
+})
+
 // Leave types
 app.get('/api/leave-types', authRequired, async (req, res) => {
   const { rows } = await db.query('SELECT * FROM leave_types ORDER BY name ASC')

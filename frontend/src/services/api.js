@@ -124,3 +124,36 @@ export async function getAuditLogs(options = {}) {
   const qs = params.toString()
   return request(`/api/audit-logs${qs ? `?${qs}` : ''}`)
 }
+
+export async function getLeads(options = {}) {
+  const params = new URLSearchParams()
+  if (options.status && options.status !== 'all') params.set('status', options.status)
+  if (options.source && options.source !== 'all') params.set('source', options.source)
+  if (options.search) params.set('search', options.search)
+  const qs = params.toString()
+  return request(`/api/leads${qs ? `?${qs}` : ''}`)
+}
+
+export async function createLead(data) {
+  return request('/api/leads', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function updateLead(id, data) {
+  return request(`/api/leads/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function deleteLead(id) {
+  return request(`/api/leads/${id}`, { method: 'DELETE' })
+}
+
+export async function getLeadConversations(id) {
+  return request(`/api/leads/${id}/conversations`)
+}
+
+export async function createLeadConversation(id, data) {
+  return request(`/api/leads/${id}/conversations`, { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function convertLead(id, data) {
+  return request(`/api/leads/${id}/convert`, { method: 'POST', body: JSON.stringify(data) })
+}
