@@ -50,6 +50,15 @@ function formatRange(start, end) {
   return `${formatDate(start)} - ${formatDate(end)}`
 }
 
+function formatBadgeLabel(value) {
+  const text = String(value || '').replace(/_/g, ' ').trim()
+  if (!text) return '-'
+  return text
+    .split(' ')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')
+}
+
 function employeeLabel(row) {
   if (row.employee_name) return row.employee_name
   if (row.employee) {
@@ -168,7 +177,7 @@ function actionLabel(row) {
               <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
               <td class="px-4 py-3">
-                <StatusBadge :status="row.status" />
+                <StatusBadge :status="row.status">{{ formatBadgeLabel(row.status) }}</StatusBadge>
               </td>
               <td class="px-4 py-3 text-sm text-gray-300">
                 {{ actionLabel(row) }}
@@ -254,12 +263,12 @@ function actionLabel(row) {
               <p class="text-xs text-gray-400">Due {{ formatDate(task.due_date) }}</p>
             </div>
             <div class="flex items-center gap-2">
-              <span class="rounded-full border border-gray-700 px-2 py-0.5 text-xs uppercase text-gray-300">{{ task.priority }}</span>
+              <span class="rounded-full border border-gray-700 px-2 py-0.5 text-xs text-gray-300">{{ formatBadgeLabel(task.priority) }}</span>
               <span
-                class="rounded-full px-2 py-0.5 text-xs font-semibold uppercase"
+                class="rounded-full px-2 py-0.5 text-xs font-semibold"
                 :class="task.status === 'overdue' ? 'bg-red-900/60 text-red-200' : 'bg-amber-900/50 text-amber-200'"
               >
-                {{ task.status }}
+                {{ formatBadgeLabel(task.status) }}
               </span>
             </div>
           </div>
@@ -291,7 +300,7 @@ function actionLabel(row) {
               <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
               <td class="px-4 py-3">
-                <StatusBadge :status="row.status" />
+                <StatusBadge :status="row.status">{{ formatBadgeLabel(row.status) }}</StatusBadge>
               </td>
             </tr>
             <tr v-if="!recentLeaves.length && !leaveStore.loading">
