@@ -39,8 +39,7 @@ const routes = [
       {
         path: 'clients',
         name: 'Clients',
-        component: () => import('@/views/ComingSoonView.vue'),
-        props: { title: 'Clients', description: 'Client records, packages, and contract lifecycle.' },
+        component: () => import('@/views/ClientsView.vue'),
         meta: { roles: ['admin', 'hr'] },
       },
       {

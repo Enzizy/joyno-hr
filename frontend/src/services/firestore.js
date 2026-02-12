@@ -115,3 +115,23 @@ export async function createLeadConversation(id, data) {
 export async function convertLead(id, data) {
   return api.convertLead(id, data)
 }
+
+export async function getClients(options = {}) {
+  return api.getClients(options)
+}
+
+export async function createClient(data) {
+  return api.createClient(data)
+}
+
+export async function updateClient(id, data) {
+  return api.updateClient(id, data)
+}
+
+export async function getClientConversations(id) {
+  return api.getClientConversations(id)
+}
+
+export async function createClientConversation(id, data) {
+  return api.createClientConversation(id, data)
+}

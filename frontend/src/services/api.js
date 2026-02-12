@@ -157,3 +157,27 @@ export async function createLeadConversation(id, data) {
 export async function convertLead(id, data) {
   return request(`/api/leads/${id}/convert`, { method: 'POST', body: JSON.stringify(data) })
 }
+
+export async function getClients(options = {}) {
+  const params = new URLSearchParams()
+  if (options.status && options.status !== 'all') params.set('status', options.status)
+  if (options.search) params.set('search', options.search)
+  const qs = params.toString()
+  return request(`/api/clients${qs ? `?${qs}` : ''}`)
+}
+
+export async function createClient(data) {
+  return request('/api/clients', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function updateClient(id, data) {
+  return request(`/api/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function getClientConversations(id) {
+  return request(`/api/clients/${id}/conversations`)
+}
+
+export async function createClientConversation(id, data) {
+  return request(`/api/clients/${id}/conversations`, { method: 'POST', body: JSON.stringify(data) })
+}

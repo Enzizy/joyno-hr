@@ -89,6 +89,14 @@ async function ensureDefaultLeaveTypes() {
   }
 }
 
+function calculateContractEndDate(contractStartDate, durationMonths) {
+  if (!contractStartDate || !durationMonths) return null
+  const start = new Date(contractStartDate)
+  if (Number.isNaN(start.getTime())) return null
+  start.setMonth(start.getMonth() + Number(durationMonths))
+  return start.toISOString().slice(0, 10)
+}
+
 function signToken(user) {
   return jwt.sign(
     {
@@ -413,19 +421,12 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
   if (lead.status === 'converted') return res.status(400).json({ message: 'Lead already converted' })
 
   const contractStart = payload.contract_start_date || null
-  let contractEnd = null
-  if (contractStart && payload.contract_duration_months) {
-    const startDate = new Date(contractStart)
-    if (!Number.isNaN(startDate.getTime())) {
-      startDate.setMonth(startDate.getMonth() + Number(payload.contract_duration_months))
-      contractEnd = startDate.toISOString().slice(0, 10)
-    }
-  }
+  const contractEnd = calculateContractEndDate(contractStart, payload.contract_duration_months)
   const selectedServices = Array.isArray(payload.services) ? payload.services : []
   const clientResult = await db.query(
     `INSERT INTO clients
-     (lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,'active')
+     (lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,'active')
      RETURNING *`,
     [
       id,
@@ -440,6 +441,7 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
       contractStart,
       contractEnd,
       payload.address || null,
+      payload.notes || null,
     ]
   )
   const client = clientResult.rows[0]
@@ -447,6 +449,136 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
 
   await addAuditLog(req.user.id, 'convert_lead', 'leads', id)
   res.json({ client_id: client.id, lead_id: id })
+})
+
+// Clients (CRM)
+app.get('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const status = String(req.query.status || '').trim().toLowerCase()
+  const search = String(req.query.search || '').trim()
+  let sql = 'SELECT * FROM clients WHERE 1=1'
+  const params = []
+  if (status) {
+    params.push(status)
+    sql += ` AND status = $${params.length}`
+  }
+  if (search) {
+    params.push(`%${search}%`)
+    sql += ` AND (company_name ILIKE $${params.length} OR contact_name ILIKE $${params.length} OR email ILIKE $${params.length})`
+  }
+  sql += ' ORDER BY created_at DESC'
+  const { rows } = await db.query(sql, params)
+  res.json(rows)
+})
+
+app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const payload = req.body || {}
+  if (!payload.company_name || !payload.contact_name || !payload.email || !payload.contract_start_date) {
+    return res.status(400).json({ message: 'Company, contact, email, and contract start date are required' })
+  }
+  const selectedServices = Array.isArray(payload.services) ? payload.services : []
+  const duration = Number(payload.contract_duration_months || 12)
+  const contractEnd = calculateContractEndDate(payload.contract_start_date, duration)
+  const { rows } = await db.query(
+    `INSERT INTO clients
+     (lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)
+     RETURNING *`,
+    [
+      payload.lead_id || null,
+      payload.company_name,
+      payload.contact_name,
+      payload.email,
+      payload.phone || null,
+      payload.package_name || 'custom',
+      payload.monthly_value || 0,
+      payload.package_details || null,
+      JSON.stringify(selectedServices),
+      payload.contract_start_date,
+      contractEnd,
+      payload.address || null,
+      payload.notes || null,
+      payload.status || 'active',
+    ]
+  )
+  await addAuditLog(req.user.id, 'create_client', 'clients', rows[0]?.id)
+  res.json(rows[0])
+})
+
+app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid client id' })
+  const payload = req.body || {}
+  if (!payload.company_name || !payload.contact_name || !payload.email || !payload.contract_start_date) {
+    return res.status(400).json({ message: 'Company, contact, email, and contract start date are required' })
+  }
+  const currentResult = await db.query('SELECT * FROM clients WHERE id = $1', [id])
+  if (!currentResult.rows.length) return res.status(404).json({ message: 'Client not found' })
+  const current = currentResult.rows[0]
+  const duration = Number(payload.contract_duration_months || 12)
+  const contractEnd = calculateContractEndDate(payload.contract_start_date, duration)
+
+  await db.query(
+    `UPDATE clients SET
+      company_name=$1, contact_name=$2, email=$3, phone=$4, package_name=$5, monthly_value=$6,
+      package_details=$7, services=$8::jsonb, contract_start_date=$9, contract_end_date=$10,
+      address=$11, notes=$12, status=$13
+     WHERE id=$14`,
+    [
+      payload.company_name,
+      payload.contact_name,
+      payload.email,
+      payload.phone || null,
+      payload.package_name || 'custom',
+      payload.monthly_value || 0,
+      payload.package_details || null,
+      JSON.stringify(Array.isArray(payload.services) && payload.allow_services_update ? payload.services : (current.services || [])),
+      payload.contract_start_date,
+      contractEnd,
+      payload.address || null,
+      payload.notes || null,
+      payload.status || 'active',
+      id,
+    ]
+  )
+  const { rows } = await db.query('SELECT * FROM clients WHERE id = $1', [id])
+  await addAuditLog(req.user.id, 'update_client', 'clients', id)
+  res.json(rows[0])
+})
+
+app.get('/api/clients/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid client id' })
+  const { rows } = await db.query(
+    `SELECT c.*, u.email AS created_by_email
+     FROM client_conversations c
+     LEFT JOIN users u ON c.created_by = u.id
+     WHERE c.client_id = $1
+     ORDER BY c.happened_at DESC, c.id DESC`,
+    [id]
+  )
+  res.json(rows)
+})
+
+app.post('/api/clients/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid client id' })
+  const payload = req.body || {}
+  if (!payload.summary) return res.status(400).json({ message: 'Summary is required' })
+  const { rows } = await db.query(
+    `INSERT INTO client_conversations (client_id, type, happened_at, summary, outcome, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6)
+     RETURNING *`,
+    [
+      id,
+      payload.type || 'other',
+      payload.happened_at || new Date().toISOString(),
+      payload.summary,
+      payload.outcome || null,
+      req.user.id,
+    ]
+  )
+  await addAuditLog(req.user.id, 'create_client_conversation', 'client_conversations', rows[0]?.id)
+  res.json(rows[0])
 })
 
 // Leave types
