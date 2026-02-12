@@ -8,7 +8,7 @@ import {
   updateClient,
   getClientConversations,
   createClientConversation,
-} from '@/services/firestore'
+} from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppModal from '@/components/ui/AppModal.vue'

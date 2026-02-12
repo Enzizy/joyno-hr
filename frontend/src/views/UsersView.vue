@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getUsers, getEmployees, createUser as createUserApi, deleteUser as deleteUserApi } from '@/services/firestore'
+import { getUsers, getEmployees, createUser as createUserApi, deleteUser as deleteUserApi } from '@/services/backendService'
 import { useToastStore } from '@/stores/toastStore'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppButton from '@/components/ui/AppButton.vue'

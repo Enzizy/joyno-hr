@@ -11,7 +11,7 @@ import {
   rejectLeaveRequest,
   cancelLeaveRequest,
   updateLeaveRequest as updateLeaveRequestApi,
-} from '@/services/firestore'
+} from '@/services/backendService'
 
 export const useLeaveStore = defineStore('leave', () => {
   const leaveTypes = ref([])

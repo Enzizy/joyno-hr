@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
-import { getAuditLogs } from '@/services/firestore'
+import { getAuditLogs } from '@/services/backendService'
 import AppTable from '@/components/ui/AppTable.vue'
 
 const list = ref([])

@@ -6,7 +6,7 @@ import {
   createEmployee,
   updateEmployee,
   deleteEmployee,
-} from '@/services/firestore'
+} from '@/services/backendService'
 
 export const useEmployeeStore = defineStore('employee', () => {
   const list = ref([])

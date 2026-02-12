@@ -1,6 +1,6 @@
 <script setup>
 import { ref } from 'vue'
-import { getLeaveReport } from '@/services/firestore'
+import { getLeaveReport } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
 
