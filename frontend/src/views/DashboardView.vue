@@ -74,6 +74,32 @@ onMounted(async () => {
 
 const recentLeaves = computed(() => leaveStore.requests.slice(0, 5))
 const activityItems = computed(() => leaveStore.requests.slice(0, 8))
+const showCrmOverview = computed(() => authStore.isHR || authStore.isAdmin)
+
+const crmStats = computed(() => [
+  { label: 'Active Clients', value: 3, tone: 'text-emerald-300' },
+  { label: 'Open Leads', value: 3, tone: 'text-blue-300' },
+  { label: 'Pending Tasks', value: 4, tone: 'text-amber-300' },
+  { label: 'Overdue Tasks', value: 3, tone: 'text-red-300' },
+])
+
+const expiringContracts = computed(() => [
+  { id: 1, company: 'Luxe Interiors', end_date: '2026-02-25' },
+  { id: 2, company: 'Summit Law', end_date: '2026-02-28' },
+])
+
+const workloadItems = computed(() => [
+  { id: 1, name: 'Von Himmler', active: 4, completed: 9 },
+  { id: 2, name: 'Wendel Desabille', active: 2, completed: 6 },
+  { id: 3, name: 'Kier Whensel Anticuando', active: 3, completed: 8 },
+])
+
+const upcomingTasks = computed(() => [
+  { id: 1, title: 'Create Instagram Reel for Luxe Interiors', due_date: '2026-02-14', priority: 'high', status: 'overdue' },
+  { id: 2, title: 'Daily Content Post - Bloom Bakery', due_date: '2026-02-16', priority: 'medium', status: 'pending' },
+  { id: 3, title: 'Post LinkedIn Article - Summit Law', due_date: '2026-02-18', priority: 'medium', status: 'pending' },
+  { id: 4, title: 'Weekly Client Report - Luxe Interiors', due_date: '2026-02-20', priority: 'low', status: 'pending' },
+])
 
 function actionLabel(row) {
   const roleLabel = row.approved_by_role
@@ -156,8 +182,93 @@ function actionLabel(row) {
       </div>
     </div>
 
+    <div v-if="showCrmOverview" class="space-y-4">
+      <div class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="text-lg font-semibold text-primary-200">CRM Overview</h2>
+          <RouterLink to="/leads" class="text-xs font-medium text-primary-300 hover:text-primary-200">View CRM</RouterLink>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div
+            v-for="item in crmStats"
+            :key="item.label"
+            class="rounded-lg border border-gray-800 bg-gray-950 p-4"
+          >
+            <p class="text-xs font-medium uppercase tracking-wide text-gray-400">{{ item.label }}</p>
+            <p class="mt-2 text-2xl font-semibold" :class="item.tone">{{ item.value }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid gap-4 lg:grid-cols-2">
+        <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
+          <div class="border-b border-gray-800 px-4 py-3">
+            <h3 class="text-base font-semibold text-primary-200">Expiring Contracts</h3>
+          </div>
+          <div class="p-4">
+            <ul v-if="expiringContracts.length" class="space-y-2">
+              <li
+                v-for="contract in expiringContracts"
+                :key="contract.id"
+                class="flex items-center justify-between rounded-md border border-gray-800 bg-gray-950 px-3 py-2"
+              >
+                <span class="text-sm text-primary-200">{{ contract.company }}</span>
+                <span class="text-xs text-amber-300">Ends {{ formatDate(contract.end_date) }}</span>
+              </li>
+            </ul>
+            <p v-else class="text-sm text-gray-400">No contracts expiring soon.</p>
+          </div>
+        </div>
+        <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
+          <div class="border-b border-gray-800 px-4 py-3">
+            <h3 class="text-base font-semibold text-primary-200">Employee Workload</h3>
+          </div>
+          <div class="p-4">
+            <ul class="space-y-2">
+              <li
+                v-for="member in workloadItems"
+                :key="member.id"
+                class="flex items-center justify-between rounded-md border border-gray-800 bg-gray-950 px-3 py-2"
+              >
+                <span class="text-sm text-primary-200">{{ member.name }}</span>
+                <span class="text-xs text-gray-300">{{ member.active }} active / {{ member.completed }} completed</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
+        <div class="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+          <h3 class="text-base font-semibold text-primary-200">Upcoming CRM Tasks</h3>
+          <RouterLink to="/tasks" class="text-xs font-medium text-primary-300 hover:text-primary-200">View tasks</RouterLink>
+        </div>
+        <div class="divide-y divide-gray-800">
+          <div
+            v-for="task in upcomingTasks"
+            :key="task.id"
+            class="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+          >
+            <div>
+              <p class="text-sm font-medium text-primary-200">{{ task.title }}</p>
+              <p class="text-xs text-gray-400">Due {{ formatDate(task.due_date) }}</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="rounded-full border border-gray-700 px-2 py-0.5 text-xs uppercase text-gray-300">{{ task.priority }}</span>
+              <span
+                class="rounded-full px-2 py-0.5 text-xs font-semibold uppercase"
+                :class="task.status === 'overdue' ? 'bg-red-900/60 text-red-200' : 'bg-amber-900/50 text-amber-200'"
+              >
+                {{ task.status }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Recent leave requests (Admin/HR) -->
-    <div v-else-if="authStore.isHR || authStore.isAdmin" class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
+    <div v-if="authStore.isHR || authStore.isAdmin" class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
       <div class="border-b border-gray-800 px-4 py-3">
         <h2 class="text-lg font-semibold text-primary-200">Recent Leave Requests</h2>
       </div>
