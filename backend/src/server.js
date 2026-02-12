@@ -16,8 +16,14 @@ const {
   CLIENT_PACKAGES,
   LEAD_SERVICES,
   CLIENT_SERVICES,
+  SERVICE_STATUSES,
+  SOCIAL_PLATFORMS,
+  TASK_STATUSES,
+  TASK_PRIORITIES,
+  AUTOMATION_SCHEDULES,
   normalizeEnum,
   normalizeServices,
+  normalizeDaysOfWeek,
   parsePagination,
   calculateContractEndDate,
 } = require('./crm')
@@ -74,6 +80,11 @@ const upload = multer({
   },
 })
 
+const proofUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 3 * 1024 * 1024 },
+})
+
 function uploadAttachment(req, res, next) {
   const contentType = req.headers['content-type'] || ''
   if (!contentType.includes('multipart/form-data')) return next()
@@ -84,6 +95,39 @@ function uploadAttachment(req, res, next) {
     }
     return res.status(400).json({ message: err.message || 'Invalid attachment' })
   })
+}
+
+function uploadProof(req, res, next) {
+  const contentType = req.headers['content-type'] || ''
+  if (!contentType.includes('multipart/form-data')) return next()
+  return proofUpload.single('proof')(req, res, (err) => {
+    if (!err) return next()
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ message: 'Proof file too large (max 3MB)' })
+    }
+    return res.status(400).json({ message: err.message || 'Invalid proof file' })
+  })
+}
+
+async function createNotification({ userId, type, title, message = null, targetTable = null, targetId = null }) {
+  if (!userId || !type || !title) return
+  await db.query(
+    `INSERT INTO notifications (user_id, type, title, message, target_table, target_id)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [userId, type, title, message, targetTable, targetId]
+  )
+}
+
+async function createServicesForClient(clientId, selectedServices = []) {
+  const serviceTypes = normalizeServices(selectedServices, CLIENT_SERVICES)
+  if (!serviceTypes.length) return
+  for (const serviceType of serviceTypes) {
+    await db.query(
+      `INSERT INTO services (client_id, service_type, status)
+       VALUES ($1,$2,$3)`,
+      [clientId, serviceType, 'not_started']
+    )
+  }
 }
 
 async function ensureDefaultLeaveTypes() {
@@ -145,6 +189,15 @@ async function loadUserProfile(userId) {
     [userId]
   )
   return rows[0] || null
+}
+
+function isRuleExpired(rule) {
+  if (!rule?.end_date) return false
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const end = new Date(rule.end_date)
+  end.setHours(0, 0, 0, 0)
+  return end < today
 }
 
 app.get('/health', (req, res) => {
@@ -496,6 +549,7 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
     ]
   )
   const client = clientResult.rows[0]
+  await createServicesForClient(client.id, selectedServices)
   await db.query('UPDATE leads SET status = $1, converted_client_id = $2 WHERE id = $3', ['converted', client.id, id])
 
   await addAuditLog(req.user.id, 'convert_lead', 'leads', id)
@@ -577,6 +631,7 @@ app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req,
       status,
     ]
   )
+  await createServicesForClient(rows[0]?.id, selectedServices)
   await addAuditLog(req.user.id, 'create_client', 'clients', rows[0]?.id)
   res.json(rows[0])
 })
@@ -678,6 +733,421 @@ app.post('/api/clients/:id/conversations', authRequired, requireRole(['admin', '
   )
   await addAuditLog(req.user.id, 'create_client_conversation', 'client_conversations', rows[0]?.id)
   res.json(rows[0])
+})
+
+// Services (CRM)
+app.get('/api/services', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const type = normalizeEnum(req.query.type, CLIENT_SERVICES, { defaultValue: null, allowNull: true })
+  const clientId = Number.parseInt(req.query.client_id, 10) || null
+  const search = String(req.query.search || '').trim()
+
+  let sql = `SELECT s.*, c.company_name
+             FROM services s
+             JOIN clients c ON s.client_id = c.id
+             WHERE 1=1`
+  const params = []
+  if (type) {
+    params.push(type)
+    sql += ` AND s.service_type = $${params.length}`
+  }
+  if (clientId) {
+    params.push(clientId)
+    sql += ` AND s.client_id = $${params.length}`
+  }
+  if (search) {
+    params.push(`%${search}%`)
+    sql += ` AND c.company_name ILIKE $${params.length}`
+  }
+  sql += ' ORDER BY s.created_at DESC'
+  const { rows } = await db.query(sql, params)
+  res.json(rows)
+})
+
+app.put('/api/services/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid service id' })
+  const payload = req.body || {}
+  const status = normalizeEnum(payload.status, SERVICE_STATUSES, { defaultValue: 'not_started' })
+  if ((payload.status || '') && !status) return res.status(400).json({ message: 'Invalid service status' })
+  const serviceType = normalizeEnum(payload.service_type, CLIENT_SERVICES, { defaultValue: null, allowNull: true })
+  const platforms = normalizeServices(payload.platforms, SOCIAL_PLATFORMS)
+  const assignedUsers = Array.isArray(payload.assigned_user_ids) ? payload.assigned_user_ids.map((v) => Number(v)).filter(Boolean) : []
+  const progress = Math.min(100, Math.max(0, Number(payload.progress || 0)))
+
+  const { rows: exists } = await db.query('SELECT id FROM services WHERE id = $1', [id])
+  if (!exists.length) return res.status(404).json({ message: 'Service not found' })
+
+  const { rows } = await db.query(
+    `UPDATE services
+     SET status=$1, assigned_user_ids=$2::jsonb, platforms=$3::jsonb, website_url=$4, progress=$5, notes=$6, updated_at=NOW()
+     WHERE id=$7
+     RETURNING *`,
+    [
+      status,
+      JSON.stringify(assignedUsers),
+      JSON.stringify(serviceType === 'social_media_management' ? platforms : []),
+      serviceType === 'website_development' ? payload.website_url || null : null,
+      serviceType === 'website_development' ? progress : 0,
+      payload.notes || null,
+      id,
+    ]
+  )
+  await addAuditLog(req.user.id, 'update_service', 'services', id)
+  res.json(rows[0])
+})
+
+// Tasks (CRM)
+app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+  const statusTab = String(req.query.tab || 'active').trim().toLowerCase()
+  const search = String(req.query.search || '').trim()
+  const clientId = Number.parseInt(req.query.client_id, 10) || null
+  const assignedTo = Number.parseInt(req.query.assigned_to, 10) || null
+  const { limit, offset } = parsePagination(req.query, 10, 50)
+  const today = new Date().toISOString().slice(0, 10)
+
+  let sql = `SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email
+             FROM tasks t
+             LEFT JOIN clients c ON t.client_id = c.id
+             LEFT JOIN services s ON t.service_id = s.id
+             LEFT JOIN users u ON t.assigned_to = u.id
+             WHERE 1=1`
+  const params = []
+  if (req.user.role === 'employee') {
+    params.push(req.user.id)
+    sql += ` AND t.assigned_to = $${params.length}`
+  }
+  if (statusTab === 'active') sql += ` AND t.status IN ('pending','in_progress')`
+  if (statusTab === 'completed') sql += ` AND t.status = 'completed'`
+  if (statusTab === 'overdue') {
+    params.push(today)
+    sql += ` AND t.status IN ('pending','in_progress') AND t.due_date < $${params.length}`
+  }
+  if (search) {
+    params.push(`%${search}%`)
+    sql += ` AND t.title ILIKE $${params.length}`
+  }
+  if (clientId) {
+    params.push(clientId)
+    sql += ` AND t.client_id = $${params.length}`
+  }
+  if (assignedTo) {
+    params.push(assignedTo)
+    sql += ` AND t.assigned_to = $${params.length}`
+  }
+  const countSql = sql.replace('SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email', 'SELECT COUNT(*)::int AS total')
+  const countResult = await db.query(countSql, params)
+  params.push(limit)
+  params.push(offset)
+  sql += ` ORDER BY t.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`
+  const { rows } = await db.query(sql, params)
+  res.json({ items: rows, total: Number(countResult.rows[0]?.total || 0), limit, offset })
+})
+
+app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const payload = req.body || {}
+  if (!payload.title || !payload.assigned_to || !payload.due_date) {
+    return res.status(400).json({ message: 'Task title, assigned user, and due date are required' })
+  }
+  const status = normalizeEnum(payload.status, TASK_STATUSES, { defaultValue: 'pending' })
+  const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
+  if ((payload.status || '') && !status) return res.status(400).json({ message: 'Invalid task status' })
+  if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
+  const { rows } = await db.query(
+    `INSERT INTO tasks
+     (title, description, client_id, service_id, assigned_to, status, priority, due_date, is_automated, automation_rule_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     RETURNING *`,
+    [
+      payload.title,
+      payload.description || null,
+      payload.client_id || null,
+      payload.service_id || null,
+      payload.assigned_to,
+      status,
+      priority,
+      payload.due_date,
+      Boolean(payload.is_automated),
+      payload.automation_rule_id || null,
+    ]
+  )
+  await createNotification({
+    userId: payload.assigned_to,
+    type: 'task_assigned',
+    title: `New Task Assigned: ${payload.title}`,
+    message: payload.description || null,
+    targetTable: 'tasks',
+    targetId: rows[0]?.id,
+  })
+  await addAuditLog(req.user.id, 'create_task', 'tasks', rows[0]?.id)
+  res.json(rows[0])
+})
+
+app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid task id' })
+  const payload = req.body || {}
+  if (!payload.title || !payload.assigned_to || !payload.due_date) {
+    return res.status(400).json({ message: 'Task title, assigned user, and due date are required' })
+  }
+  const status = normalizeEnum(payload.status, TASK_STATUSES, { defaultValue: 'pending' })
+  const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
+  if ((payload.status || '') && !status) return res.status(400).json({ message: 'Invalid task status' })
+  if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
+  const { rows } = await db.query(
+    `UPDATE tasks
+     SET title=$1, description=$2, client_id=$3, service_id=$4, assigned_to=$5, status=$6, priority=$7, due_date=$8, updated_at=NOW()
+     WHERE id=$9
+     RETURNING *`,
+    [
+      payload.title,
+      payload.description || null,
+      payload.client_id || null,
+      payload.service_id || null,
+      payload.assigned_to,
+      status,
+      priority,
+      payload.due_date,
+      id,
+    ]
+  )
+  if (!rows.length) return res.status(404).json({ message: 'Task not found' })
+  await addAuditLog(req.user.id, 'update_task', 'tasks', id)
+  res.json(rows[0])
+})
+
+app.post('/api/tasks/:id/start', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid task id' })
+  const ownClause = req.user.role === 'employee' ? ' AND assigned_to = $2' : ''
+  const params = req.user.role === 'employee' ? [id, req.user.id] : [id]
+  const { rows } = await db.query(
+    `UPDATE tasks SET status='in_progress', updated_at=NOW()
+     WHERE id = $1${ownClause} AND status = 'pending'
+     RETURNING *`,
+    params
+  )
+  if (!rows.length) return res.status(400).json({ message: 'Task cannot be started' })
+  await addAuditLog(req.user.id, 'start_task', 'tasks', id)
+  res.json(rows[0])
+})
+
+app.post('/api/tasks/:id/complete', authRequired, uploadProof, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid task id' })
+  const ownCheck = req.user.role === 'employee' ? ' AND assigned_to = $2' : ''
+  const taskParams = req.user.role === 'employee' ? [id, req.user.id] : [id]
+  const taskResult = await db.query(`SELECT * FROM tasks WHERE id = $1${ownCheck}`, taskParams)
+  const task = taskResult.rows[0]
+  if (!task) return res.status(404).json({ message: 'Task not found' })
+
+  let proofName = task.proof_of_work_name
+  let proofType = task.proof_of_work_type
+  let proofData = task.proof_of_work_data
+  if (req.file) {
+    proofName = req.file.originalname
+    proofType = req.file.mimetype
+    proofData = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
+  }
+
+  const { rows } = await db.query(
+    `UPDATE tasks
+     SET status='completed', completed_date=NOW(), completion_notes=$1,
+         proof_of_work_name=$2, proof_of_work_type=$3, proof_of_work_data=$4, updated_at=NOW()
+     WHERE id = $5
+     RETURNING *`,
+    [req.body?.completion_notes || null, proofName, proofType, proofData, id]
+  )
+  await createNotification({
+    userId: task.assigned_to,
+    type: 'task_completed',
+    title: `Task Completed: ${task.title}`,
+    message: req.body?.completion_notes || null,
+    targetTable: 'tasks',
+    targetId: id,
+  })
+  await addAuditLog(req.user.id, 'complete_task', 'tasks', id)
+  res.json(rows[0])
+})
+
+app.post('/api/tasks/:id/cancel', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid task id' })
+  const { rows } = await db.query(
+    `UPDATE tasks SET status='cancelled', updated_at=NOW() WHERE id=$1 RETURNING *`,
+    [id]
+  )
+  if (!rows.length) return res.status(404).json({ message: 'Task not found' })
+  await addAuditLog(req.user.id, 'cancel_task', 'tasks', id)
+  res.json(rows[0])
+})
+
+app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid task id' })
+  const ownCheck = req.user.role === 'employee' ? ' AND assigned_to = $2' : ''
+  const params = req.user.role === 'employee' ? [id, req.user.id] : [id]
+  const { rows } = await db.query(
+    `SELECT proof_of_work_name, proof_of_work_type, proof_of_work_data FROM tasks WHERE id = $1${ownCheck}`,
+    params
+  )
+  const task = rows[0]
+  if (!task) return res.status(404).json({ message: 'Task not found' })
+  if (!task.proof_of_work_data) return res.status(404).json({ message: 'No proof uploaded' })
+  const match = String(task.proof_of_work_data).match(/^data:(.+);base64,(.*)$/)
+  if (!match) return res.status(400).json({ message: 'Invalid proof data' })
+  res.setHeader('Content-Type', task.proof_of_work_type || match[1] || 'application/octet-stream')
+  res.setHeader('Content-Disposition', 'inline')
+  res.send(Buffer.from(match[2], 'base64'))
+})
+
+// Automation rules (CRM)
+app.get('/api/automation-rules', authRequired, requireRole(['admin']), async (req, res) => {
+  const clientId = Number.parseInt(req.query.client_id, 10) || null
+  let sql = `SELECT r.*, c.company_name, u.email AS assigned_email, s.service_type
+             FROM automation_rules r
+             JOIN clients c ON r.client_id = c.id
+             LEFT JOIN users u ON r.assigned_to = u.id
+             LEFT JOIN services s ON r.service_id = s.id
+             WHERE 1=1`
+  const params = []
+  if (clientId) {
+    params.push(clientId)
+    sql += ` AND r.client_id = $${params.length}`
+  }
+  sql += ' ORDER BY r.created_at DESC'
+  const { rows } = await db.query(sql, params)
+  res.json(rows)
+})
+
+app.post('/api/automation-rules', authRequired, requireRole(['admin']), async (req, res) => {
+  const payload = req.body || {}
+  if (!payload.rule_name || !payload.client_id || !payload.task_title_template || !payload.assigned_to) {
+    return res.status(400).json({ message: 'Rule name, client, task title template, and assigned user are required' })
+  }
+  const schedule = normalizeEnum(payload.schedule_type, AUTOMATION_SCHEDULES, { defaultValue: 'daily' })
+  const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
+  if ((payload.schedule_type || '') && !schedule) return res.status(400).json({ message: 'Invalid schedule type' })
+  if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid priority' })
+  const customDays = schedule === 'custom' ? normalizeDaysOfWeek(payload.custom_days) : []
+  const { rows } = await db.query(
+    `INSERT INTO automation_rules
+     (rule_name, client_id, service_id, task_title_template, task_description_template, assigned_to, priority, schedule_type, custom_days, start_date, end_date, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12)
+     RETURNING *`,
+    [
+      payload.rule_name,
+      payload.client_id,
+      payload.service_id || null,
+      payload.task_title_template,
+      payload.task_description_template || null,
+      payload.assigned_to,
+      priority,
+      schedule,
+      JSON.stringify(customDays),
+      payload.start_date || null,
+      payload.end_date || null,
+      payload.is_active !== false,
+    ]
+  )
+  await addAuditLog(req.user.id, 'create_automation_rule', 'automation_rules', rows[0]?.id)
+  res.json(rows[0])
+})
+
+app.put('/api/automation-rules/:id', authRequired, requireRole(['admin']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid rule id' })
+  const payload = req.body || {}
+  if (!payload.rule_name || !payload.client_id || !payload.task_title_template || !payload.assigned_to) {
+    return res.status(400).json({ message: 'Rule name, client, task title template, and assigned user are required' })
+  }
+  const schedule = normalizeEnum(payload.schedule_type, AUTOMATION_SCHEDULES, { defaultValue: 'daily' })
+  const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
+  if ((payload.schedule_type || '') && !schedule) return res.status(400).json({ message: 'Invalid schedule type' })
+  if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid priority' })
+  const customDays = schedule === 'custom' ? normalizeDaysOfWeek(payload.custom_days) : []
+  const { rows } = await db.query(
+    `UPDATE automation_rules
+     SET rule_name=$1, client_id=$2, service_id=$3, task_title_template=$4, task_description_template=$5,
+         assigned_to=$6, priority=$7, schedule_type=$8, custom_days=$9::jsonb, start_date=$10, end_date=$11,
+         is_active=$12, updated_at=NOW()
+     WHERE id=$13
+     RETURNING *`,
+    [
+      payload.rule_name,
+      payload.client_id,
+      payload.service_id || null,
+      payload.task_title_template,
+      payload.task_description_template || null,
+      payload.assigned_to,
+      priority,
+      schedule,
+      JSON.stringify(customDays),
+      payload.start_date || null,
+      payload.end_date || null,
+      payload.is_active !== false,
+      id,
+    ]
+  )
+  if (!rows.length) return res.status(404).json({ message: 'Rule not found' })
+  await addAuditLog(req.user.id, 'update_automation_rule', 'automation_rules', id)
+  res.json(rows[0])
+})
+
+app.post('/api/automation-rules/:id/toggle', authRequired, requireRole(['admin']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid rule id' })
+  const { rows } = await db.query('SELECT * FROM automation_rules WHERE id = $1', [id])
+  const rule = rows[0]
+  if (!rule) return res.status(404).json({ message: 'Rule not found' })
+  if (isRuleExpired(rule)) return res.status(400).json({ message: 'Expired rule cannot be toggled' })
+  const nextState = !rule.is_active
+  const result = await db.query('UPDATE automation_rules SET is_active=$1, updated_at=NOW() WHERE id=$2 RETURNING *', [nextState, id])
+  await addAuditLog(req.user.id, nextState ? 'activate_automation_rule' : 'pause_automation_rule', 'automation_rules', id)
+  res.json(result.rows[0])
+})
+
+app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid rule id' })
+  const { rows } = await db.query('SELECT * FROM automation_rules WHERE id = $1', [id])
+  const rule = rows[0]
+  if (!rule) return res.status(404).json({ message: 'Rule not found' })
+  const dueDate = new Date().toISOString().slice(0, 10)
+  const taskResult = await db.query(
+    `INSERT INTO tasks
+     (title, description, client_id, service_id, assigned_to, status, priority, due_date, is_automated, automation_rule_id)
+     VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,TRUE,$8)
+     RETURNING *`,
+    [
+      rule.task_title_template,
+      rule.task_description_template || null,
+      rule.client_id,
+      rule.service_id || null,
+      rule.assigned_to,
+      rule.priority || 'medium',
+      dueDate,
+      id,
+    ]
+  )
+  await createNotification({
+    userId: rule.assigned_to,
+    type: 'task_assigned',
+    title: `New Task Assigned: ${rule.task_title_template}`,
+    message: 'Created by automation rule.',
+    targetTable: 'tasks',
+    targetId: taskResult.rows[0]?.id,
+  })
+  await addAuditLog(req.user.id, 'run_automation_rule', 'automation_rules', id)
+  res.json(taskResult.rows[0])
+})
+
+app.delete('/api/automation-rules/:id', authRequired, requireRole(['admin']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid rule id' })
+  const { rows } = await db.query('DELETE FROM automation_rules WHERE id = $1 RETURNING id', [id])
+  if (!rows.length) return res.status(404).json({ message: 'Rule not found' })
+  await addAuditLog(req.user.id, 'delete_automation_rule', 'automation_rules', id)
+  res.json({ message: 'Rule deleted' })
 })
 
 // Leave types

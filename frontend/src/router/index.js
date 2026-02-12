@@ -45,15 +45,13 @@ const routes = [
       {
         path: 'services',
         name: 'Services',
-        component: () => import('@/views/ComingSoonView.vue'),
-        props: { title: 'Services', description: 'Service delivery tracking per client.' },
+        component: () => import('@/views/ServicesView.vue'),
         meta: { roles: ['admin', 'hr'] },
       },
       {
         path: 'tasks',
         name: 'Tasks',
-        component: () => import('@/views/ComingSoonView.vue'),
-        props: { title: 'Tasks', description: 'Task board for agency operations.' },
+        component: () => import('@/views/TasksView.vue'),
         meta: { roles: ['admin', 'hr'] },
       },
       {
@@ -66,8 +64,7 @@ const routes = [
       {
         path: 'automation',
         name: 'Automation',
-        component: () => import('@/views/ComingSoonView.vue'),
-        props: { title: 'Automation', description: 'Recurring rule-based task generation.' },
+        component: () => import('@/views/AutomationView.vue'),
         meta: { roles: ['admin'] },
       },
       {

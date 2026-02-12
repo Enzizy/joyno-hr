@@ -185,3 +185,80 @@ export async function getClientConversations(id) {
 export async function createClientConversation(id, data) {
   return request(`/api/clients/${id}/conversations`, { method: 'POST', body: JSON.stringify(data) })
 }
+
+export async function getServices(options = {}) {
+  const params = new URLSearchParams()
+  if (options.search) params.set('search', options.search)
+  if (options.type && options.type !== 'all') params.set('type', options.type)
+  if (options.client_id) params.set('client_id', options.client_id)
+  const qs = params.toString()
+  return request(`/api/services${qs ? `?${qs}` : ''}`)
+}
+
+export async function updateService(id, data) {
+  return request(`/api/services/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function getTasks(options = {}) {
+  const params = new URLSearchParams()
+  if (options.tab) params.set('tab', options.tab)
+  if (options.search) params.set('search', options.search)
+  if (options.client_id) params.set('client_id', options.client_id)
+  if (options.assigned_to) params.set('assigned_to', options.assigned_to)
+  if (options.limit) params.set('limit', options.limit)
+  if (options.offset || options.offset === 0) params.set('offset', options.offset)
+  const qs = params.toString()
+  return request(`/api/tasks${qs ? `?${qs}` : ''}`)
+}
+
+export async function createTask(data) {
+  return request('/api/tasks', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function updateTask(id, data) {
+  return request(`/api/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function startTask(id) {
+  return request(`/api/tasks/${id}/start`, { method: 'POST' })
+}
+
+export async function cancelTask(id) {
+  return request(`/api/tasks/${id}/cancel`, { method: 'POST' })
+}
+
+export async function completeTask(id, data) {
+  const isFormData = typeof FormData !== 'undefined' && data instanceof FormData
+  return request(`/api/tasks/${id}/complete`, { method: 'POST', body: isFormData ? data : JSON.stringify(data) })
+}
+
+export function getTaskProofUrl(id) {
+  return `${API_BASE}/api/tasks/${id}/proof`
+}
+
+export async function getAutomationRules(options = {}) {
+  const params = new URLSearchParams()
+  if (options.client_id) params.set('client_id', options.client_id)
+  const qs = params.toString()
+  return request(`/api/automation-rules${qs ? `?${qs}` : ''}`)
+}
+
+export async function createAutomationRule(data) {
+  return request('/api/automation-rules', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function updateAutomationRule(id, data) {
+  return request(`/api/automation-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function toggleAutomationRule(id) {
+  return request(`/api/automation-rules/${id}/toggle`, { method: 'POST' })
+}
+
+export async function runAutomationRuleNow(id) {
+  return request(`/api/automation-rules/${id}/run-now`, { method: 'POST' })
+}
+
+export async function deleteAutomationRule(id) {
+  return request(`/api/automation-rules/${id}`, { method: 'DELETE' })
+}

@@ -135,3 +135,63 @@ export async function getClientConversations(id) {
 export async function createClientConversation(id, data) {
   return api.createClientConversation(id, data)
 }
+
+export async function getServices(options = {}) {
+  return api.getServices(options)
+}
+
+export async function updateService(id, data) {
+  return api.updateService(id, data)
+}
+
+export async function getTasks(options = {}) {
+  return api.getTasks(options)
+}
+
+export async function createTask(data) {
+  return api.createTask(data)
+}
+
+export async function updateTask(id, data) {
+  return api.updateTask(id, data)
+}
+
+export async function startTask(id) {
+  return api.startTask(id)
+}
+
+export async function cancelTask(id) {
+  return api.cancelTask(id)
+}
+
+export async function completeTask(id, data) {
+  return api.completeTask(id, data)
+}
+
+export function getTaskProofUrl(id) {
+  return api.getTaskProofUrl(id)
+}
+
+export async function getAutomationRules(options = {}) {
+  return api.getAutomationRules(options)
+}
+
+export async function createAutomationRule(data) {
+  return api.createAutomationRule(data)
+}
+
+export async function updateAutomationRule(id, data) {
+  return api.updateAutomationRule(id, data)
+}
+
+export async function toggleAutomationRule(id) {
+  return api.toggleAutomationRule(id)
+}
+
+export async function runAutomationRuleNow(id) {
+  return api.runAutomationRuleNow(id)
+}
+
+export async function deleteAutomationRule(id) {
+  return api.deleteAutomationRule(id)
+}

@@ -4,6 +4,12 @@ const CLIENT_STATUSES = ['active', 'paused', 'inactive']
 const CLIENT_PACKAGES = ['basic', 'standard', 'premium', 'enterprise', 'custom']
 const LEAD_SERVICES = ['social_media', 'website_dev']
 const CLIENT_SERVICES = ['social_media_management', 'website_development']
+const SERVICE_STATUSES = ['not_started', 'in_progress', 'active', 'completed', 'paused']
+const SOCIAL_PLATFORMS = ['instagram', 'facebook', 'twitter', 'linkedin', 'tiktok', 'youtube']
+const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled']
+const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent']
+const AUTOMATION_SCHEDULES = ['daily', 'weekdays', 'custom']
+const WEEK_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
 function normalizeEnum(value, allowed, { defaultValue = null, allowNull = false } = {}) {
   if (value == null || value === '') return defaultValue
@@ -25,6 +31,11 @@ function parsePagination(query, defaultLimit = 10, maxLimit = 50) {
   return { limit, offset }
 }
 
+function normalizeDaysOfWeek(value) {
+  const items = Array.isArray(value) ? value : []
+  return [...new Set(items.map((item) => String(item || '').trim().toLowerCase()).filter((item) => WEEK_DAYS.includes(item)))]
+}
+
 function calculateContractEndDate(contractStartDate, durationMonths) {
   if (!contractStartDate || !durationMonths) return null
   const start = new Date(contractStartDate)
@@ -40,9 +51,15 @@ module.exports = {
   CLIENT_PACKAGES,
   LEAD_SERVICES,
   CLIENT_SERVICES,
+  SERVICE_STATUSES,
+  SOCIAL_PLATFORMS,
+  TASK_STATUSES,
+  TASK_PRIORITIES,
+  AUTOMATION_SCHEDULES,
+  WEEK_DAYS,
   normalizeEnum,
   normalizeServices,
+  normalizeDaysOfWeek,
   parsePagination,
   calculateContractEndDate,
 }
-
