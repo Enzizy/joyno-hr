@@ -9,6 +9,18 @@ const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const db = require('./db')
 const { addAuditLog, updateEmployeeStatus } = require('./helpers')
+const {
+  LEAD_STATUSES,
+  LEAD_SOURCES,
+  CLIENT_STATUSES,
+  CLIENT_PACKAGES,
+  LEAD_SERVICES,
+  CLIENT_SERVICES,
+  normalizeEnum,
+  normalizeServices,
+  parsePagination,
+  calculateContractEndDate,
+} = require('./crm')
 
 const app = express()
 app.set('trust proxy', 1)
@@ -87,14 +99,6 @@ async function ensureDefaultLeaveTypes() {
   } catch (err) {
     console.error('Failed to seed leave types', err)
   }
-}
-
-function calculateContractEndDate(contractStartDate, durationMonths) {
-  if (!contractStartDate || !durationMonths) return null
-  const start = new Date(contractStartDate)
-  if (Number.isNaN(start.getTime())) return null
-  start.setMonth(start.getMonth() + Number(durationMonths))
-  return start.toISOString().slice(0, 10)
 }
 
 function signToken(user) {
@@ -282,9 +286,10 @@ app.delete('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), asy
 
 // Leads (CRM)
 app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const status = String(req.query.status || '').trim().toLowerCase()
-  const source = String(req.query.source || '').trim().toLowerCase()
+  const status = normalizeEnum(req.query.status, LEAD_STATUSES, { defaultValue: null, allowNull: true })
+  const source = normalizeEnum(req.query.source, LEAD_SOURCES, { defaultValue: null, allowNull: true })
   const search = String(req.query.search || '').trim()
+  const { limit, offset } = parsePagination(req.query, 10, 50)
   let sql = 'SELECT * FROM leads WHERE 1=1'
   const params = []
   if (status) {
@@ -299,9 +304,13 @@ app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, re
     params.push(`%${search}%`)
     sql += ` AND (company_name ILIKE $${params.length} OR contact_name ILIKE $${params.length} OR email ILIKE $${params.length})`
   }
-  sql += ' ORDER BY created_at DESC'
+  const countSql = sql.replace('SELECT *', 'SELECT COUNT(*)::int AS total')
+  const countResult = await db.query(countSql, params)
+  params.push(limit)
+  params.push(offset)
+  sql += ` ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`
   const { rows } = await db.query(sql, params)
-  res.json(rows)
+  res.json({ items: rows, total: Number(countResult.rows[0]?.total || 0), limit, offset })
 })
 
 app.post('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
@@ -309,7 +318,22 @@ app.post('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, r
   if (!payload.company_name || !payload.contact_name || !payload.email) {
     return res.status(400).json({ message: 'Company name, contact name, and email are required' })
   }
-  const interestedServices = Array.isArray(payload.interested_services) ? payload.interested_services : []
+  const status = normalizeEnum(payload.status, LEAD_STATUSES, { defaultValue: 'new' })
+  const source = normalizeEnum(payload.source, LEAD_SOURCES, { defaultValue: null, allowNull: true })
+  if ((payload.status || '') && !status) {
+    return res.status(400).json({ message: 'Invalid lead status' })
+  }
+  if ((payload.source || '') && !source) {
+    return res.status(400).json({ message: 'Invalid lead source' })
+  }
+  const interestedServices = normalizeServices(payload.interested_services, LEAD_SERVICES)
+  const duplicate = await db.query(
+    'SELECT id FROM leads WHERE LOWER(company_name) = LOWER($1) AND LOWER(email) = LOWER($2) LIMIT 1',
+    [payload.company_name, payload.email]
+  )
+  if (duplicate.rows.length) {
+    return res.status(409).json({ message: 'Lead already exists for this company and email' })
+  }
   const { rows } = await db.query(
     `INSERT INTO leads
      (company_name, contact_name, email, phone, source, status, interested_services, estimated_value, next_follow_up, notes)
@@ -320,8 +344,8 @@ app.post('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, r
       payload.contact_name,
       payload.email,
       payload.phone || null,
-      payload.source || null,
-      payload.status || 'new',
+      source,
+      status,
       JSON.stringify(interestedServices),
       payload.estimated_value || 0,
       payload.next_follow_up || null,
@@ -340,7 +364,22 @@ app.put('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (req
   if (!payload.company_name || !payload.contact_name || !payload.email) {
     return res.status(400).json({ message: 'Company name, contact name, and email are required' })
   }
-  const interestedServices = Array.isArray(payload.interested_services) ? payload.interested_services : []
+  const status = normalizeEnum(payload.status, LEAD_STATUSES, { defaultValue: 'new' })
+  const source = normalizeEnum(payload.source, LEAD_SOURCES, { defaultValue: null, allowNull: true })
+  if ((payload.status || '') && !status) {
+    return res.status(400).json({ message: 'Invalid lead status' })
+  }
+  if ((payload.source || '') && !source) {
+    return res.status(400).json({ message: 'Invalid lead source' })
+  }
+  const interestedServices = normalizeServices(payload.interested_services, LEAD_SERVICES)
+  const duplicate = await db.query(
+    'SELECT id FROM leads WHERE LOWER(company_name) = LOWER($1) AND LOWER(email) = LOWER($2) AND id <> $3 LIMIT 1',
+    [payload.company_name, payload.email, id]
+  )
+  if (duplicate.rows.length) {
+    return res.status(409).json({ message: 'Lead already exists for this company and email' })
+  }
   const { rows } = await db.query(
     `UPDATE leads SET
       company_name=$1, contact_name=$2, email=$3, phone=$4, source=$5, status=$6,
@@ -352,8 +391,8 @@ app.put('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (req
       payload.contact_name,
       payload.email,
       payload.phone || null,
-      payload.source || null,
-      payload.status || 'new',
+      source,
+      status,
       JSON.stringify(interestedServices),
       payload.estimated_value || 0,
       payload.next_follow_up || null,
@@ -419,10 +458,22 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
   const lead = rows[0]
   if (!lead) return res.status(404).json({ message: 'Lead not found' })
   if (lead.status === 'converted') return res.status(400).json({ message: 'Lead already converted' })
+  const existingActiveClient = await db.query(
+    `SELECT id FROM clients
+     WHERE status = 'active'
+       AND LOWER(company_name) = LOWER($1)
+       AND LOWER(email) = LOWER($2)
+     LIMIT 1`,
+    [lead.company_name, lead.email]
+  )
+  if (existingActiveClient.rows.length) {
+    return res.status(409).json({ message: 'An active client already exists for this company and email' })
+  }
 
   const contractStart = payload.contract_start_date || null
   const contractEnd = calculateContractEndDate(contractStart, payload.contract_duration_months)
-  const selectedServices = Array.isArray(payload.services) ? payload.services : []
+  const selectedServices = normalizeServices(payload.services, CLIENT_SERVICES)
+  const packageName = normalizeEnum(payload.package_name, CLIENT_PACKAGES, { defaultValue: 'custom' })
   const clientResult = await db.query(
     `INSERT INTO clients
      (lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status)
@@ -434,7 +485,7 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
       lead.contact_name,
       lead.email,
       lead.phone || null,
-      payload.package_name || 'custom',
+      packageName,
       payload.monthly_value || 0,
       payload.package_details || null,
       JSON.stringify(selectedServices),
@@ -453,8 +504,9 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
 
 // Clients (CRM)
 app.get('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const status = String(req.query.status || '').trim().toLowerCase()
+  const status = normalizeEnum(req.query.status, CLIENT_STATUSES, { defaultValue: null, allowNull: true })
   const search = String(req.query.search || '').trim()
+  const { limit, offset } = parsePagination(req.query, 10, 50)
   let sql = 'SELECT * FROM clients WHERE 1=1'
   const params = []
   if (status) {
@@ -465,9 +517,13 @@ app.get('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, 
     params.push(`%${search}%`)
     sql += ` AND (company_name ILIKE $${params.length} OR contact_name ILIKE $${params.length} OR email ILIKE $${params.length})`
   }
-  sql += ' ORDER BY created_at DESC'
+  const countSql = sql.replace('SELECT *', 'SELECT COUNT(*)::int AS total')
+  const countResult = await db.query(countSql, params)
+  params.push(limit)
+  params.push(offset)
+  sql += ` ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`
   const { rows } = await db.query(sql, params)
-  res.json(rows)
+  res.json({ items: rows, total: Number(countResult.rows[0]?.total || 0), limit, offset })
 })
 
 app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
@@ -475,7 +531,28 @@ app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req,
   if (!payload.company_name || !payload.contact_name || !payload.email || !payload.contract_start_date) {
     return res.status(400).json({ message: 'Company, contact, email, and contract start date are required' })
   }
-  const selectedServices = Array.isArray(payload.services) ? payload.services : []
+  const selectedServices = normalizeServices(payload.services, CLIENT_SERVICES)
+  const status = normalizeEnum(payload.status, CLIENT_STATUSES, { defaultValue: 'active' })
+  const packageName = normalizeEnum(payload.package_name, CLIENT_PACKAGES, { defaultValue: 'custom' })
+  if ((payload.status || '') && !status) {
+    return res.status(400).json({ message: 'Invalid client status' })
+  }
+  if ((payload.package_name || '') && !packageName) {
+    return res.status(400).json({ message: 'Invalid package name' })
+  }
+  if (status === 'active') {
+    const duplicate = await db.query(
+      `SELECT id FROM clients
+       WHERE status = 'active'
+         AND LOWER(company_name) = LOWER($1)
+         AND LOWER(email) = LOWER($2)
+       LIMIT 1`,
+      [payload.company_name, payload.email]
+    )
+    if (duplicate.rows.length) {
+      return res.status(409).json({ message: 'An active client already exists for this company and email' })
+    }
+  }
   const duration = Number(payload.contract_duration_months || 12)
   const contractEnd = calculateContractEndDate(payload.contract_start_date, duration)
   const { rows } = await db.query(
@@ -489,7 +566,7 @@ app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req,
       payload.contact_name,
       payload.email,
       payload.phone || null,
-      payload.package_name || 'custom',
+      packageName,
       payload.monthly_value || 0,
       payload.package_details || null,
       JSON.stringify(selectedServices),
@@ -497,7 +574,7 @@ app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req,
       contractEnd,
       payload.address || null,
       payload.notes || null,
-      payload.status || 'active',
+      status,
     ]
   )
   await addAuditLog(req.user.id, 'create_client', 'clients', rows[0]?.id)
@@ -514,6 +591,28 @@ app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr']), async (r
   const currentResult = await db.query('SELECT * FROM clients WHERE id = $1', [id])
   if (!currentResult.rows.length) return res.status(404).json({ message: 'Client not found' })
   const current = currentResult.rows[0]
+  const status = normalizeEnum(payload.status, CLIENT_STATUSES, { defaultValue: 'active' })
+  const packageName = normalizeEnum(payload.package_name, CLIENT_PACKAGES, { defaultValue: 'custom' })
+  if ((payload.status || '') && !status) {
+    return res.status(400).json({ message: 'Invalid client status' })
+  }
+  if ((payload.package_name || '') && !packageName) {
+    return res.status(400).json({ message: 'Invalid package name' })
+  }
+  if (status === 'active') {
+    const duplicate = await db.query(
+      `SELECT id FROM clients
+       WHERE status = 'active'
+         AND LOWER(company_name) = LOWER($1)
+         AND LOWER(email) = LOWER($2)
+         AND id <> $3
+       LIMIT 1`,
+      [payload.company_name, payload.email, id]
+    )
+    if (duplicate.rows.length) {
+      return res.status(409).json({ message: 'An active client already exists for this company and email' })
+    }
+  }
   const duration = Number(payload.contract_duration_months || 12)
   const contractEnd = calculateContractEndDate(payload.contract_start_date, duration)
 
@@ -528,15 +627,15 @@ app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr']), async (r
       payload.contact_name,
       payload.email,
       payload.phone || null,
-      payload.package_name || 'custom',
+      packageName,
       payload.monthly_value || 0,
       payload.package_details || null,
-      JSON.stringify(Array.isArray(payload.services) && payload.allow_services_update ? payload.services : (current.services || [])),
+      JSON.stringify(Array.isArray(payload.services) && payload.allow_services_update ? normalizeServices(payload.services, CLIENT_SERVICES) : (current.services || [])),
       payload.contract_start_date,
       contractEnd,
       payload.address || null,
       payload.notes || null,
-      payload.status || 'active',
+      status,
       id,
     ]
   )

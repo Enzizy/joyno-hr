@@ -16,12 +16,16 @@ import AppModal from '@/components/ui/AppModal.vue'
 const toast = useToastStore()
 const loading = ref(false)
 const clients = ref([])
+const total = ref(0)
 const statusFilter = ref('all')
 const searchQuery = ref('')
+const pageSize = ref(10)
+const page = ref(1)
 const moreOpenId = ref(null)
 const showClientModal = ref(false)
 const editingClient = ref(null)
 const savingClient = ref(false)
+const openingConversationClientId = ref(null)
 
 const showConversationModal = ref(false)
 const conversationClient = ref(null)
@@ -55,6 +59,8 @@ const durationOptions = [
   { value: 24, label: '24 months' },
 ]
 
+const pageSizeOptions = [10, 20, 50]
+
 const clientForm = ref({
   company_name: '',
   contact_name: '',
@@ -78,22 +84,17 @@ const conversationForm = ref({
   outcome: '',
 })
 
-const filteredClients = computed(() => {
-  let rows = clients.value
-  if (statusFilter.value !== 'all') rows = rows.filter((row) => row.status === statusFilter.value)
-  const q = searchQuery.value.trim().toLowerCase()
-  if (q) {
-    rows = rows.filter((row) => {
-      const blob = `${row.company_name || ''} ${row.contact_name || ''} ${row.email || ''}`.toLowerCase()
-      return blob.includes(q)
-    })
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const offset = computed(() => (page.value - 1) * pageSize.value)
+const computedContractEnd = computed(() => calculateContractEndDate(clientForm.value.contract_start_date, clientForm.value.contract_duration_months))
+const emptyStateText = computed(() => {
+  if (searchQuery.value.trim()) return `No clients match "${searchQuery.value.trim()}".`
+  if (statusFilter.value !== 'all') {
+    const label = clientStatuses.find((s) => s.value === statusFilter.value)?.label || statusFilter.value
+    return `No ${label.toLowerCase()} clients found.`
   }
-  return rows
+  return 'No clients found.'
 })
-
-const computedContractEnd = computed(() =>
-  calculateContractEndDate(clientForm.value.contract_start_date, clientForm.value.contract_duration_months)
-)
 
 function formatDate(value) {
   if (!value) return '-'
@@ -187,8 +188,19 @@ function inferDurationMonths(startDate, endDate) {
 async function loadClients() {
   loading.value = true
   try {
-    const rows = await getClients()
+    const data = await getClients({
+      status: statusFilter.value,
+      search: searchQuery.value.trim(),
+      limit: pageSize.value,
+      offset: offset.value,
+    })
+    const rows = Array.isArray(data) ? data : data.items || []
     clients.value = rows.map((row) => ({ ...row, services: normalizeServices(row.services) }))
+    total.value = Array.isArray(data) ? rows.length : Number(data.total || 0)
+    if (page.value > totalPages.value) {
+      page.value = totalPages.value
+      await loadClients()
+    }
   } catch (err) {
     toast.error(err.message || 'Failed to load clients.')
   } finally {
@@ -197,6 +209,18 @@ async function loadClients() {
 }
 
 onMounted(loadClients)
+
+async function applyFilters() {
+  page.value = 1
+  await loadClients()
+}
+
+async function changePage(nextPage) {
+  const target = Math.min(Math.max(nextPage, 1), totalPages.value)
+  if (target === page.value) return
+  page.value = target
+  await loadClients()
+}
 
 function openCreate() {
   editingClient.value = null
@@ -276,6 +300,7 @@ async function openConversations(row) {
   conversationForm.value = { type: 'call', happened_at: '', summary: '', outcome: '' }
   showConversationModal.value = true
   conversationLoading.value = true
+  openingConversationClientId.value = row.id
   moreOpenId.value = null
   try {
     conversations.value = await getClientConversations(row.id)
@@ -284,6 +309,7 @@ async function openConversations(row) {
     toast.error(err.message || 'Failed to load conversations.')
   } finally {
     conversationLoading.value = false
+    openingConversationClientId.value = null
   }
 }
 
@@ -320,48 +346,37 @@ async function saveConversation() {
       <AppButton @click="openCreate">Add Client</AppButton>
     </div>
 
-    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-3">
+    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-4">
       <div class="sm:col-span-2">
         <label class="mb-1 block text-xs font-medium text-gray-400">Search</label>
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Company, contact, email"
-          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
-        />
+        <input v-model="searchQuery" type="text" placeholder="Company, contact, email" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500" @keyup.enter="applyFilters" />
       </div>
       <div>
         <label class="mb-1 block text-xs font-medium text-gray-400">Status</label>
-        <select
-          v-model="statusFilter"
-          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
-        >
+        <select v-model="statusFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500" @change="applyFilters">
           <option value="all">All statuses</option>
           <option v-for="status in clientStatuses" :key="status.value" :value="status.value">{{ status.label }}</option>
         </select>
       </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-400">Rows</label>
+        <select v-model.number="pageSize" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
+          <option v-for="size in pageSizeOptions" :key="size" :value="size">{{ size }}</option>
+        </select>
+      </div>
+      <div class="sm:col-span-3 flex items-end">
+        <AppButton variant="secondary" @click="applyFilters">Apply</AppButton>
+      </div>
     </div>
 
     <div class="space-y-3">
-      <div
-        v-for="row in filteredClients"
-        :key="row.id"
-        class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm"
-      >
+      <div v-for="row in clients" :key="row.id" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div class="space-y-2">
             <div class="flex flex-wrap items-center gap-2">
               <h3 class="text-lg font-semibold text-primary-200">{{ row.company_name }}</h3>
-              <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="statusTone(row.status)">
-                {{ statusLabel(row.status) }}
-              </span>
-              <span
-                v-if="contractWarning(row)"
-                class="rounded-full px-2 py-0.5 text-xs font-semibold"
-                :class="contractWarning(row).tone"
-              >
-                {{ contractWarning(row).text }}
-              </span>
+              <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="statusTone(row.status)">{{ statusLabel(row.status) }}</span>
+              <span v-if="contractWarning(row)" class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="contractWarning(row).tone">{{ contractWarning(row).text }}</span>
             </div>
             <p class="text-sm text-gray-300">{{ row.contact_name }}</p>
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-400">
@@ -370,36 +385,20 @@ async function saveConversation() {
               <span>{{ formatMoney(row.monthly_value) }}/mo</span>
             </div>
             <div class="flex flex-wrap gap-2">
-              <span
-                v-for="svc in normalizeServices(row.services)"
-                :key="`${row.id}-${svc}`"
-                class="rounded-full border px-2 py-0.5 text-xs"
-                :class="serviceTone(svc)"
-              >
-                {{ serviceLabel(svc) }}
-              </span>
-              <span class="rounded-full border border-gray-700 bg-gray-950 px-2 py-0.5 text-xs text-gray-300">
-                {{ packageLabel(row.package_name) }}
-              </span>
+              <span v-for="svc in normalizeServices(row.services)" :key="`${row.id}-${svc}`" class="rounded-full border px-2 py-0.5 text-xs" :class="serviceTone(svc)">{{ serviceLabel(svc) }}</span>
+              <span class="rounded-full border border-gray-700 bg-gray-950 px-2 py-0.5 text-xs text-gray-300">{{ packageLabel(row.package_name) }}</span>
             </div>
             <p class="text-xs text-gray-400">Contract: {{ formatDate(row.contract_start_date) }} - {{ formatDate(row.contract_end_date) }}</p>
           </div>
 
           <div class="relative flex items-center gap-2 self-start">
-            <AppButton variant="ghost" size="sm" @click="openConversations(row)">Conversation Log</AppButton>
-            <button
-              type="button"
-              class="rounded-lg p-2 text-gray-300 hover:bg-gray-800"
-              @click="moreOpenId = moreOpenId === row.id ? null : row.id"
-            >
+            <AppButton variant="ghost" size="sm" :loading="openingConversationClientId === row.id" @click="openConversations(row)">Conversation Log</AppButton>
+            <button type="button" class="rounded-lg p-2 text-gray-300 hover:bg-gray-800" @click="moreOpenId = moreOpenId === row.id ? null : row.id">
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6h.01M12 12h.01M12 18h.01" />
               </svg>
             </button>
-            <div
-              v-if="moreOpenId === row.id"
-              class="absolute right-0 top-10 z-10 w-48 rounded-lg border border-gray-800 bg-gray-900 py-1 shadow-lg"
-            >
+            <div v-if="moreOpenId === row.id" class="absolute right-0 top-10 z-10 w-48 rounded-lg border border-gray-800 bg-gray-900 py-1 shadow-lg">
               <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openEdit(row)">Edit Client</button>
               <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openConversations(row)">View Conversations</button>
               <RouterLink :to="`/services?client=${row.id}`" class="block px-3 py-2 text-sm text-gray-200 hover:bg-gray-800">View Services</RouterLink>
@@ -409,8 +408,17 @@ async function saveConversation() {
         </div>
       </div>
 
-      <div v-if="!filteredClients.length && !loading" class="rounded-xl border border-gray-800 bg-gray-900 p-10 text-center text-sm text-gray-400">
-        No clients found.
+      <div v-if="!clients.length && !loading" class="rounded-xl border border-gray-800 bg-gray-900 p-10 text-center text-sm text-gray-400">
+        {{ emptyStateText }}
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-300">
+      <span>Showing {{ clients.length ? offset + 1 : 0 }}-{{ offset + clients.length }} of {{ total }}</span>
+      <div class="flex items-center gap-2">
+        <AppButton variant="secondary" size="sm" :disabled="page <= 1" @click="changePage(page - 1)">Previous</AppButton>
+        <span>Page {{ page }} / {{ totalPages }}</span>
+        <AppButton variant="secondary" size="sm" :disabled="page >= totalPages" @click="changePage(page + 1)">Next</AppButton>
       </div>
     </div>
   </div>
@@ -442,19 +450,11 @@ async function saveConversation() {
         <label class="mb-2 block text-sm font-medium text-gray-200">Services</label>
         <div class="flex flex-wrap gap-4 text-sm text-gray-200">
           <label v-for="svc in serviceOptions" :key="svc.value" class="inline-flex items-center gap-2">
-            <input
-              v-model="clientForm.services"
-              :value="svc.value"
-              type="checkbox"
-              :disabled="Boolean(editingClient)"
-              class="rounded border-gray-700 bg-gray-900"
-            />
+            <input v-model="clientForm.services" :value="svc.value" type="checkbox" :disabled="Boolean(editingClient)" class="rounded border-gray-700 bg-gray-900" />
             <span>{{ svc.label }}</span>
           </label>
         </div>
-        <p v-if="editingClient" class="mt-2 text-xs text-gray-400">
-          Services cannot be changed here. Manage them in the Services section.
-        </p>
+        <p v-if="editingClient" class="mt-2 text-xs text-gray-400">Services cannot be changed here. Manage them in the Services section.</p>
       </div>
 
       <AppInput v-model="clientForm.monthly_value" type="number" label="Monthly Value ($)" />
@@ -492,11 +492,7 @@ async function saveConversation() {
       </div>
       <div v-if="conversationLoading" class="text-sm text-gray-400">Loading conversations...</div>
       <div v-else class="space-y-2">
-        <div
-          v-for="entry in conversations"
-          :key="entry.id"
-          class="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2"
-        >
+        <div v-for="entry in conversations" :key="entry.id" class="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
           <div class="flex items-center justify-between">
             <p class="text-sm font-medium text-primary-200 capitalize">{{ entry.type || 'Other' }}</p>
             <p class="text-xs text-gray-400">{{ formatDateTime(entry.happened_at) }}</p>

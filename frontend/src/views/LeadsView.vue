@@ -17,12 +17,19 @@ import AppModal from '@/components/ui/AppModal.vue'
 const toast = useToastStore()
 const loading = ref(false)
 const leads = ref([])
+const total = ref(0)
 const statusFilter = ref('all')
 const sourceFilter = ref('all')
 const searchQuery = ref('')
+const pageSize = ref(10)
+const page = ref(1)
 const moreOpenId = ref(null)
 const showLeadModal = ref(false)
 const editingLead = ref(null)
+const savingLead = ref(false)
+const deletingLeadId = ref(null)
+const openingConversationLeadId = ref(null)
+
 const showConversationModal = ref(false)
 const conversationLead = ref(null)
 const conversations = ref([])
@@ -30,7 +37,7 @@ const conversationLoading = ref(false)
 const conversationSaving = ref(false)
 const showConvertModal = ref(false)
 const convertLeadRow = ref(null)
-const converting = ref(false)
+const convertingLeadId = ref(null)
 
 const leadStatuses = [
   { value: 'new', label: 'New' },
@@ -55,6 +62,8 @@ const serviceOptions = [
   { value: 'social_media', label: 'Social Media' },
   { value: 'website_dev', label: 'Website Dev' },
 ]
+
+const pageSizeOptions = [10, 20, 50]
 
 const leadForm = ref({
   company_name: '',
@@ -86,18 +95,19 @@ const convertForm = ref({
   address: '',
 })
 
-const filteredLeads = computed(() => {
-  let rows = leads.value
-  if (statusFilter.value !== 'all') rows = rows.filter((row) => row.status === statusFilter.value)
-  if (sourceFilter.value !== 'all') rows = rows.filter((row) => row.source === sourceFilter.value)
-  const q = searchQuery.value.trim().toLowerCase()
-  if (q) {
-    rows = rows.filter((row) => {
-      const blob = `${row.company_name || ''} ${row.contact_name || ''} ${row.email || ''}`.toLowerCase()
-      return blob.includes(q)
-    })
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+const offset = computed(() => (page.value - 1) * pageSize.value)
+const emptyStateText = computed(() => {
+  if (searchQuery.value.trim()) return `No leads match "${searchQuery.value.trim()}".`
+  if (statusFilter.value !== 'all') {
+    const label = leadStatuses.find((s) => s.value === statusFilter.value)?.label || statusFilter.value
+    return `No ${label.toLowerCase()} leads found.`
   }
-  return rows
+  if (sourceFilter.value !== 'all') {
+    const label = sourceOptions.find((s) => s.value === sourceFilter.value)?.label || sourceFilter.value
+    return `No leads found from ${label}.`
+  }
+  return 'No leads found.'
 })
 
 function statusLabel(status) {
@@ -129,7 +139,24 @@ function formatDateTime(value) {
 async function loadLeads() {
   loading.value = true
   try {
-    leads.value = await getLeads()
+    const data = await getLeads({
+      status: statusFilter.value,
+      source: sourceFilter.value,
+      search: searchQuery.value.trim(),
+      limit: pageSize.value,
+      offset: offset.value,
+    })
+    if (Array.isArray(data)) {
+      leads.value = data
+      total.value = data.length
+    } else {
+      leads.value = data.items || []
+      total.value = Number(data.total || 0)
+    }
+    if (page.value > totalPages.value) {
+      page.value = totalPages.value
+      await loadLeads()
+    }
   } catch (err) {
     toast.error(err.message || 'Failed to load leads.')
   } finally {
@@ -138,6 +165,18 @@ async function loadLeads() {
 }
 
 onMounted(loadLeads)
+
+async function applyFilters() {
+  page.value = 1
+  await loadLeads()
+}
+
+async function changePage(nextPage) {
+  const target = Math.min(Math.max(nextPage, 1), totalPages.value)
+  if (target === page.value) return
+  page.value = target
+  await loadLeads()
+}
 
 function openCreate() {
   editingLead.value = null
@@ -179,6 +218,7 @@ async function saveLead() {
     toast.warning('Company, contact, and email are required.')
     return
   }
+  savingLead.value = true
   try {
     if (editingLead.value) {
       await updateLead(editingLead.value.id, leadForm.value)
@@ -191,18 +231,23 @@ async function saveLead() {
     await loadLeads()
   } catch (err) {
     toast.error(err.message || 'Failed to save lead.')
+  } finally {
+    savingLead.value = false
   }
 }
 
 async function removeLead(row) {
   moreOpenId.value = null
   if (!confirm(`Delete lead ${row.company_name}?`)) return
+  deletingLeadId.value = row.id
   try {
     await deleteLead(row.id)
     toast.success('Lead deleted.')
     await loadLeads()
   } catch (err) {
     toast.error(err.message || 'Failed to delete lead.')
+  } finally {
+    deletingLeadId.value = null
   }
 }
 
@@ -211,6 +256,7 @@ async function openConversations(row) {
   conversationForm.value = { type: 'call', happened_at: '', summary: '', outcome: '' }
   showConversationModal.value = true
   conversationLoading.value = true
+  openingConversationLeadId.value = row.id
   moreOpenId.value = null
   try {
     conversations.value = await getLeadConversations(row.id)
@@ -219,6 +265,7 @@ async function openConversations(row) {
     toast.error(err.message || 'Failed to load conversations.')
   } finally {
     conversationLoading.value = false
+    openingConversationLeadId.value = null
   }
 }
 
@@ -261,7 +308,7 @@ function openConvert(row) {
 
 async function confirmConvert() {
   if (!convertLeadRow.value) return
-  converting.value = true
+  convertingLeadId.value = convertLeadRow.value.id
   try {
     await convertLead(convertLeadRow.value.id, convertForm.value)
     toast.success('Lead converted to client.')
@@ -270,7 +317,7 @@ async function confirmConvert() {
   } catch (err) {
     toast.error(err.message || 'Failed to convert lead.')
   } finally {
-    converting.value = false
+    convertingLeadId.value = null
   }
 }
 </script>
@@ -285,44 +332,38 @@ async function confirmConvert() {
       <AppButton @click="openCreate">Add Lead</AppButton>
     </div>
 
-    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-3">
+    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-4">
       <div class="sm:col-span-2">
         <label class="mb-1 block text-xs font-medium text-gray-400">Search</label>
-        <input
-          v-model="searchQuery"
-          type="text"
-          placeholder="Company, contact, email"
-          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
-        />
+        <input v-model="searchQuery" type="text" placeholder="Company, contact, email" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500" @keyup.enter="applyFilters" />
       </div>
       <div>
         <label class="mb-1 block text-xs font-medium text-gray-400">Status</label>
-        <select
-          v-model="statusFilter"
-          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
-        >
+        <select v-model="statusFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500" @change="applyFilters">
           <option value="all">All statuses</option>
           <option v-for="status in leadStatuses" :key="status.value" :value="status.value">{{ status.label }}</option>
         </select>
       </div>
       <div>
         <label class="mb-1 block text-xs font-medium text-gray-400">Source</label>
-        <select
-          v-model="sourceFilter"
-          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
-        >
+        <select v-model="sourceFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500" @change="applyFilters">
           <option value="all">All sources</option>
           <option v-for="source in sourceOptions" :key="source.value" :value="source.value">{{ source.label }}</option>
         </select>
       </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-400">Rows</label>
+        <select v-model.number="pageSize" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
+          <option v-for="size in pageSizeOptions" :key="size" :value="size">{{ size }}</option>
+        </select>
+      </div>
+      <div class="sm:col-span-3 flex items-end">
+        <AppButton variant="secondary" @click="applyFilters">Apply</AppButton>
+      </div>
     </div>
 
     <div class="space-y-3">
-      <div
-        v-for="row in filteredLeads"
-        :key="row.id"
-        class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm"
-      >
+      <div v-for="row in leads" :key="row.id" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <div class="flex flex-wrap items-center gap-2">
@@ -337,11 +378,7 @@ async function confirmConvert() {
               <span>Source: {{ sourceLabel(row.source) }}</span>
             </div>
             <div v-if="Array.isArray(row.interested_services) && row.interested_services.length" class="mt-2 flex flex-wrap gap-2">
-              <span
-                v-for="svc in row.interested_services"
-                :key="`${row.id}-${svc}`"
-                class="rounded-full border border-gray-700 px-2 py-0.5 text-xs text-gray-300"
-              >
+              <span v-for="svc in row.interested_services" :key="`${row.id}-${svc}`" class="rounded-full border border-gray-700 px-2 py-0.5 text-xs text-gray-300">
                 {{ serviceLabel(svc) }}
               </span>
             </div>
@@ -351,33 +388,38 @@ async function confirmConvert() {
               v-if="row.status !== 'converted' && row.status !== 'lost'"
               variant="secondary"
               size="sm"
+              :loading="convertingLeadId === row.id"
               @click="openConvert(row)"
             >
               Convert
             </AppButton>
-            <AppButton variant="ghost" size="sm" @click="openConversations(row)">Conversation Log</AppButton>
-            <button
-              type="button"
-              class="rounded-lg p-2 text-gray-300 hover:bg-gray-800"
-              @click="moreOpenId = moreOpenId === row.id ? null : row.id"
-            >
+            <AppButton variant="ghost" size="sm" :loading="openingConversationLeadId === row.id" @click="openConversations(row)">Conversation Log</AppButton>
+            <button type="button" class="rounded-lg p-2 text-gray-300 hover:bg-gray-800" @click="moreOpenId = moreOpenId === row.id ? null : row.id">
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6h.01M12 12h.01M12 18h.01" />
               </svg>
             </button>
-            <div
-              v-if="moreOpenId === row.id"
-              class="absolute right-0 top-10 z-10 w-40 rounded-lg border border-gray-800 bg-gray-900 py-1 shadow-lg"
-            >
+            <div v-if="moreOpenId === row.id" class="absolute right-0 top-10 z-10 w-40 rounded-lg border border-gray-800 bg-gray-900 py-1 shadow-lg">
               <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openEdit(row)">Edit Lead</button>
               <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openConversations(row)">View Conversations</button>
-              <button type="button" class="block w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-gray-800" @click="removeLead(row)">Delete</button>
+              <button type="button" class="block w-full px-3 py-2 text-left text-sm text-red-400 hover:bg-gray-800 disabled:opacity-60" :disabled="deletingLeadId === row.id" @click="removeLead(row)">
+                {{ deletingLeadId === row.id ? 'Deleting...' : 'Delete' }}
+              </button>
             </div>
           </div>
         </div>
       </div>
-      <div v-if="!filteredLeads.length && !loading" class="rounded-xl border border-gray-800 bg-gray-900 p-10 text-center text-sm text-gray-400">
-        No leads found.
+      <div v-if="!leads.length && !loading" class="rounded-xl border border-gray-800 bg-gray-900 p-10 text-center text-sm text-gray-400">
+        {{ emptyStateText }}
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-300">
+      <span>Showing {{ leads.length ? offset + 1 : 0 }}-{{ offset + leads.length }} of {{ total }}</span>
+      <div class="flex items-center gap-2">
+        <AppButton variant="secondary" size="sm" :disabled="page <= 1" @click="changePage(page - 1)">Previous</AppButton>
+        <span>Page {{ page }} / {{ totalPages }}</span>
+        <AppButton variant="secondary" size="sm" :disabled="page >= totalPages" @click="changePage(page + 1)">Next</AppButton>
       </div>
     </div>
   </div>
@@ -419,7 +461,7 @@ async function confirmConvert() {
     </form>
     <template #footer>
       <AppButton variant="secondary" @click="showLeadModal = false">Cancel</AppButton>
-      <AppButton @click="saveLead">{{ editingLead ? 'Update Lead' : 'Add Lead' }}</AppButton>
+      <AppButton :loading="savingLead" @click="saveLead">{{ editingLead ? 'Update Lead' : 'Add Lead' }}</AppButton>
     </template>
   </AppModal>
 
@@ -430,11 +472,7 @@ async function confirmConvert() {
       </div>
       <div v-if="conversationLoading" class="text-sm text-gray-400">Loading conversations...</div>
       <div v-else class="space-y-2">
-        <div
-          v-for="entry in conversations"
-          :key="entry.id"
-          class="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2"
-        >
+        <div v-for="entry in conversations" :key="entry.id" class="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2">
           <div class="flex items-center justify-between">
             <p class="text-sm font-medium text-primary-200 capitalize">{{ entry.type || 'Other' }}</p>
             <p class="text-xs text-gray-400">{{ formatDateTime(entry.happened_at) }}</p>
@@ -528,8 +566,7 @@ async function confirmConvert() {
     </div>
     <template #footer>
       <AppButton variant="secondary" @click="showConvertModal = false">Cancel</AppButton>
-      <AppButton :loading="converting" @click="confirmConvert">Convert to Client</AppButton>
+      <AppButton :loading="Boolean(convertingLeadId)" @click="confirmConvert">Convert to Client</AppButton>
     </template>
   </AppModal>
 </template>
-

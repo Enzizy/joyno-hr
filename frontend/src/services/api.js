@@ -130,6 +130,8 @@ export async function getLeads(options = {}) {
   if (options.status && options.status !== 'all') params.set('status', options.status)
   if (options.source && options.source !== 'all') params.set('source', options.source)
   if (options.search) params.set('search', options.search)
+  if (options.limit) params.set('limit', options.limit)
+  if (options.offset || options.offset === 0) params.set('offset', options.offset)
   const qs = params.toString()
   return request(`/api/leads${qs ? `?${qs}` : ''}`)
 }
@@ -162,6 +164,8 @@ export async function getClients(options = {}) {
   const params = new URLSearchParams()
   if (options.status && options.status !== 'all') params.set('status', options.status)
   if (options.search) params.set('search', options.search)
+  if (options.limit) params.set('limit', options.limit)
+  if (options.offset || options.offset === 0) params.set('offset', options.offset)
   const qs = params.toString()
   return request(`/api/clients${qs ? `?${qs}` : ''}`)
 }
