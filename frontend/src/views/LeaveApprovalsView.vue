@@ -240,6 +240,7 @@ async function confirmReject() {
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Dates</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Pay</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Reason</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
@@ -254,6 +255,12 @@ async function confirmReject() {
           </td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ formatRange(row.start_date, row.end_date) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">
+            <span class="uppercase">{{ row.leave_pay_type || 'unpaid' }}</span>
+            <span v-if="Number(row.credits_deducted || 0) > 0" class="ml-1 text-xs text-gray-400">
+              ({{ Number(row.credits_deducted).toFixed(2) }} cr)
+            </span>
+          </td>
           <td class="px-4 py-3 text-sm text-gray-300 max-w-[140px] truncate">
             <button
               v-if="row.reason"
@@ -288,7 +295,7 @@ async function confirmReject() {
           </td>
         </tr>
         <tr v-if="!pagedRequests.length && !leaveStore.loading">
-          <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
+          <td colspan="9" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
         </tr>
       </tbody>
     </AppTable>

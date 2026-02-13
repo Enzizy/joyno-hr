@@ -145,6 +145,57 @@ async function ensureDefaultLeaveTypes() {
   }
 }
 
+async function ensureSchemaColumns() {
+  try {
+    await db.query(
+      "ALTER TABLE employees ADD COLUMN IF NOT EXISTS leave_credits NUMERIC(10,2) NOT NULL DEFAULT 0"
+    )
+    await db.query(
+      "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_pay_type VARCHAR(20) NOT NULL DEFAULT 'unpaid'"
+    )
+    await db.query(
+      'ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_days NUMERIC(10,2) NOT NULL DEFAULT 0'
+    )
+    await db.query(
+      'ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS credits_deducted NUMERIC(10,2) NOT NULL DEFAULT 0'
+    )
+  } catch (err) {
+    console.error('Failed to ensure schema columns', err)
+  }
+}
+
+function calculateLeaveDays(startDate, endDate) {
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
+  if (end < start) return null
+  const msPerDay = 24 * 60 * 60 * 1000
+  return Math.floor((end - start) / msPerDay) + 1
+}
+
+function isPaidLeaveEligible(dateHired, leaveStartDate) {
+  if (!dateHired || !leaveStartDate) return false
+  const hired = new Date(dateHired)
+  const leaveStart = new Date(leaveStartDate)
+  if (Number.isNaN(hired.getTime()) || Number.isNaN(leaveStart.getTime())) return false
+  hired.setFullYear(hired.getFullYear() + 1)
+  return leaveStart >= hired
+}
+
+function resolveLeaveCompensation(employee, startDate, endDate) {
+  const leaveDays = calculateLeaveDays(startDate, endDate)
+  if (!leaveDays || leaveDays <= 0) return null
+  const credits = Number(employee?.leave_credits || 0)
+  const eligible = isPaidLeaveEligible(employee?.date_hired, startDate)
+  if (!eligible) {
+    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+  }
+  if (credits >= leaveDays) {
+    return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
+  }
+  return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+}
+
 function signToken(user) {
   return jwt.sign(
     {
@@ -182,7 +233,7 @@ function requireRole(roles) {
 
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department, e.shift
+    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department, e.shift, e.date_hired, e.leave_credits
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
      WHERE u.id = $1`,
@@ -286,10 +337,11 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
+  const leaveCredits = Number(e.leave_credits ?? 0)
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, shift, date_hired, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     (employee_code, first_name, last_name, department, position, shift, date_hired, status, leave_credits)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING id`,
     [
       e.employee_code,
@@ -300,6 +352,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
       e.shift || 'day',
       e.date_hired,
       e.status || 'active',
+      Number.isFinite(leaveCredits) ? leaveCredits : 0,
     ]
   )
   const createdId = rows[0]?.id
@@ -310,10 +363,11 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
 
 app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
+  const leaveCredits = Number(e.leave_credits ?? 0)
   await db.query(
     `UPDATE employees
-     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, date_hired=$7, status=$8
-     WHERE id=$9`,
+     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, date_hired=$7, status=$8, leave_credits=$9
+     WHERE id=$10`,
     [
       e.employee_code,
       e.first_name,
@@ -323,6 +377,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
       e.shift || 'day',
       e.date_hired,
       e.status || 'active',
+      Number.isFinite(leaveCredits) ? leaveCredits : 0,
       req.params.id,
     ]
   )
@@ -1213,6 +1268,8 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
 
   const ltResult = await db.query('SELECT * FROM leave_types WHERE id = $1', [leave_type_id])
   const lt = ltResult.rows[0]
+  const compensation = resolveLeaveCompensation(emp, start_date, end_date)
+  if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
   let attachmentName = null
   let attachmentType = null
   let attachmentData = null
@@ -1224,8 +1281,8 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
 
   const { rows } = await db.query(
     `INSERT INTO leave_requests
-     (employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, attachment_name, attachment_type, attachment_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11)
+     (employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, leave_pay_type, leave_days, credits_deducted, attachment_name, attachment_type, attachment_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11,$12,$13,$14)
      RETURNING id`,
     [
       user.employee_id,
@@ -1236,6 +1293,9 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
       start_date,
       end_date,
       reason,
+      compensation.leavePayType,
+      compensation.leaveDays,
+      compensation.creditsDeducted,
       attachmentName,
       attachmentType,
       attachmentData,
@@ -1278,6 +1338,11 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
 
   const ltResult = await db.query('SELECT * FROM leave_types WHERE id = $1', [leave_type_id])
   const lt = ltResult.rows[0]
+  const empResult = await db.query('SELECT * FROM employees WHERE id = $1', [req.user.employee_id])
+  const emp = empResult.rows[0]
+  if (!emp) return res.status(400).json({ message: 'No employee linked' })
+  const compensation = resolveLeaveCompensation(emp, start_date, end_date)
+  if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 
   let attachmentName = request.attachment_name
   let attachmentType = request.attachment_type
@@ -1291,14 +1356,18 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   await db.query(
     `UPDATE leave_requests
      SET leave_type_id=$1, leave_type_name=$2, start_date=$3, end_date=$4, reason=$5,
-         attachment_name=$6, attachment_type=$7, attachment_data=$8
-     WHERE id=$9`,
+         leave_pay_type=$6, leave_days=$7, credits_deducted=$8,
+         attachment_name=$9, attachment_type=$10, attachment_data=$11
+     WHERE id=$12`,
     [
       leave_type_id,
       lt?.name || null,
       start_date,
       end_date,
       reason,
+      compensation.leavePayType,
+      compensation.leaveDays,
+      compensation.creditsDeducted,
       attachmentName,
       attachmentType,
       attachmentData,
@@ -1312,13 +1381,45 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
 })
 
 app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const id = req.params.id
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
+  const { rows } = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const leaveRequest = rows[0]
+  if (!leaveRequest) return res.status(404).json({ message: 'Leave request not found' })
+  if (leaveRequest.status !== 'pending') {
+    return res.status(400).json({ message: 'Only pending requests can be approved' })
+  }
+
+  if (leaveRequest.leave_pay_type === 'paid') {
+    const employeeResult = await db.query('SELECT leave_credits FROM employees WHERE id = $1', [leaveRequest.employee_id])
+    const currentCredits = Number(employeeResult.rows[0]?.leave_credits || 0)
+    const creditsToDeduct = Number(leaveRequest.credits_deducted || 0)
+    if (creditsToDeduct > 0 && currentCredits < creditsToDeduct) {
+      await db.query(
+        "UPDATE leave_requests SET leave_pay_type='unpaid', credits_deducted=0 WHERE id=$1",
+        [id]
+      )
+    }
+  }
+
   await db.query(
-    `UPDATE leave_requests SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3 WHERE id=$4`,
+    `UPDATE leave_requests
+     SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3
+     WHERE id=$4`,
     [req.user.id, req.user.email, req.user.role, id]
   )
-  const employeeRows = await db.query('SELECT employee_id FROM leave_requests WHERE id = $1', [id])
-  const employeeId = employeeRows.rows[0]?.employee_id
+
+  const approvedResult = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const approvedRequest = approvedResult.rows[0]
+  const creditsToDeduct = Number(approvedRequest?.credits_deducted || 0)
+  if (approvedRequest?.leave_pay_type === 'paid' && creditsToDeduct > 0) {
+    await db.query(
+      'UPDATE employees SET leave_credits = GREATEST(leave_credits - $1, 0), updated_at = NOW() WHERE id = $2',
+      [creditsToDeduct, approvedRequest.employee_id]
+    )
+  }
+
+  const employeeId = approvedRequest?.employee_id
   await updateEmployeeStatus(employeeId)
   await addAuditLog(req.user.id, 'approve_leave_request', 'leave_requests', id)
   const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
@@ -1416,6 +1517,7 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
   sheet.columns = [
     { header: 'Employee', key: 'employee', width: 28 },
     { header: 'Leave type', key: 'type', width: 20 },
+    { header: 'Pay type', key: 'pay_type', width: 14 },
     { header: 'Reason', key: 'reason', width: 40 },
     { header: 'Days', key: 'days', width: 10 },
   ]
@@ -1429,15 +1531,17 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
 
   rows.forEach((r) => {
     const days =
-      r.start_date && r.end_date
+      Number(r.leave_days) ||
+      (r.start_date && r.end_date
         ? Math.max(
             1,
             Math.ceil((new Date(r.end_date) - new Date(r.start_date)) / (24 * 60 * 60 * 1000)) + 1
           )
-        : ''
+        : '')
     sheet.addRow({
       employee: r.employee_name || r.employee_id || '',
       type: r.leave_type_name || r.leave_type_id || '',
+      pay_type: r.leave_pay_type || 'unpaid',
       reason: r.reason || '',
       days,
     })
@@ -1478,5 +1582,6 @@ app.get('/api/audit-logs', authRequired, requireRole(['admin']), async (req, res
 const PORT = process.env.PORT || 3000
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`API running on port ${PORT}`)
+  ensureSchemaColumns()
   ensureDefaultLeaveTypes()
 })

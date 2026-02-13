@@ -39,6 +39,29 @@ const myRequests = computed(() => {
   if (!employeeId) return []
   return leaveStore.requests.filter((r) => r.employee_id === employeeId)
 })
+const leaveCredits = computed(() => Number(authStore.user?.leave_credits || 0))
+const requestedDays = computed(() => {
+  if (!form.value.start_date || !form.value.end_date) return 0
+  const start = new Date(form.value.start_date)
+  const end = new Date(form.value.end_date)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0
+  const msPerDay = 24 * 60 * 60 * 1000
+  return Math.floor((end - start) / msPerDay) + 1
+})
+function isPaidLeaveEligible(dateHired, leaveStartDate) {
+  if (!dateHired || !leaveStartDate) return false
+  const hired = new Date(dateHired)
+  const leaveStart = new Date(leaveStartDate)
+  if (Number.isNaN(hired.getTime()) || Number.isNaN(leaveStart.getTime())) return false
+  hired.setFullYear(hired.getFullYear() + 1)
+  return leaveStart >= hired
+}
+const payTypePreview = computed(() => {
+  if (!requestedDays.value) return '-'
+  const eligible = isPaidLeaveEligible(authStore.user?.date_hired, form.value.start_date)
+  if (!eligible) return 'unpaid'
+  return leaveCredits.value >= requestedDays.value ? 'paid' : 'unpaid'
+})
 const todayISO = computed(() => {
   const now = new Date()
   const year = now.getFullYear()
@@ -72,6 +95,7 @@ function hasOverlap(startDate, endDate, excludeId = null) {
 }
 
 onMounted(async () => {
+  await authStore.fetchMe()
   await leaveStore.fetchTypes()
   await leaveStore.fetchRequests({ scope: 'mine' })
 })
@@ -240,6 +264,10 @@ function onEditAttachmentChange(event) {
       <p v-if="isOnLeave" class="mb-3 rounded-lg border border-amber-900/40 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
         You are currently on leave and cannot submit another request.
       </p>
+      <div class="mb-4 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-gray-300">
+        <p>Available leave credits: <span class="font-semibold text-primary-200">{{ leaveCredits.toFixed(2) }}</span></p>
+        <p v-if="requestedDays">Requested days: <span class="font-semibold text-primary-200">{{ requestedDays }}</span> • This request will be <span class="font-semibold uppercase text-primary-200">{{ payTypePreview }}</span>.</p>
+      </div>
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">
         <div class="sm:col-span-2">
           <label class="mb-1 block text-sm font-medium text-gray-200">Leave type *</label>
@@ -301,6 +329,7 @@ function onEditAttachmentChange(event) {
           <tr>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Dates</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Pay</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Rejection reason</th>
@@ -311,6 +340,7 @@ function onEditAttachmentChange(event) {
           <tr v-for="row in myRequests" :key="row.id" class="hover:bg-gray-950">
             <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
+            <td class="px-4 py-3 text-sm text-gray-300 uppercase">{{ row.leave_pay_type || 'unpaid' }}</td>
             <td class="px-4 py-3">
               <StatusBadge :status="row.status" />
             </td>
@@ -346,7 +376,7 @@ function onEditAttachmentChange(event) {
             </td>
           </tr>
           <tr v-if="!myRequests.length && !leaveStore.loading">
-            <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
+            <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
           </tr>
         </tbody>
       </AppTable>
