@@ -288,8 +288,10 @@ async function confirmReject() {
           <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
           <td class="px-4 py-3 text-right">
             <template v-if="row.status === 'pending'">
-              <AppButton variant="primary" size="sm" @click="approve(row)">Approve</AppButton>
-              <AppButton variant="danger" size="sm" class="ml-1" @click="openRejectModal(row)">Reject</AppButton>
+              <div class="flex justify-end gap-1">
+                <AppButton variant="success" size="sm" @click="approve(row)">Approve</AppButton>
+                <AppButton variant="danger" size="sm" @click="openRejectModal(row)">Reject</AppButton>
+              </div>
             </template>
             <span v-else class="text-sm text-gray-400">-</span>
           </td>

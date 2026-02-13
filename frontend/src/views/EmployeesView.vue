@@ -58,6 +58,8 @@ const filteredEmployees = computed(() => {
   }
   return rows
 })
+const totalEmployees = computed(() => employeeStore.list.length)
+const visibleEmployees = computed(() => filteredEmployees.value.length)
 
 function openCreate() {
   editingId.value = null
@@ -150,13 +152,13 @@ async function submitGrantCredits() {
 
 <template>
   <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-primary-200">Employee Management</h1>
-        <p class="mt-1 text-sm text-gray-400">Create, edit, and manage employees.</p>
-      </div>
-      <div class="flex flex-wrap items-center gap-3">
-        <div class="min-w-[220px]">
+    <div>
+      <h1 class="text-2xl font-bold text-primary-200">Employee Management</h1>
+      <p class="mt-1 text-sm text-gray-400">Create, edit, and manage employees.</p>
+    </div>
+    <div class="rounded-xl border border-gray-800 bg-gray-900 p-4">
+      <div class="grid gap-3 xl:grid-cols-[minmax(220px,1.6fr)_repeat(3,minmax(160px,1fr))_auto_auto] xl:items-end">
+        <div>
           <label class="mb-1 block text-xs font-medium text-gray-400">Search</label>
           <input
             v-model="searchQuery"
@@ -165,7 +167,7 @@ async function submitGrantCredits() {
             class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500"
           />
         </div>
-        <div class="min-w-[180px]">
+        <div>
           <label class="mb-1 block text-xs font-medium text-gray-400">Department</label>
           <select
             v-model="departmentFilter"
@@ -175,7 +177,7 @@ async function submitGrantCredits() {
             <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
           </select>
         </div>
-        <div class="min-w-[160px]">
+        <div>
           <label class="mb-1 block text-xs font-medium text-gray-400">Shift</label>
           <select
             v-model="shiftFilter"
@@ -186,7 +188,7 @@ async function submitGrantCredits() {
             <option value="night">Night</option>
           </select>
         </div>
-        <div class="min-w-[160px]">
+        <div>
           <label class="mb-1 block text-xs font-medium text-gray-400">Status</label>
           <select
             v-model="statusFilter"
@@ -201,6 +203,7 @@ async function submitGrantCredits() {
         </div>
         <AppButton
           variant="secondary"
+          class="xl:mb-0"
           @click="
             () => {
               departmentFilter = 'all'
@@ -212,8 +215,9 @@ async function submitGrantCredits() {
         >
           Reset
         </AppButton>
-        <AppButton @click="openCreate">Add employee</AppButton>
+        <AppButton class="xl:mb-0" @click="openCreate">Add employee</AppButton>
       </div>
+      <p class="mt-3 text-xs text-gray-400">Showing {{ visibleEmployees }} of {{ totalEmployees }} employees</p>
     </div>
     <AppTable :loading="employeeStore.loading">
       <thead class="bg-gray-950">
