@@ -33,6 +33,10 @@ export async function fetchMe() {
   return request('/api/auth/me')
 }
 
+export async function getDashboardOverview() {
+  return request('/api/dashboard/overview')
+}
+
 export async function getNotifications(options = {}) {
   const params = new URLSearchParams()
   if (options.limit) params.set('limit', options.limit)

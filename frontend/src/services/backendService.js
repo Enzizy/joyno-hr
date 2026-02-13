@@ -92,6 +92,10 @@ export async function fetchMe() {
   return data.user
 }
 
+export async function getDashboardOverview() {
+  return api.getDashboardOverview()
+}
+
 export async function getNotifications(options = {}) {
   return api.getNotifications(options)
 }

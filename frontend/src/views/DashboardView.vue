@@ -1,11 +1,13 @@
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useLeaveStore } from '@/stores/leaveStore'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
+import { getDashboardOverview } from '@/services/backendService'
 
 const authStore = useAuthStore()
 const leaveStore = useLeaveStore()
+const overview = ref(null)
 
 const role = computed(() => authStore.role)
 const greeting = computed(() => {
@@ -74,6 +76,7 @@ function employeeLabel(row) {
 }
 
 onMounted(async () => {
+  overview.value = await getDashboardOverview()
   if (authStore.isEmployee) {
     await leaveStore.fetchRequests({ scope: 'mine' })
   } else {
@@ -86,29 +89,21 @@ const activityItems = computed(() => leaveStore.requests.slice(0, 8))
 const showCrmOverview = computed(() => authStore.isHR || authStore.isAdmin)
 
 const crmStats = computed(() => [
-  { label: 'Active Clients', value: 3, tone: 'text-emerald-300' },
-  { label: 'Open Leads', value: 3, tone: 'text-blue-300' },
-  { label: 'Pending Tasks', value: 4, tone: 'text-amber-300' },
-  { label: 'Overdue Tasks', value: 3, tone: 'text-red-300' },
+  { label: 'Active Clients', value: overview.value?.metrics?.active_clients ?? 0, tone: 'text-emerald-300' },
+  { label: 'Approvals Backlog', value: overview.value?.metrics?.approvals_backlog ?? 0, tone: 'text-amber-300' },
+  { label: 'Overdue Tasks', value: overview.value?.metrics?.overdue_tasks ?? 0, tone: 'text-red-300' },
+  {
+    label: 'Leads Follow-up',
+    value: overview.value?.metrics?.pending_leads_follow_up ?? 0,
+    tone: 'text-blue-300',
+  },
 ])
 
-const expiringContracts = computed(() => [
-  { id: 1, company: 'Luxe Interiors', end_date: '2026-02-25' },
-  { id: 2, company: 'Summit Law', end_date: '2026-02-28' },
-])
-
-const workloadItems = computed(() => [
-  { id: 1, name: 'Von Himmler', active: 4, completed: 9 },
-  { id: 2, name: 'Wendel Desabille', active: 2, completed: 6 },
-  { id: 3, name: 'Kier Whensel Anticuando', active: 3, completed: 8 },
-])
-
-const upcomingTasks = computed(() => [
-  { id: 1, title: 'Create Instagram Reel for Luxe Interiors', due_date: '2026-02-14', priority: 'high', status: 'overdue' },
-  { id: 2, title: 'Daily Content Post - Bloom Bakery', due_date: '2026-02-16', priority: 'medium', status: 'pending' },
-  { id: 3, title: 'Post LinkedIn Article - Summit Law', due_date: '2026-02-18', priority: 'medium', status: 'pending' },
-  { id: 4, title: 'Weekly Client Report - Luxe Interiors', due_date: '2026-02-20', priority: 'low', status: 'pending' },
-])
+const pendingLeavesForSla = computed(() => overview.value?.pending_leave_requests || [])
+const overdueTaskItems = computed(() => overview.value?.overdue_tasks_list || [])
+const leadFollowUps = computed(() => overview.value?.lead_follow_ups || [])
+const employeeKpis = computed(() => overview.value?.metrics || {})
+const employeeUpcomingTasks = computed(() => overview.value?.upcoming_tasks || [])
 
 function actionLabel(row) {
   const roleLabel = row.approved_by_role
@@ -151,6 +146,22 @@ function actionLabel(row) {
           <StatusBadge :status="statusLabel" />
         </p>
         <p v-if="currentLeaveEnd" class="mt-2 text-xs text-gray-400">On leave until {{ formatDate(currentLeaveEnd) }}</p>
+      </div>
+      <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+        <p class="text-sm font-medium text-gray-400">Tasks Due Today</p>
+        <p class="mt-1 text-xl font-semibold text-primary-200">{{ employeeKpis.tasks_due_today ?? 0 }}</p>
+      </div>
+      <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+        <p class="text-sm font-medium text-gray-400">Overdue Tasks</p>
+        <p class="mt-1 text-xl font-semibold text-red-300">{{ employeeKpis.overdue_tasks ?? 0 }}</p>
+      </div>
+      <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+        <p class="text-sm font-medium text-gray-400">Leave Credits</p>
+        <p class="mt-1 text-xl font-semibold text-emerald-300">{{ Number(employeeKpis.leave_credits || 0).toFixed(2) }}</p>
+      </div>
+      <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+        <p class="text-sm font-medium text-gray-400">Upcoming Deadlines</p>
+        <p class="mt-1 text-xl font-semibold text-amber-300">{{ employeeKpis.upcoming_deadlines ?? 0 }}</p>
       </div>
     </div>
 
@@ -212,67 +223,95 @@ function actionLabel(row) {
       <div class="grid gap-4 lg:grid-cols-2">
         <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
           <div class="border-b border-gray-800 px-4 py-3">
-            <h3 class="text-base font-semibold text-primary-200">Expiring Contracts</h3>
+            <h3 class="text-base font-semibold text-primary-200">Pending Leave Approvals (SLA)</h3>
           </div>
           <div class="p-4">
-            <ul v-if="expiringContracts.length" class="space-y-2">
+            <ul v-if="pendingLeavesForSla.length" class="space-y-2">
               <li
-                v-for="contract in expiringContracts"
-                :key="contract.id"
+                v-for="leave in pendingLeavesForSla"
+                :key="leave.id"
                 class="flex items-center justify-between rounded-md border border-gray-800 bg-gray-950 px-3 py-2"
               >
-                <span class="text-sm text-primary-200">{{ contract.company }}</span>
-                <span class="text-xs text-amber-300">Ends {{ formatDate(contract.end_date) }}</span>
+                <span class="text-sm text-primary-200">{{ leave.employee_name || '-' }}</span>
+                <span class="text-xs text-amber-300">{{ formatDate(leave.created_at) }}</span>
               </li>
             </ul>
-            <p v-else class="text-sm text-gray-400">No contracts expiring soon.</p>
+            <p v-else class="text-sm text-gray-400">No pending leave approvals.</p>
           </div>
         </div>
         <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
           <div class="border-b border-gray-800 px-4 py-3">
-            <h3 class="text-base font-semibold text-primary-200">Employee Workload</h3>
+            <h3 class="text-base font-semibold text-primary-200">Lead Follow-ups</h3>
           </div>
           <div class="p-4">
-            <ul class="space-y-2">
+            <ul v-if="leadFollowUps.length" class="space-y-2">
               <li
-                v-for="member in workloadItems"
-                :key="member.id"
+                v-for="lead in leadFollowUps"
+                :key="lead.id"
                 class="flex items-center justify-between rounded-md border border-gray-800 bg-gray-950 px-3 py-2"
               >
-                <span class="text-sm text-primary-200">{{ member.name }}</span>
-                <span class="text-xs text-gray-300">{{ member.active }} active / {{ member.completed }} completed</span>
+                <span class="text-sm text-primary-200">{{ lead.company_name }}</span>
+                <span class="text-xs text-amber-300">{{ formatDate(lead.next_follow_up) }}</span>
               </li>
             </ul>
+            <p v-else class="text-sm text-gray-400">No lead follow-ups pending.</p>
           </div>
         </div>
       </div>
 
       <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
         <div class="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-          <h3 class="text-base font-semibold text-primary-200">Upcoming CRM Tasks</h3>
+          <h3 class="text-base font-semibold text-primary-200">Overdue/Pending Tasks</h3>
           <RouterLink to="/tasks" class="text-xs font-medium text-primary-300 hover:text-primary-200">View tasks</RouterLink>
         </div>
         <div class="divide-y divide-gray-800">
           <div
-            v-for="task in upcomingTasks"
+            v-for="task in overdueTaskItems"
             :key="task.id"
             class="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
           >
             <div>
               <p class="text-sm font-medium text-primary-200">{{ task.title }}</p>
-              <p class="text-xs text-gray-400">Due {{ formatDate(task.due_date) }}</p>
+              <p class="text-xs text-gray-400">
+                Due {{ formatDate(task.due_date) }} • {{ task.company_name || task.assigned_email || '-' }}
+              </p>
             </div>
             <div class="flex items-center gap-2">
               <span class="rounded-full border border-gray-700 px-2 py-0.5 text-xs text-gray-300">{{ formatBadgeLabel(task.priority) }}</span>
               <span
                 class="rounded-full px-2 py-0.5 text-xs font-semibold"
-                :class="task.status === 'overdue' ? 'bg-red-900/60 text-red-200' : 'bg-amber-900/50 text-amber-200'"
+                :class="task.status === 'pending' ? 'bg-amber-900/50 text-amber-200' : 'bg-blue-900/50 text-blue-200'"
               >
                 {{ formatBadgeLabel(task.status) }}
               </span>
             </div>
           </div>
+          <div v-if="!overdueTaskItems.length" class="px-4 py-6 text-sm text-gray-400">No overdue tasks.</div>
         </div>
+      </div>
+    </div>
+
+    <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
+      <div class="flex items-center justify-between border-b border-gray-800 px-4 py-3">
+        <h2 class="text-lg font-semibold text-primary-200">Upcoming Deadlines</h2>
+        <RouterLink to="/my-tasks" class="text-xs font-medium text-primary-300 hover:text-primary-200">View my tasks</RouterLink>
+      </div>
+      <div class="divide-y divide-gray-800">
+        <div
+          v-for="task in employeeUpcomingTasks"
+          :key="task.id"
+          class="flex flex-wrap items-center justify-between gap-3 px-4 py-3"
+        >
+          <div>
+            <p class="text-sm font-medium text-primary-200">{{ task.title }}</p>
+            <p class="text-xs text-gray-400">Due {{ formatDate(task.due_date) }} {{ task.company_name ? `• ${task.company_name}` : '' }}</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="rounded-full border border-gray-700 px-2 py-0.5 text-xs text-gray-300">{{ formatBadgeLabel(task.priority) }}</span>
+            <StatusBadge :status="task.status" />
+          </div>
+        </div>
+        <div v-if="!employeeUpcomingTasks.length" class="px-4 py-6 text-sm text-gray-400">No upcoming deadlines.</div>
       </div>
     </div>
 

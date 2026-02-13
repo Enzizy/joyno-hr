@@ -118,6 +118,21 @@ async function createNotification({ userId, type, title, message = null, targetT
   )
 }
 
+async function notificationExists(userId, type, targetTable, targetId) {
+  if (!userId || !type) return false
+  const { rows } = await db.query(
+    `SELECT 1
+     FROM notifications
+     WHERE user_id = $1
+       AND type = $2
+       AND COALESCE(target_table, '') = COALESCE($3, '')
+       AND COALESCE(target_id, 0) = COALESCE($4, 0)
+     LIMIT 1`,
+    [userId, type, targetTable || null, targetId || null]
+  )
+  return rows.length > 0
+}
+
 async function notifyRoles(roles, payload) {
   if (!Array.isArray(roles) || !roles.length) return
   const placeholders = roles.map((_, i) => `$${i + 1}`).join(',')
@@ -135,6 +150,84 @@ async function cleanupOldNotifications(days = 90) {
        AND created_at < NOW() - ($1::text || ' days')::interval`,
     [safeDays]
   )
+}
+
+async function runApprovalSlaEscalations() {
+  const pendingLeaveResult = await db.query(
+    `SELECT id, employee_name, created_at
+     FROM leave_requests
+     WHERE status = 'pending'`
+  )
+  const reviewerRows = await db.query("SELECT id FROM users WHERE role IN ('admin','hr')")
+  const reviewerIds = reviewerRows.rows.map((row) => row.id)
+  const now = Date.now()
+  for (const leave of pendingLeaveResult.rows) {
+    const hoursPending = (now - new Date(leave.created_at).getTime()) / (1000 * 60 * 60)
+    const level = hoursPending >= 48 ? 48 : hoursPending >= 24 ? 24 : 0
+    if (!level) continue
+    const type = level === 48 ? 'leave_sla_48h' : 'leave_sla_24h'
+    const title = level === 48 ? 'Leave Approval Escalation (48h)' : 'Leave Approval Reminder (24h)'
+    const message = `${leave.employee_name || 'Employee'} leave request is pending for ${level}+ hours.`
+    for (const reviewerId of reviewerIds) {
+      const exists = await notificationExists(reviewerId, type, 'leave_requests', leave.id)
+      if (!exists) {
+        await createNotification({
+          userId: reviewerId,
+          type,
+          title,
+          message,
+          targetTable: 'leave_requests',
+          targetId: leave.id,
+        })
+      }
+    }
+  }
+
+  const pendingTaskResult = await db.query(
+    `SELECT id, title, due_date, assigned_to
+     FROM tasks
+     WHERE status = 'pending'`
+  )
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  for (const task of pendingTaskResult.rows) {
+    if (!task.due_date) continue
+    const due = new Date(task.due_date)
+    due.setHours(0, 0, 0, 0)
+    const daysOverdue = Math.floor((today - due) / (1000 * 60 * 60 * 24))
+    const level = daysOverdue >= 2 ? '48h' : daysOverdue >= 1 ? '24h' : null
+    if (!level) continue
+    const assigneeId = task.assigned_to
+    const type = level === '48h' ? 'task_sla_48h' : 'task_sla_24h'
+    const title = level === '48h' ? 'Task Escalation (48h overdue)' : 'Task Reminder (24h overdue)'
+    const message = `${task.title} is overdue by ${level === '48h' ? '2+ days' : '1+ day'}.`
+    if (assigneeId) {
+      const existsForAssignee = await notificationExists(assigneeId, type, 'tasks', task.id)
+      if (!existsForAssignee) {
+        await createNotification({
+          userId: assigneeId,
+          type,
+          title,
+          message,
+          targetTable: 'tasks',
+          targetId: task.id,
+        })
+      }
+    }
+    for (const reviewerId of reviewerIds) {
+      const existsForReviewer = await notificationExists(reviewerId, type, 'tasks', task.id)
+      if (!existsForReviewer) {
+        await createNotification({
+          userId: reviewerId,
+          type,
+          title,
+          message,
+          targetTable: 'tasks',
+          targetId: task.id,
+        })
+      }
+    }
+  }
 }
 
 async function createServicesForClient(clientId, selectedServices = []) {
@@ -432,6 +525,112 @@ app.delete('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), asy
   await db.query('DELETE FROM employees WHERE id = $1', [req.params.id])
   await addAuditLog(req.user.id, 'delete_employee', 'employees', req.params.id)
   res.json({ message: 'Employee deleted' })
+})
+
+app.get('/api/dashboard/overview', authRequired, async (req, res) => {
+  const today = new Date()
+  const yyyy = today.getFullYear()
+  const mm = String(today.getMonth() + 1).padStart(2, '0')
+  const dd = String(today.getDate()).padStart(2, '0')
+  const todayISO = `${yyyy}-${mm}-${dd}`
+  const nextWeek = new Date(today)
+  nextWeek.setDate(nextWeek.getDate() + 7)
+  const nextWeekISO = `${nextWeek.getFullYear()}-${String(nextWeek.getMonth() + 1).padStart(2, '0')}-${String(nextWeek.getDate()).padStart(2, '0')}`
+
+  if (req.user.role === 'employee') {
+    const dueToday = await db.query(
+      `SELECT COUNT(*)::int AS count
+       FROM tasks
+       WHERE assigned_to = $1 AND due_date = $2 AND status IN ('pending','in_progress')`,
+      [req.user.id, todayISO]
+    )
+    const overdue = await db.query(
+      `SELECT COUNT(*)::int AS count
+       FROM tasks
+       WHERE assigned_to = $1 AND due_date < $2 AND status IN ('pending','in_progress')`,
+      [req.user.id, todayISO]
+    )
+    const upcoming = await db.query(
+      `SELECT t.id, t.title, t.due_date, t.priority, t.status, c.company_name
+       FROM tasks t
+       LEFT JOIN clients c ON t.client_id = c.id
+       WHERE t.assigned_to = $1
+         AND t.due_date BETWEEN $2 AND $3
+         AND t.status IN ('pending','in_progress')
+       ORDER BY t.due_date ASC
+       LIMIT 8`,
+      [req.user.id, todayISO, nextWeekISO]
+    )
+    const leaveSummary = await db.query('SELECT leave_credits FROM employees WHERE id = $1', [req.user.employee_id])
+    const leaveCredits = Number(leaveSummary.rows[0]?.leave_credits || 0)
+    return res.json({
+      role: req.user.role,
+      metrics: {
+        tasks_due_today: Number(dueToday.rows[0]?.count || 0),
+        overdue_tasks: Number(overdue.rows[0]?.count || 0),
+        leave_credits: leaveCredits,
+        upcoming_deadlines: upcoming.rows.length,
+      },
+      upcoming_tasks: upcoming.rows,
+    })
+  }
+
+  const activeClients = await db.query("SELECT COUNT(*)::int AS count FROM clients WHERE status = 'active'")
+  const pendingApprovals = await db.query("SELECT COUNT(*)::int AS count FROM leave_requests WHERE status = 'pending'")
+  const overdueTasks = await db.query(
+    `SELECT COUNT(*)::int AS count
+     FROM tasks
+     WHERE due_date < $1 AND status IN ('pending','in_progress')`,
+    [todayISO]
+  )
+  const pendingLeadFollowUps = await db.query(
+    `SELECT COUNT(*)::int AS count
+     FROM leads
+     WHERE status NOT IN ('converted','lost')
+       AND next_follow_up IS NOT NULL
+       AND next_follow_up <= $1`,
+    [todayISO]
+  )
+  const pendingLeaves = await db.query(
+    `SELECT id, employee_name, start_date, end_date, leave_type_name, created_at
+     FROM leave_requests
+     WHERE status = 'pending'
+     ORDER BY created_at ASC
+     LIMIT 6`
+  )
+  const overdueTaskItems = await db.query(
+    `SELECT t.id, t.title, t.due_date, t.priority, u.email AS assigned_email, c.company_name
+     FROM tasks t
+     LEFT JOIN users u ON t.assigned_to = u.id
+     LEFT JOIN clients c ON t.client_id = c.id
+     WHERE t.due_date < $1 AND t.status IN ('pending','in_progress')
+     ORDER BY t.due_date ASC
+     LIMIT 6`,
+    [todayISO]
+  )
+  const leadFollowUps = await db.query(
+    `SELECT id, company_name, contact_name, next_follow_up, status
+     FROM leads
+     WHERE status NOT IN ('converted','lost')
+       AND next_follow_up IS NOT NULL
+       AND next_follow_up <= $1
+     ORDER BY next_follow_up ASC
+     LIMIT 6`,
+    [todayISO]
+  )
+
+  res.json({
+    role: req.user.role,
+    metrics: {
+      active_clients: Number(activeClients.rows[0]?.count || 0),
+      approvals_backlog: Number(pendingApprovals.rows[0]?.count || 0),
+      overdue_tasks: Number(overdueTasks.rows[0]?.count || 0),
+      pending_leads_follow_up: Number(pendingLeadFollowUps.rows[0]?.count || 0),
+    },
+    pending_leave_requests: pendingLeaves.rows,
+    overdue_tasks_list: overdueTaskItems.rows,
+    lead_follow_ups: leadFollowUps.rows,
+  })
 })
 
 app.post('/api/employees/:id/grant-credits', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
@@ -1756,6 +1955,10 @@ const PORT = process.env.PORT || 3000
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`API running on port ${PORT}`)
   ensureSchemaColumns()
+  runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
+  setInterval(() => {
+    runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
+  }, 60 * 60 * 1000)
   cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
   setInterval(() => {
     cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
