@@ -253,10 +253,12 @@ async function toggleRule(rule) {
 }
 
 async function runNow(rule) {
+  if (rule.has_open_task) return
   actionLoadingId.value = rule.id
   try {
     await runAutomationRuleNow(rule.id)
     toast.success('Task created successfully!')
+    await loadPage()
   } catch (err) {
     toast.error(err.message || 'Failed to run rule now.')
   } finally {
@@ -312,7 +314,16 @@ async function removeRule(rule) {
 
         <div class="mt-4 flex flex-wrap gap-2">
           <AppButton variant="secondary" size="sm" @click="openEdit(rule)">Edit Rule</AppButton>
-          <AppButton variant="secondary" size="sm" :loading="actionLoadingId === rule.id" @click="runNow(rule)">Run Now</AppButton>
+          <AppButton
+            variant="secondary"
+            size="sm"
+            :disabled="Boolean(rule.has_open_task)"
+            :loading="actionLoadingId === rule.id"
+            :title="rule.has_open_task ? 'A pending or in-progress task already exists for this automation.' : ''"
+            @click="runNow(rule)"
+          >
+            {{ rule.has_open_task ? 'Task Running' : 'Run Now' }}
+          </AppButton>
           <AppButton variant="danger" size="sm" :loading="actionLoadingId === rule.id" @click="removeRule(rule)">Delete</AppButton>
           <AppButton variant="ghost" size="sm" :disabled="isExpired(rule)" :loading="actionLoadingId === rule.id" @click="toggleRule(rule)">
             {{ rule.is_active ? 'Pause' : 'Activate' }}

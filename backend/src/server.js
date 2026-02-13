@@ -1320,7 +1320,13 @@ app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'emplo
 // Automation rules (CRM)
 app.get('/api/automation-rules', authRequired, requireRole(['admin']), async (req, res) => {
   const clientId = Number.parseInt(req.query.client_id, 10) || null
-  let sql = `SELECT r.*, c.company_name, u.email AS assigned_email, s.service_type
+  let sql = `SELECT r.*, c.company_name, u.email AS assigned_email, s.service_type,
+                    EXISTS (
+                      SELECT 1
+                      FROM tasks t
+                      WHERE t.automation_rule_id = r.id
+                        AND t.status IN ('pending', 'in_progress')
+                    ) AS has_open_task
              FROM automation_rules r
              JOIN clients c ON r.client_id = c.id
              LEFT JOIN users u ON r.assigned_to = u.id
@@ -1429,6 +1435,18 @@ app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin'
   const { rows } = await db.query('SELECT * FROM automation_rules WHERE id = $1', [id])
   const rule = rows[0]
   if (!rule) return res.status(404).json({ message: 'Rule not found' })
+  const openTaskRows = await db.query(
+    `SELECT id
+     FROM tasks
+     WHERE automation_rule_id = $1
+       AND status IN ('pending', 'in_progress')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [id]
+  )
+  if (openTaskRows.rows.length) {
+    return res.status(409).json({ message: 'This automation already has a running task. Complete or cancel it first.' })
+  }
   const dueDate = new Date().toISOString().slice(0, 10)
   const taskResult = await db.query(
     `INSERT INTO tasks
