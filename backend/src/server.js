@@ -201,13 +201,25 @@ function isPaidLeaveEligible(dateHired, leaveStartDate) {
   return leaveStart >= hired
 }
 
-function resolveLeaveCompensation(employee, startDate, endDate) {
+function resolveLeaveCompensation(employee, startDate, endDate, requestedPayType = 'auto') {
   const leaveDays = calculateLeaveDays(startDate, endDate)
   if (!leaveDays || leaveDays <= 0) return null
   const credits = Number(employee?.leave_credits || 0)
   const eligible = isPaidLeaveEligible(employee?.date_hired, startDate)
+  const requested = ['paid', 'unpaid', 'auto'].includes(String(requestedPayType || '').toLowerCase())
+    ? String(requestedPayType || '').toLowerCase()
+    : 'auto'
   if (!eligible) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+  }
+  if (requested === 'unpaid') {
+    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+  }
+  if (requested === 'paid') {
+    if (credits < leaveDays) {
+      return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays, insufficientCredits: true }
+    }
+    return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
   }
   if (credits >= leaveDays) {
     return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
@@ -1367,7 +1379,7 @@ app.get('/api/leave-requests', authRequired, async (req, res) => {
 
 app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res) => {
   const user = req.user
-  const { leave_type_id, start_date, end_date, reason } = req.body || {}
+  const { leave_type_id, start_date, end_date, reason, leave_pay_type = 'auto' } = req.body || {}
   if (!leave_type_id || !start_date || !end_date || !reason) {
     return res.status(400).json({ message: 'Missing required fields' })
   }
@@ -1389,8 +1401,11 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
 
   const ltResult = await db.query('SELECT * FROM leave_types WHERE id = $1', [leave_type_id])
   const lt = ltResult.rows[0]
-  const compensation = resolveLeaveCompensation(emp, start_date, end_date)
+  const compensation = resolveLeaveCompensation(emp, start_date, end_date, leave_pay_type)
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
+  if (compensation.insufficientCredits) {
+    return res.status(400).json({ message: 'Insufficient leave credits for paid leave' })
+  }
   let attachmentName = null
   let attachmentType = null
   let attachmentData = null
@@ -1449,7 +1464,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     return res.status(400).json({ message: 'Only pending requests can be edited' })
   }
 
-  const { leave_type_id, start_date, end_date, reason } = req.body || {}
+  const { leave_type_id, start_date, end_date, reason, leave_pay_type = 'auto' } = req.body || {}
   if (!leave_type_id || !start_date || !end_date || !reason) {
     return res.status(400).json({ message: 'Missing required fields' })
   }
@@ -1469,8 +1484,11 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   const empResult = await db.query('SELECT * FROM employees WHERE id = $1', [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
-  const compensation = resolveLeaveCompensation(emp, start_date, end_date)
+  const compensation = resolveLeaveCompensation(emp, start_date, end_date, leave_pay_type)
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
+  if (compensation.insufficientCredits) {
+    return res.status(400).json({ message: 'Insufficient leave credits for paid leave' })
+  }
 
   let attachmentName = request.attachment_name
   let attachmentType = request.attachment_type
