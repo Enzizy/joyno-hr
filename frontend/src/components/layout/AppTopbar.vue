@@ -3,10 +3,12 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import { useNotificationStore } from '@/stores/notificationStore'
+import { useThemeStore } from '@/stores/themeStore'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const notificationStore = useNotificationStore()
+const themeStore = useThemeStore()
 const menuOpen = ref(false)
 const notificationsOpen = ref(false)
 const menuRef = ref(null)
@@ -26,6 +28,7 @@ const roleLabel = computed(() => {
   const r = authStore.role
   return r ? r.charAt(0).toUpperCase() + r.slice(1) : ''
 })
+const isLightMode = computed(() => themeStore.mode === 'light')
 
 async function logout() {
   try {
@@ -46,6 +49,10 @@ function toggleNotifications() {
 function toggleMenu() {
   menuOpen.value = !menuOpen.value
   if (menuOpen.value) notificationsOpen.value = false
+}
+
+function toggleTheme() {
+  themeStore.toggleMode()
 }
 
 async function openNotification(item) {
@@ -94,6 +101,14 @@ onBeforeUnmount(() => {
       <span class="text-sm font-semibold text-primary-200">Joyno HR</span>
     </div>
     <div class="flex items-center gap-2">
+      <button
+        type="button"
+        class="rounded-lg border border-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-200 hover:bg-gray-800"
+        :aria-label="isLightMode ? 'Switch to dark mode' : 'Switch to light mode'"
+        @click="toggleTheme"
+      >
+        {{ isLightMode ? 'Dark' : 'Light' }}
+      </button>
       <div ref="notificationsRef" class="relative">
         <button
           type="button"
