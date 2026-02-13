@@ -386,15 +386,28 @@ async function confirmConvert() {
           <div class="relative flex items-center gap-2">
             <AppButton
               v-if="row.status !== 'converted' && row.status !== 'lost'"
-              variant="secondary"
+              variant="success"
               size="sm"
+              class="border border-green-400/30 shadow-sm hover:shadow-md"
               :loading="convertingLeadId === row.id"
               @click="openConvert(row)"
             >
               Convert
             </AppButton>
-            <AppButton variant="ghost" size="sm" :loading="openingConversationLeadId === row.id" @click="openConversations(row)">Conversation Log</AppButton>
-            <button type="button" class="rounded-lg p-2 text-gray-300 hover:bg-gray-800" @click="moreOpenId = moreOpenId === row.id ? null : row.id">
+            <AppButton
+              variant="secondary"
+              size="sm"
+              class="border border-gray-600 shadow-sm hover:shadow-md"
+              :loading="openingConversationLeadId === row.id"
+              @click="openConversations(row)"
+            >
+              Conversation Log
+            </AppButton>
+            <button
+              type="button"
+              class="rounded-lg border border-gray-700 bg-gray-800/70 p-2 text-gray-200 transition hover:bg-gray-700"
+              @click="moreOpenId = moreOpenId === row.id ? null : row.id"
+            >
               <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6h.01M12 12h.01M12 18h.01" />
               </svg>
