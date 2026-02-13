@@ -392,6 +392,27 @@ app.delete('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), asy
   res.json({ message: 'Employee deleted' })
 })
 
+app.post('/api/employees/:id/grant-credits', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  const amount = Number(req.body?.amount)
+  if (!id) return res.status(400).json({ message: 'Invalid employee id' })
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ message: 'Amount must be greater than 0' })
+  }
+
+  const { rows } = await db.query(
+    `UPDATE employees
+     SET leave_credits = leave_credits + $1, updated_at = NOW()
+     WHERE id = $2
+     RETURNING *`,
+    [amount, id]
+  )
+  if (!rows.length) return res.status(404).json({ message: 'Employee not found' })
+
+  await addAuditLog(req.user.id, 'grant_leave_credits', 'employees', id)
+  res.json(rows[0])
+})
+
 // Leads (CRM)
 app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const status = normalizeEnum(req.query.status, LEAD_STATUSES, { defaultValue: null, allowNull: true })

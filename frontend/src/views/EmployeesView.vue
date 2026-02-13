@@ -12,6 +12,10 @@ const employeeStore = useEmployeeStore()
 const toast = useToastStore()
 const showModal = ref(false)
 const editingId = ref(null)
+const grantModal = ref(false)
+const grantTarget = ref(null)
+const grantAmount = ref('')
+const granting = ref(false)
 const departmentFilter = ref('all')
 const statusFilter = ref('all')
 const shiftFilter = ref('all')
@@ -111,6 +115,37 @@ async function remove(row) {
     toast.error(err.response?.data?.message || 'Failed to delete.')
   }
 }
+
+function openGrantModal(row) {
+  grantTarget.value = row
+  grantAmount.value = ''
+  grantModal.value = true
+}
+
+function closeGrantModal() {
+  grantModal.value = false
+  grantTarget.value = null
+  grantAmount.value = ''
+}
+
+async function submitGrantCredits() {
+  if (!grantTarget.value) return
+  const amount = Number(grantAmount.value)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    toast.warning('Enter a valid amount greater than 0.')
+    return
+  }
+  granting.value = true
+  try {
+    await employeeStore.grantCredits(grantTarget.value.id, amount)
+    toast.success('Leave credits granted.')
+    closeGrantModal()
+  } catch (err) {
+    toast.error(err.response?.data?.message || 'Failed to grant credits.')
+  } finally {
+    granting.value = false
+  }
+}
 </script>
 
 <template>
@@ -205,7 +240,8 @@ async function remove(row) {
             <StatusBadge :status="row.status" />
           </td>
           <td class="px-4 py-3 text-right">
-            <AppButton variant="ghost" size="sm" @click="openEdit(row)">Edit</AppButton>
+            <AppButton variant="secondary" size="sm" @click="openGrantModal(row)">Grant</AppButton>
+            <AppButton variant="ghost" size="sm" class="ml-1" @click="openEdit(row)">Edit</AppButton>
             <AppButton variant="danger" size="sm" class="ml-1" @click="remove(row)">Delete</AppButton>
           </td>
         </tr>
@@ -262,6 +298,29 @@ async function remove(row) {
       <template #footer>
         <AppButton variant="secondary" @click="showModal = false">Cancel</AppButton>
         <AppButton @click="save">{{ editingId ? 'Update' : 'Create' }}</AppButton>
+      </template>
+    </AppModal>
+
+    <AppModal :show="grantModal" title="Grant leave credits" @close="closeGrantModal">
+      <div class="space-y-4">
+        <p class="text-sm text-gray-300">
+          Add credits to
+          <span class="font-semibold text-primary-200">
+            {{ grantTarget?.first_name }} {{ grantTarget?.last_name }}
+          </span>
+          .
+        </p>
+        <AppInput
+          v-model="grantAmount"
+          type="number"
+          label="Credits to add"
+          placeholder="e.g. 2"
+          required
+        />
+      </div>
+      <template #footer>
+        <AppButton variant="secondary" @click="closeGrantModal">Cancel</AppButton>
+        <AppButton :loading="granting" @click="submitGrantCredits">Grant credits</AppButton>
       </template>
     </AppModal>
   </div>
