@@ -154,15 +154,27 @@ function dueState(row) {
 
 function cardClass(row) {
   const state = dueState(row)
-  if (state === 'overdue') return 'border-red-800 bg-red-950/20'
-  if (state === 'today') return 'border-amber-800 bg-amber-950/20'
-  return 'border-gray-800 bg-gray-900'
+  if (state === 'overdue') return 'ring-1 ring-red-700/60 bg-red-950/20'
+  if (state === 'today') return 'ring-1 ring-amber-700/60 bg-amber-950/20'
+  return ''
 }
 
 function serviceCardClass(row) {
-  if (row.service_type === 'website_development') return 'shadow-[inset_0_0_0_1px_rgba(56,189,248,0.35)]'
-  if (row.service_type === 'social_media_management') return 'shadow-[inset_0_0_0_1px_rgba(167,139,250,0.35)]'
-  return ''
+  if (row.service_type === 'website_development') return 'border-cyan-700/70 bg-cyan-950/10'
+  if (row.service_type === 'social_media_management') return 'border-violet-700/70 bg-violet-950/10'
+  return 'border-gray-800 bg-gray-900'
+}
+
+function serviceBadgeClass(serviceType) {
+  if (serviceType === 'website_development') return 'border-cyan-600/60 bg-cyan-900/30 text-cyan-200'
+  if (serviceType === 'social_media_management') return 'border-violet-600/60 bg-violet-900/30 text-violet-200'
+  return 'border-gray-700 text-gray-300'
+}
+
+function serviceBadgeLabel(serviceType) {
+  if (serviceType === 'website_development') return 'Web Dev'
+  if (serviceType === 'social_media_management') return 'SocMed'
+  return 'General'
 }
 
 async function loadLookups() {
@@ -402,6 +414,9 @@ function proofUrl(taskId) {
               <h3 class="text-lg font-semibold text-primary-200">
                 {{ row.title }}
               </h3>
+              <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="serviceBadgeClass(row.service_type)">
+                {{ serviceBadgeLabel(row.service_type) }}
+              </span>
               <span v-if="row.is_automated" class="rounded-full border border-primary-500/50 bg-primary-500/10 px-2 py-0.5 text-xs font-semibold text-primary-300">
                 Automated
               </span>
