@@ -90,8 +90,14 @@ function clientName(id) {
 }
 
 function userName(id) {
-  const email = users.value.find((u) => Number(u.id) === Number(id))?.email
-  return email ? email.split('@')[0] : `User #${id}`
+  const user = users.value.find((u) => Number(u.id) === Number(id))
+  if (!user) return `User #${id}`
+  const first = (user.first_name || '').trim()
+  const last = (user.last_name || '').trim()
+  const fullName = `${first} ${last}`.trim()
+  if (fullName) return fullName
+  if (user.email) return user.email
+  return `User #${id}`
 }
 
 function formatSchedule(rule) {
@@ -332,8 +338,8 @@ async function removeRule(rule) {
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-200">Assign To</label>
         <select v-model="form.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option value="" disabled>Select user</option>
-          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.email }}</option>
+          <option value="" disabled>Select employee</option>
+          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userName(user.id) }}</option>
         </select>
       </div>
       <div>
