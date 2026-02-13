@@ -57,8 +57,7 @@ const routes = [
       {
         path: 'my-tasks',
         name: 'MyTasks',
-        component: () => import('@/views/ComingSoonView.vue'),
-        props: { title: 'My Tasks', description: 'Employee assigned work and completion updates.' },
+        component: () => import('@/views/MyTasksView.vue'),
         meta: { roles: ['employee'] },
       },
       {
