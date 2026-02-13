@@ -149,19 +149,19 @@ async function createServicesForClient(clientId, selectedServices = []) {
   }
 }
 
-async function ensureDefaultLeaveTypes() {
-  try {
-    const { rows } = await db.query('SELECT COUNT(*) AS count FROM leave_types')
-    const count = Number(rows[0]?.count || 0)
-    if (count > 0) return
-    await db.query(
-      `INSERT INTO leave_types (name, default_credits)
-       VALUES ($1,$2), ($3,$4), ($5,$6)`,
-      ['Vacation', 0, 'Sick', 0, 'Emergency', 0]
-    )
-  } catch (err) {
-    console.error('Failed to seed leave types', err)
-  }
+const LEAVE_TYPES = [
+  { id: 'vacation', name: 'Vacation' },
+  { id: 'sick', name: 'Sick' },
+  { id: 'emergency', name: 'Emergency' },
+]
+
+function resolveLeaveTypeName(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  const found = LEAVE_TYPES.find(
+    (item) => item.id.toLowerCase() === raw.toLowerCase() || item.name.toLowerCase() === raw.toLowerCase()
+  )
+  return found ? found.name : null
 }
 
 async function ensureSchemaColumns() {
@@ -178,6 +178,9 @@ async function ensureSchemaColumns() {
     await db.query(
       'ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS credits_deducted NUMERIC(10,2) NOT NULL DEFAULT 0'
     )
+    await db.query('ALTER TABLE leave_requests DROP CONSTRAINT IF EXISTS fk_leave_requests_type')
+    await db.query('ALTER TABLE leave_requests ALTER COLUMN IF EXISTS leave_type_id DROP NOT NULL')
+    await db.query('DROP TABLE IF EXISTS leave_types')
   } catch (err) {
     console.error('Failed to ensure schema columns', err)
   }
@@ -1340,18 +1343,11 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin']), asy
 
 // Leave types
 app.get('/api/leave-types', authRequired, async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM leave_types ORDER BY name ASC')
-  res.json(rows)
+  res.json(LEAVE_TYPES)
 })
 
 app.post('/api/leave-types', authRequired, requireRole(['admin']), async (req, res) => {
-  const { name, default_credits = 0 } = req.body || {}
-  const { rows } = await db.query(
-    'INSERT INTO leave_types (name, default_credits) VALUES ($1,$2) RETURNING id',
-    [name, default_credits]
-  )
-  await addAuditLog(req.user.id, 'create_leave_type', 'leave_types', rows[0]?.id)
-  res.json({ message: 'Leave type created' })
+  res.status(405).json({ message: 'Leave types are fixed in system configuration' })
 })
 
 // Leave requests
@@ -1399,8 +1395,10 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const ltResult = await db.query('SELECT * FROM leave_types WHERE id = $1', [leave_type_id])
-  const lt = ltResult.rows[0]
+  const leaveTypeName = resolveLeaveTypeName(leave_type_id)
+  if (!leaveTypeName) {
+    return res.status(400).json({ message: 'Invalid leave type' })
+  }
   const compensation = resolveLeaveCompensation(emp, start_date, end_date, leave_pay_type)
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
   if (compensation.insufficientCredits) {
@@ -1417,15 +1415,14 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
 
   const { rows } = await db.query(
     `INSERT INTO leave_requests
-     (employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, leave_pay_type, leave_days, credits_deducted, attachment_name, attachment_type, attachment_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,$11,$12,$13,$14)
+     (employee_id, employee_code, employee_name, leave_type_name, start_date, end_date, reason, status, leave_pay_type, leave_days, credits_deducted, attachment_name, attachment_type, attachment_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13)
      RETURNING id`,
     [
       user.employee_id,
       emp.employee_code,
       `${emp.first_name} ${emp.last_name}`,
-      leave_type_id,
-      lt?.name || null,
+      leaveTypeName,
       start_date,
       end_date,
       reason,
@@ -1479,8 +1476,10 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const ltResult = await db.query('SELECT * FROM leave_types WHERE id = $1', [leave_type_id])
-  const lt = ltResult.rows[0]
+  const leaveTypeName = resolveLeaveTypeName(leave_type_id)
+  if (!leaveTypeName) {
+    return res.status(400).json({ message: 'Invalid leave type' })
+  }
   const empResult = await db.query('SELECT * FROM employees WHERE id = $1', [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
@@ -1501,13 +1500,12 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
 
   await db.query(
     `UPDATE leave_requests
-     SET leave_type_id=$1, leave_type_name=$2, start_date=$3, end_date=$4, reason=$5,
-         leave_pay_type=$6, leave_days=$7, credits_deducted=$8,
-         attachment_name=$9, attachment_type=$10, attachment_data=$11
-     WHERE id=$12`,
+     SET leave_type_name=$1, start_date=$2, end_date=$3, reason=$4,
+         leave_pay_type=$5, leave_days=$6, credits_deducted=$7,
+         attachment_name=$8, attachment_type=$9, attachment_data=$10
+     WHERE id=$11`,
     [
-      leave_type_id,
-      lt?.name || null,
+      leaveTypeName,
       start_date,
       end_date,
       reason,
@@ -1750,7 +1748,6 @@ const PORT = process.env.PORT || 3000
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`API running on port ${PORT}`)
   ensureSchemaColumns()
-  ensureDefaultLeaveTypes()
   cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
   setInterval(() => {
     cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
