@@ -115,8 +115,13 @@ function priorityTone(value) {
 
 function userLabel(id) {
   const user = users.value.find((u) => Number(u.id) === Number(id))
-  if (!user?.email) return `User #${id}`
-  return user.email.split('@')[0]
+  if (!user) return `User #${id}`
+  const first = (user.first_name || '').trim()
+  const last = (user.last_name || '').trim()
+  const fullName = `${first} ${last}`.trim()
+  if (fullName) return fullName
+  if (user.email) return user.email
+  return `User #${id}`
 }
 
 function typeLabel(serviceType) {
@@ -358,7 +363,7 @@ function proofUrl(taskId) {
         <label class="mb-1 block text-xs text-gray-400">Employee</label>
         <select v-model="employeeFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
           <option value="all">All Employees</option>
-          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.email }}</option>
+          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
         </select>
       </div>
       <div>
@@ -438,8 +443,8 @@ function proofUrl(taskId) {
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-200">Assign To</label>
         <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option value="" disabled>Select user</option>
-          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ user.email }}</option>
+          <option value="" disabled>Select employee</option>
+          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
         </select>
       </div>
       <div>
