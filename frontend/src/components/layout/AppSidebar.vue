@@ -80,6 +80,41 @@ function isActive(path) {
         <div v-else-if="item.header" class="px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-primary-300/80">
           {{ item.label }}
         </div>
+        <a
+          v-else-if="item.external"
+          :href="item.path"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-200 transition-colors hover:bg-gray-800 hover:text-gray-100"
+          @click="emit('close')"
+        >
+          <span
+            v-if="item.icon"
+            class="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-gray-200"
+          >
+            <span
+              v-if="customIcons[item.icon]"
+              class="sidebar-icon text-primary-300"
+              aria-hidden="true"
+              v-html="customIcons[item.icon]"
+            />
+            <svg
+              v-else-if="iconPaths[item.icon]"
+              viewBox="0 0 24 24"
+              class="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.25"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path v-for="(d, idx) in iconPaths[item.icon]" :key="idx" :d="d" />
+            </svg>
+            <span v-else class="text-xs">•</span>
+          </span>
+          <span>{{ item.name }}</span>
+        </a>
         <RouterLink
           v-else
           :to="item.path"
@@ -114,7 +149,7 @@ function isActive(path) {
             >
               <path v-for="(d, idx) in iconPaths[item.icon]" :key="idx" :d="d" />
             </svg>
-            <span v-else class="text-xs">â€¢</span>
+            <span v-else class="text-xs">•</span>
           </span>
           <span>{{ item.name }}</span>
         </RouterLink>
@@ -132,5 +167,3 @@ function isActive(path) {
   stroke: currentColor;
 }
 </style>
-
-
