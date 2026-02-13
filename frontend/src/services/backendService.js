@@ -92,6 +92,18 @@ export async function fetchMe() {
   return data.user
 }
 
+export async function getNotifications(options = {}) {
+  return api.getNotifications(options)
+}
+
+export async function markNotificationRead(id) {
+  return api.markNotificationRead(id)
+}
+
+export async function markAllNotificationsRead() {
+  return api.markAllNotificationsRead()
+}
+
 export async function getLeads(options = {}) {
   return api.getLeads(options)
 }

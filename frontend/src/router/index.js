@@ -70,8 +70,7 @@ const routes = [
       {
         path: 'notifications',
         name: 'Notifications',
-        component: () => import('@/views/ComingSoonView.vue'),
-        props: { title: 'Notifications', description: 'Unread alerts and activity notifications.' },
+        component: () => import('@/views/NotificationsView.vue'),
         meta: { roles: ['admin', 'hr', 'employee'] },
       },
       // HR

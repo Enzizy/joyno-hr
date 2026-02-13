@@ -33,6 +33,23 @@ export async function fetchMe() {
   return request('/api/auth/me')
 }
 
+export async function getNotifications(options = {}) {
+  const params = new URLSearchParams()
+  if (options.limit) params.set('limit', options.limit)
+  if (options.offset || options.offset === 0) params.set('offset', options.offset)
+  if (options.unreadOnly) params.set('unread', 'true')
+  const qs = params.toString()
+  return request(`/api/notifications${qs ? `?${qs}` : ''}`)
+}
+
+export async function markNotificationRead(id) {
+  return request(`/api/notifications/${id}/read`, { method: 'POST' })
+}
+
+export async function markAllNotificationsRead() {
+  return request('/api/notifications/read-all', { method: 'POST' })
+}
+
 export async function changePassword(currentPassword, newPassword) {
   return request('/api/auth/change-password', {
     method: 'POST',

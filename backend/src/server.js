@@ -118,6 +118,15 @@ async function createNotification({ userId, type, title, message = null, targetT
   )
 }
 
+async function notifyRoles(roles, payload) {
+  if (!Array.isArray(roles) || !roles.length) return
+  const placeholders = roles.map((_, i) => `$${i + 1}`).join(',')
+  const { rows } = await db.query(`SELECT id FROM users WHERE role IN (${placeholders})`, roles)
+  for (const row of rows) {
+    await createNotification({ userId: row.id, ...payload })
+  }
+}
+
 async function createServicesForClient(clientId, selectedServices = []) {
   const serviceTypes = normalizeServices(selectedServices, CLIENT_SERVICES)
   if (!serviceTypes.length) return
@@ -1226,6 +1235,58 @@ app.delete('/api/automation-rules/:id', authRequired, requireRole(['admin']), as
   res.json({ message: 'Rule deleted' })
 })
 
+// Notifications
+app.get('/api/notifications', authRequired, async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100)
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
+  const unreadOnly = String(req.query.unread || '').toLowerCase() === 'true'
+  const params = [req.user.id]
+  let where = 'WHERE user_id = $1'
+  if (unreadOnly) where += ' AND is_read = FALSE'
+
+  const countResult = await db.query(`SELECT COUNT(*)::int AS total FROM notifications ${where}`, params)
+  params.push(limit)
+  params.push(offset)
+  const { rows } = await db.query(
+    `SELECT *
+     FROM notifications
+     ${where}
+     ORDER BY created_at DESC
+     LIMIT $2 OFFSET $3`,
+    params
+  )
+  const unreadResult = await db.query(
+    'SELECT COUNT(*)::int AS unread_count FROM notifications WHERE user_id = $1 AND is_read = FALSE',
+    [req.user.id]
+  )
+  res.json({
+    items: rows,
+    total: Number(countResult.rows[0]?.total || 0),
+    unread_count: Number(unreadResult.rows[0]?.unread_count || 0),
+    limit,
+    offset,
+  })
+})
+
+app.post('/api/notifications/:id/read', authRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid notification id' })
+  const { rows } = await db.query(
+    `UPDATE notifications
+     SET is_read = TRUE
+     WHERE id = $1 AND user_id = $2
+     RETURNING *`,
+    [id, req.user.id]
+  )
+  if (!rows.length) return res.status(404).json({ message: 'Notification not found' })
+  res.json(rows[0])
+})
+
+app.post('/api/notifications/read-all', authRequired, async (req, res) => {
+  await db.query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE', [req.user.id])
+  res.json({ message: 'All notifications marked as read' })
+})
+
 // Leave types
 app.get('/api/leave-types', authRequired, async (req, res) => {
   const { rows } = await db.query('SELECT * FROM leave_types ORDER BY name ASC')
@@ -1324,6 +1385,13 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   )
 
   const createdId = rows[0]?.id
+  await notifyRoles(['admin', 'hr'], {
+    type: 'leave_pending',
+    title: 'New Leave Request',
+    message: `${emp.first_name} ${emp.last_name} submitted a ${compensation.leavePayType} leave request.`,
+    targetTable: 'leave_requests',
+    targetId: createdId,
+  })
   await addAuditLog(req.user.id, 'create_leave_request', 'leave_requests', createdId)
   const created = await db.query('SELECT * FROM leave_requests WHERE id = $1', [createdId])
   res.json(created.rows[0] || { id: createdId })
@@ -1440,6 +1508,18 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
     )
   }
 
+  const ownerUserRows = await db.query('SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1', [
+    approvedRequest?.employee_id,
+  ])
+  await createNotification({
+    userId: ownerUserRows.rows[0]?.id,
+    type: 'leave_approved',
+    title: 'Leave Approved',
+    message: `Your ${approvedRequest?.leave_type_name || 'leave'} request has been approved.`,
+    targetTable: 'leave_requests',
+    targetId: id,
+  })
+
   const employeeId = approvedRequest?.employee_id
   await updateEmployeeStatus(employeeId)
   await addAuditLog(req.user.id, 'approve_leave_request', 'leave_requests', id)
@@ -1456,6 +1536,15 @@ app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', '
   )
   const employeeRows = await db.query('SELECT employee_id FROM leave_requests WHERE id = $1', [id])
   const employeeId = employeeRows.rows[0]?.employee_id
+  const ownerUserRows = await db.query('SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1', [employeeId])
+  await createNotification({
+    userId: ownerUserRows.rows[0]?.id,
+    type: 'leave_rejected',
+    title: 'Leave Rejected',
+    message: comment || 'Your leave request was rejected.',
+    targetTable: 'leave_requests',
+    targetId: id,
+  })
   await updateEmployeeStatus(employeeId)
   await addAuditLog(req.user.id, 'reject_leave_request', 'leave_requests', id)
   const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])

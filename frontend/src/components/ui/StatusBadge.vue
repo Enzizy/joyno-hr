@@ -22,6 +22,18 @@ const badgeClass = computed(() => {
   if (['rejected', 'resigned', 'absent'].includes(s)) return 'bg-red-900 text-red-200'
   return 'bg-gray-800 text-gray-200'
 })
+
+const displayLabel = computed(() => {
+  const raw = String(props.status || '').trim()
+  if (!raw) return ''
+  return raw
+    .split('_')
+    .join(' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ')
+})
 </script>
 
 <template>
@@ -29,7 +41,7 @@ const badgeClass = computed(() => {
     class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
     :class="badgeClass"
   >
-    <slot>{{ status }}</slot>
+    <slot>{{ displayLabel }}</slot>
   </span>
 </template>
 

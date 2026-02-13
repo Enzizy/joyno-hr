@@ -2,22 +2,19 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
+import { useNotificationStore } from '@/stores/notificationStore'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const notificationStore = useNotificationStore()
 const menuOpen = ref(false)
 const notificationsOpen = ref(false)
 const menuRef = ref(null)
 const notificationsRef = ref(null)
 const emit = defineEmits(['toggle-sidebar'])
-
-const notifications = ref([
-  { id: 1, title: 'Task assigned', message: 'New follow-up task has been assigned.', link: '/tasks', read: false },
-  { id: 2, title: 'Leave pending', message: 'A leave request needs review.', link: '/leave-approvals', read: false },
-  { id: 3, title: 'Contract reminder', message: 'A client contract is expiring soon.', link: '/clients', read: true },
-])
-
-const unreadCount = computed(() => notifications.value.filter((item) => !item.read).length)
+let pollTimer = null
+const notifications = computed(() => notificationStore.topbarItems)
+const unreadCount = computed(() => notificationStore.unreadCount)
 
 const userLabel = computed(() => {
   const u = authStore.user
@@ -43,6 +40,7 @@ async function logout() {
 function toggleNotifications() {
   notificationsOpen.value = !notificationsOpen.value
   if (notificationsOpen.value) menuOpen.value = false
+  if (notificationsOpen.value) notificationStore.fetchList({ limit: 8, offset: 0 })
 }
 
 function toggleMenu() {
@@ -51,13 +49,13 @@ function toggleMenu() {
 }
 
 async function openNotification(item) {
-  item.read = true
+  if (!item.is_read) await notificationStore.markRead(item.id)
   notificationsOpen.value = false
   if (item.link) await router.push(item.link)
 }
 
 function markAllRead() {
-  notifications.value = notifications.value.map((item) => ({ ...item, read: true }))
+  notificationStore.markAllRead()
 }
 
 function handleOutsideClick(event) {
@@ -68,10 +66,15 @@ function handleOutsideClick(event) {
 
 onMounted(() => {
   document.addEventListener('click', handleOutsideClick)
+  notificationStore.fetchList({ limit: 8, offset: 0 })
+  pollTimer = setInterval(() => {
+    notificationStore.refreshUnreadCount()
+  }, 30000)
 })
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleOutsideClick)
+  if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 
@@ -132,7 +135,7 @@ onBeforeUnmount(() => {
             >
               <p class="text-sm font-medium text-gray-100">{{ item.title }}</p>
               <p class="text-xs text-gray-400">{{ item.message }}</p>
-              <p v-if="!item.read" class="mt-1 text-[11px] font-semibold text-primary-300">Unread</p>
+              <p v-if="!item.is_read" class="mt-1 text-[11px] font-semibold text-primary-300">Unread</p>
             </button>
           </div>
           <p v-else class="px-3 py-4 text-sm text-gray-400">No notifications.</p>
