@@ -99,9 +99,11 @@ function dueState(row) {
 }
 
 function cardClass(row) {
+  // Keep service-type border colors visually consistent across all tabs.
+  // Due state is shown by filters/status badges, not by border/ring overrides.
   const state = dueState(row)
-  if (state === 'overdue') return 'ring-1 ring-red-700/60 bg-red-950/20'
-  if (state === 'today') return 'ring-1 ring-amber-700/60 bg-amber-950/20'
+  if (state === 'overdue') return ''
+  if (state === 'today') return ''
   return ''
 }
 
