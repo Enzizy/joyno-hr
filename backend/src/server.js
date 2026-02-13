@@ -179,7 +179,15 @@ async function ensureSchemaColumns() {
       'ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS credits_deducted NUMERIC(10,2) NOT NULL DEFAULT 0'
     )
     await db.query('ALTER TABLE leave_requests DROP CONSTRAINT IF EXISTS fk_leave_requests_type')
-    await db.query('ALTER TABLE leave_requests ALTER COLUMN IF EXISTS leave_type_id DROP NOT NULL')
+    const columnCheck = await db.query(
+      `SELECT 1
+       FROM information_schema.columns
+       WHERE table_name = 'leave_requests' AND column_name = 'leave_type_id'
+       LIMIT 1`
+    )
+    if (columnCheck.rows.length) {
+      await db.query('ALTER TABLE leave_requests ALTER COLUMN leave_type_id DROP NOT NULL')
+    }
     await db.query('DROP TABLE IF EXISTS leave_types')
   } catch (err) {
     console.error('Failed to ensure schema columns', err)
