@@ -159,6 +159,12 @@ function cardClass(row) {
   return 'border-gray-800 bg-gray-900'
 }
 
+function serviceCardClass(row) {
+  if (row.service_type === 'website_development') return 'shadow-[inset_0_0_0_1px_rgba(56,189,248,0.35)]'
+  if (row.service_type === 'social_media_management') return 'shadow-[inset_0_0_0_1px_rgba(167,139,250,0.35)]'
+  return ''
+}
+
 async function loadLookups() {
   const [clientData, serviceRows, userRows] = await Promise.all([
     getClients({ status: 'active', limit: 100, offset: 0 }),
@@ -389,7 +395,7 @@ function proofUrl(taskId) {
     </div>
 
     <div class="space-y-3">
-      <div v-for="row in tasks" :key="row.id" class="rounded-xl border p-4 shadow-sm" :class="cardClass(row)">
+      <div v-for="row in tasks" :key="row.id" class="rounded-xl border p-4 shadow-sm" :class="[serviceCardClass(row), cardClass(row)]">
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div class="space-y-2">
             <div class="flex items-center gap-2">
