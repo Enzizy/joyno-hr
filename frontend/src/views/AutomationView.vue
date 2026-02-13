@@ -85,6 +85,19 @@ function parseArray(value) {
   return []
 }
 
+function dateOnly(value) {
+  if (!value) return ''
+  return String(value).slice(0, 10)
+}
+
+function formatDate(value) {
+  const iso = dateOnly(value)
+  if (!iso) return '-'
+  const date = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' })
+}
+
 function clientName(id) {
   return clients.value.find((c) => Number(c.id) === Number(id))?.company_name || `Client #${id}`
 }
@@ -110,7 +123,7 @@ function formatSchedule(rule) {
 function isExpired(rule) {
   if (!rule.end_date) return false
   const today = new Date().toISOString().slice(0, 10)
-  return String(rule.end_date).slice(0, 10) < today
+  return dateOnly(rule.end_date) < today
 }
 
 function statusLabel(rule) {
@@ -293,7 +306,7 @@ async function removeRule(rule) {
         </div>
 
         <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-300">
-          <span class="rounded border border-gray-700 px-2 py-0.5">Ends {{ rule.end_date || '-' }}</span>
+          <span class="rounded border border-gray-700 px-2 py-0.5">Ends {{ formatDate(rule.end_date) }}</span>
           <span class="rounded border border-gray-700 px-2 py-0.5">Priority: {{ rule.priority }}</span>
         </div>
 

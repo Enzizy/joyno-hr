@@ -130,11 +130,25 @@ function typeLabel(serviceType) {
   return serviceType || '-'
 }
 
+function dateOnly(value) {
+  if (!value) return ''
+  return String(value).slice(0, 10)
+}
+
+function formatDate(value) {
+  const iso = dateOnly(value)
+  if (!iso) return '-'
+  const date = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' })
+}
+
 function dueState(row) {
   if (row.status === 'completed' || row.status === 'cancelled') return 'normal'
   const today = new Date().toISOString().slice(0, 10)
-  if (row.due_date < today) return 'overdue'
-  if (row.due_date === today) return 'today'
+  const due = dateOnly(row.due_date)
+  if (due < today) return 'overdue'
+  if (due === today) return 'today'
   return 'normal'
 }
 
@@ -387,7 +401,7 @@ function proofUrl(taskId) {
             </div>
             <p class="line-clamp-2 text-sm text-gray-300">{{ row.description || 'No description.' }}</p>
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
-              <span>Due: {{ row.due_date }}</span>
+              <span>Due: {{ formatDate(row.due_date) }}</span>
               <span>Client: {{ row.company_name || '-' }}</span>
               <span>Service: {{ typeLabel(row.service_type) }}</span>
               <span>Assigned: {{ userLabel(row.assigned_to) }}</span>
