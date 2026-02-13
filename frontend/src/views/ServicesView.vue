@@ -73,10 +73,15 @@ function statusTone(value) {
   return 'bg-gray-800 text-gray-300'
 }
 
-function labelUsername(userId) {
+function labelEmployeeName(userId) {
   const user = users.value.find((u) => Number(u.id) === Number(userId))
-  if (!user?.email) return `User #${userId}`
-  return user.email.split('@')[0]
+  if (!user) return `User #${userId}`
+  const first = (user.first_name || '').trim()
+  const last = (user.last_name || '').trim()
+  const fullName = `${first} ${last}`.trim()
+  if (fullName) return fullName
+  if (user.email) return user.email
+  return `User #${userId}`
 }
 
 function typeLabel(value) {
@@ -205,7 +210,7 @@ async function saveService() {
             <p class="text-xs text-gray-400">Progress: {{ Number(row.progress || 0) }}%</p>
           </div>
 
-          <p class="text-xs text-gray-400">Assigned team: {{ row.assigned_user_ids.length ? row.assigned_user_ids.map(labelUsername).join(', ') : 'None' }}</p>
+          <p class="text-xs text-gray-400">Assigned team: {{ row.assigned_user_ids.length ? row.assigned_user_ids.map(labelEmployeeName).join(', ') : 'None' }}</p>
         </div>
 
         <div class="mt-4 flex justify-end">
@@ -233,7 +238,7 @@ async function saveService() {
         <div class="grid gap-2 sm:grid-cols-2">
           <label v-for="user in users" :key="user.id" class="inline-flex items-center gap-2 text-sm text-gray-300">
             <input v-model="form.assigned_user_ids" :value="user.id" type="checkbox" class="rounded border-gray-700 bg-gray-900" />
-            <span>{{ user.email }}</span>
+            <span>{{ labelEmployeeName(user.id) }}</span>
           </label>
         </div>
       </div>

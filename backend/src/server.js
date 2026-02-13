@@ -426,7 +426,7 @@ app.post('/api/auth/change-password', authRequired, async (req, res) => {
 // Users (Admin)
 app.get('/api/users', authRequired, requireRole(['admin']), async (req, res) => {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code
+    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
      ORDER BY u.id DESC`
