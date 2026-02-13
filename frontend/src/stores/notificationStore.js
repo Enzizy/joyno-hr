@@ -4,6 +4,8 @@ import {
   getNotifications,
   markNotificationRead,
   markAllNotificationsRead,
+  markManyNotificationsRead,
+  cleanupNotifications,
 } from '@/services/backendService'
 
 function resolveNotificationLink(item) {
@@ -62,6 +64,25 @@ export const useNotificationStore = defineStore('notification', () => {
     unreadCount.value = 0
   }
 
+  async function markManyRead(ids = []) {
+    if (!ids.length) return
+    await markManyNotificationsRead(ids)
+    const idSet = new Set(ids.map((id) => Number(id)))
+    let reduced = 0
+    items.value = items.value.map((item) => {
+      if (idSet.has(Number(item.id)) && !item.is_read) {
+        reduced += 1
+        return { ...item, is_read: true }
+      }
+      return item
+    })
+    unreadCount.value = Math.max(0, unreadCount.value - reduced)
+  }
+
+  async function runCleanup(days = 90) {
+    return cleanupNotifications(days)
+  }
+
   return {
     items,
     total,
@@ -72,6 +93,7 @@ export const useNotificationStore = defineStore('notification', () => {
     refreshUnreadCount,
     markRead,
     markAllRead,
+    markManyRead,
+    runCleanup,
   }
 })
-

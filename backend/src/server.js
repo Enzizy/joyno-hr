@@ -127,6 +127,16 @@ async function notifyRoles(roles, payload) {
   }
 }
 
+async function cleanupOldNotifications(days = 90) {
+  const safeDays = Math.max(1, Number(days) || 90)
+  await db.query(
+    `DELETE FROM notifications
+     WHERE is_read = TRUE
+       AND created_at < NOW() - ($1::text || ' days')::interval`,
+    [safeDays]
+  )
+}
+
 async function createServicesForClient(clientId, selectedServices = []) {
   const serviceTypes = normalizeServices(selectedServices, CLIENT_SERVICES)
   if (!serviceTypes.length) return
@@ -1240,9 +1250,14 @@ app.get('/api/notifications', authRequired, async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 100)
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
   const unreadOnly = String(req.query.unread || '').toLowerCase() === 'true'
+  const type = String(req.query.type || '').trim().toLowerCase()
   const params = [req.user.id]
   let where = 'WHERE user_id = $1'
   if (unreadOnly) where += ' AND is_read = FALSE'
+  if (type) {
+    params.push(type)
+    where += ` AND type = $${params.length}`
+  }
 
   const countResult = await db.query(`SELECT COUNT(*)::int AS total FROM notifications ${where}`, params)
   params.push(limit)
@@ -1282,9 +1297,33 @@ app.post('/api/notifications/:id/read', authRequired, async (req, res) => {
   res.json(rows[0])
 })
 
+app.post('/api/notifications/read-many', authRequired, async (req, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+    : []
+  if (!ids.length) return res.status(400).json({ message: 'No notification ids provided' })
+
+  const params = [req.user.id, ids]
+  const { rows } = await db.query(
+    `UPDATE notifications
+     SET is_read = TRUE
+     WHERE user_id = $1
+       AND id = ANY($2::int[])
+     RETURNING id`,
+    params
+  )
+  res.json({ updated: rows.length })
+})
+
 app.post('/api/notifications/read-all', authRequired, async (req, res) => {
   await db.query('UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE', [req.user.id])
   res.json({ message: 'All notifications marked as read' })
+})
+
+app.post('/api/notifications/cleanup', authRequired, requireRole(['admin']), async (req, res) => {
+  const days = Number(req.body?.days || 90)
+  await cleanupOldNotifications(days)
+  res.json({ message: `Read notifications older than ${Math.max(1, Number(days) || 90)} days were removed` })
 })
 
 // Leave types
@@ -1694,4 +1733,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`API running on port ${PORT}`)
   ensureSchemaColumns()
   ensureDefaultLeaveTypes()
+  cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
+  setInterval(() => {
+    cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
+  }, 24 * 60 * 60 * 1000)
 })

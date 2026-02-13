@@ -38,6 +38,7 @@ export async function getNotifications(options = {}) {
   if (options.limit) params.set('limit', options.limit)
   if (options.offset || options.offset === 0) params.set('offset', options.offset)
   if (options.unreadOnly) params.set('unread', 'true')
+  if (options.type) params.set('type', options.type)
   const qs = params.toString()
   return request(`/api/notifications${qs ? `?${qs}` : ''}`)
 }
@@ -48,6 +49,14 @@ export async function markNotificationRead(id) {
 
 export async function markAllNotificationsRead() {
   return request('/api/notifications/read-all', { method: 'POST' })
+}
+
+export async function markManyNotificationsRead(ids = []) {
+  return request('/api/notifications/read-many', { method: 'POST', body: JSON.stringify({ ids }) })
+}
+
+export async function cleanupNotifications(days = 90) {
+  return request('/api/notifications/cleanup', { method: 'POST', body: JSON.stringify({ days }) })
 }
 
 export async function changePassword(currentPassword, newPassword) {

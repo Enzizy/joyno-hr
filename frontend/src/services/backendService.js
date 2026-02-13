@@ -104,6 +104,14 @@ export async function markAllNotificationsRead() {
   return api.markAllNotificationsRead()
 }
 
+export async function markManyNotificationsRead(ids = []) {
+  return api.markManyNotificationsRead(ids)
+}
+
+export async function cleanupNotifications(days = 90) {
+  return api.cleanupNotifications(days)
+}
+
 export async function getLeads(options = {}) {
   return api.getLeads(options)
 }
