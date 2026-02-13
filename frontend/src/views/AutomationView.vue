@@ -142,6 +142,18 @@ function typeLabel(serviceType) {
   return serviceType || '-'
 }
 
+function ruleCardClass(rule) {
+  if (rule.service_type === 'website_development') return 'border-cyan-700/60 bg-cyan-950/10'
+  if (rule.service_type === 'social_media_management') return 'border-violet-700/60 bg-violet-950/10'
+  return 'border-gray-800 bg-gray-900'
+}
+
+function ruleServiceBadgeClass(rule) {
+  if (rule.service_type === 'website_development') return 'border-cyan-600/50 bg-cyan-900/30 text-cyan-200'
+  if (rule.service_type === 'social_media_management') return 'border-violet-600/50 bg-violet-900/30 text-violet-200'
+  return 'border-gray-700 text-gray-300'
+}
+
 async function loadPage() {
   loading.value = true
   try {
@@ -296,10 +308,20 @@ async function removeRule(rule) {
     </div>
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <div v-for="rule in rules" :key="rule.id" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm" :class="isExpired(rule) ? 'opacity-60' : ''">
+      <div
+        v-for="rule in rules"
+        :key="rule.id"
+        class="rounded-xl border p-4 shadow-sm"
+        :class="[ruleCardClass(rule), isExpired(rule) ? 'opacity-60' : '']"
+      >
         <div class="flex items-start justify-between gap-3">
           <div>
-            <h3 class="text-lg font-semibold text-primary-200">{{ rule.rule_name }}</h3>
+            <div class="flex flex-wrap items-center gap-2">
+              <h3 class="text-lg font-semibold text-primary-200">{{ rule.rule_name }}</h3>
+              <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="ruleServiceBadgeClass(rule)">
+                {{ rule.service_type === 'website_development' ? 'Web Dev' : rule.service_type === 'social_media_management' ? 'SocMed' : 'General' }}
+              </span>
+            </div>
             <p class="text-sm text-gray-300">"{{ rule.task_title_template }}"</p>
             <p class="mt-1 text-xs text-gray-400">Client: {{ clientName(rule.client_id) }} | Service: {{ typeLabel(rule.service_type) }}</p>
             <p class="text-xs text-gray-400">Assigned: {{ userName(rule.assigned_to) }} | {{ formatSchedule(rule) }}</p>
