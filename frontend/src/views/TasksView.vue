@@ -394,8 +394,11 @@ function proofUrl(taskId) {
           <div class="space-y-2">
             <div class="flex items-center gap-2">
               <h3 class="text-lg font-semibold text-primary-200">
-                <span v-if="row.is_automated" class="mr-1 text-amber-300">?</span>{{ row.title }}
+                {{ row.title }}
               </h3>
+              <span v-if="row.is_automated" class="rounded-full border border-primary-500/50 bg-primary-500/10 px-2 py-0.5 text-xs font-semibold text-primary-300">
+                Automated
+              </span>
               <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="priorityTone(row.priority)">{{ formatPriority(row.priority) }}</span>
               <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="statusTone(row.status)">{{ formatStatus(row.status) }}</span>
             </div>
