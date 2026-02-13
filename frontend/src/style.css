@@ -16,30 +16,39 @@
 
 @layer base {
   html.theme-light body {
-    background: #f5f7fb;
+    background: #edf2f8;
     color: #111827;
     background-image:
-      radial-gradient(1000px 500px at 10% -10%, rgba(212, 175, 55, 0.12), transparent 60%),
-      radial-gradient(700px 400px at 90% 0%, rgba(212, 175, 55, 0.08), transparent 60%);
+      radial-gradient(1000px 520px at 10% -10%, rgba(212, 175, 55, 0.15), transparent 62%),
+      radial-gradient(900px 500px at 95% 5%, rgba(59, 130, 246, 0.09), transparent 65%);
   }
 }
 
 html.theme-light .bg-gray-950,
 html.theme-light .bg-gray-900 {
-  background-color: #ffffff !important;
+  background-color: #f8fafc !important;
+}
+
+html.theme-light .bg-gray-900\/95 {
+  background-color: rgba(248, 250, 252, 0.95) !important;
+}
+
+html.theme-light aside.bg-gray-900,
+html.theme-light header.bg-gray-900\/95 {
+  background-color: #eef3f9 !important;
 }
 
 html.theme-light .bg-gray-800 {
-  background-color: #f3f4f6 !important;
+  background-color: #e8eef6 !important;
 }
 
 html.theme-light .bg-gray-700 {
-  background-color: #e5e7eb !important;
+  background-color: #dde6f1 !important;
 }
 
 html.theme-light .border-gray-800,
 html.theme-light .border-gray-700 {
-  border-color: #d1d5db !important;
+  border-color: #c7d2e2 !important;
 }
 
 html.theme-light .text-gray-100,
@@ -53,15 +62,15 @@ html.theme-light .text-gray-300 {
 
 html.theme-light .text-gray-400,
 html.theme-light .text-gray-500 {
-  color: #4b5563 !important;
+  color: #475569 !important;
 }
 
 html.theme-light .hover\:bg-gray-800:hover {
-  background-color: #f3f4f6 !important;
+  background-color: #e8eef6 !important;
 }
 
 html.theme-light .hover\:bg-gray-700:hover {
-  background-color: #e5e7eb !important;
+  background-color: #dde6f1 !important;
 }
 
 html.theme-light .bg-primary-900\/40 {
@@ -72,6 +81,14 @@ html.theme-light input,
 html.theme-light select,
 html.theme-light textarea {
   color: #111827 !important;
+}
+
+html.theme-light .text-primary-200 {
+  color: #9f6e00 !important;
+}
+
+html.theme-light .text-primary-300 {
+  color: #a47811 !important;
 }
 
 html.theme-light ::-webkit-scrollbar-track {

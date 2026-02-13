@@ -29,6 +29,11 @@ const roleLabel = computed(() => {
   return r ? r.charAt(0).toUpperCase() + r.slice(1) : ''
 })
 const isLightMode = computed(() => themeStore.mode === 'light')
+const themeToggleClass = computed(() =>
+  isLightMode.value
+    ? 'border-amber-300 bg-amber-100 text-amber-900 hover:bg-amber-200'
+    : 'border-gray-600 bg-gray-800 text-primary-200 hover:bg-gray-700'
+)
 
 async function logout() {
   try {
@@ -103,10 +108,29 @@ onBeforeUnmount(() => {
     <div class="flex items-center gap-2">
       <button
         type="button"
-        class="rounded-lg border border-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-200 hover:bg-gray-800"
+        class="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors"
+        :class="themeToggleClass"
         :aria-label="isLightMode ? 'Switch to dark mode' : 'Switch to light mode'"
         @click="toggleTheme"
       >
+        <svg
+          v-if="isLightMode"
+          class="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 1 0 9.8 9.8z" />
+        </svg>
+        <svg
+          v-else
+          class="h-4 w-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 4V2m0 20v-2m8-8h2M2 12h2m13.66 5.66 1.42 1.42M4.92 4.92l1.42 1.42m11.32-1.42-1.42 1.42M6.34 17.66l-1.42 1.42M12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10z" />
+        </svg>
         {{ isLightMode ? 'Dark' : 'Light' }}
       </button>
       <div ref="notificationsRef" class="relative">
