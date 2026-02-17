@@ -8,6 +8,7 @@ const ExcelJS = require('exceljs')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const db = require('./db')
+const { runMigrations } = require('./migrate')
 const { addAuditLog, updateEmployeeStatus } = require('./helpers')
 const {
   LEAD_STATUSES,
@@ -30,6 +31,18 @@ const {
 
 const app = express()
 app.set('trust proxy', 1)
+
+const USER_AUTH_COLUMNS = 'id, email, password_hash, role, employee_id, created_at'
+const EMPLOYEE_COLUMNS =
+  'id, employee_code, first_name, last_name, department, position, shift, date_hired, status, leave_credits, created_at, updated_at'
+const LEAD_COLUMNS =
+  'id, company_name, contact_name, email, phone, source, status, interested_services, estimated_value, next_follow_up, notes, converted_client_id, created_at'
+const CLIENT_COLUMNS =
+  'id, lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status, created_at'
+const LEAVE_REQUEST_COLUMNS =
+  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, credits_deducted, attachment_name, attachment_type, attachment_data, created_at'
+const NOTIFICATION_COLUMNS =
+  'id, user_id, type, title, message, target_table, target_id, is_read, created_at'
 
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || ''
 const allowedOrigins = FRONTEND_ORIGIN.split(',')
@@ -258,33 +271,7 @@ function resolveLeaveTypeName(value) {
 }
 
 async function ensureSchemaColumns() {
-  try {
-    await db.query(
-      "ALTER TABLE employees ADD COLUMN IF NOT EXISTS leave_credits NUMERIC(10,2) NOT NULL DEFAULT 0"
-    )
-    await db.query(
-      "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_pay_type VARCHAR(20) NOT NULL DEFAULT 'unpaid'"
-    )
-    await db.query(
-      'ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS leave_days NUMERIC(10,2) NOT NULL DEFAULT 0'
-    )
-    await db.query(
-      'ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS credits_deducted NUMERIC(10,2) NOT NULL DEFAULT 0'
-    )
-    await db.query('ALTER TABLE leave_requests DROP CONSTRAINT IF EXISTS fk_leave_requests_type')
-    const columnCheck = await db.query(
-      `SELECT 1
-       FROM information_schema.columns
-       WHERE table_name = 'leave_requests' AND column_name = 'leave_type_id'
-       LIMIT 1`
-    )
-    if (columnCheck.rows.length) {
-      await db.query('ALTER TABLE leave_requests ALTER COLUMN leave_type_id DROP NOT NULL')
-    }
-    await db.query('DROP TABLE IF EXISTS leave_types')
-  } catch (err) {
-    console.error('Failed to ensure schema columns', err)
-  }
+  // Kept for backward compatibility; schema updates now run via migrations.
 }
 
 function calculateLeaveDays(startDate, endDate) {
@@ -394,7 +381,7 @@ app.get('/health', (req, res) => {
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body || {}
   if (!email || !password) return res.status(400).json({ message: 'Email and password required' })
-  const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email])
+  const { rows } = await db.query(`SELECT ${USER_AUTH_COLUMNS} FROM users WHERE email = $1`, [email])
   const user = rows[0]
   if (!user) return res.status(401).json({ message: 'Invalid credentials' })
   const ok = await bcrypt.compare(password, user.password_hash)
@@ -413,7 +400,7 @@ app.get('/api/auth/me', authRequired, async (req, res) => {
 app.post('/api/auth/change-password', authRequired, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {}
   if (!currentPassword || !newPassword) return res.status(400).json({ message: 'Missing fields' })
-  const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.id])
+  const { rows } = await db.query(`SELECT ${USER_AUTH_COLUMNS} FROM users WHERE id = $1`, [req.user.id])
   const user = rows[0]
   if (!user) return res.status(404).json({ message: 'User not found' })
   const ok = await bcrypt.compare(currentPassword, user.password_hash)
@@ -460,12 +447,12 @@ app.delete('/api/users/:id', authRequired, requireRole(['admin']), async (req, r
 
 // Employees
 app.get('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM employees ORDER BY created_at DESC')
+  const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees ORDER BY created_at DESC`)
   res.json(rows)
 })
 
 app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM employees WHERE id = $1', [req.params.id])
+  const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.params.id])
   if (!rows.length) return res.status(404).json({ message: 'Employee not found' })
   res.json(rows[0])
 })
@@ -492,7 +479,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
   )
   const createdId = rows[0]?.id
   await addAuditLog(req.user.id, 'create_employee', 'employees', createdId)
-  const created = await db.query('SELECT * FROM employees WHERE id = $1', [createdId])
+  const created = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [createdId])
   res.json(created.rows[0] || { id: createdId })
 })
 
@@ -517,7 +504,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
     ]
   )
   await addAuditLog(req.user.id, 'update_employee', 'employees', req.params.id)
-  const updated = await db.query('SELECT * FROM employees WHERE id = $1', [req.params.id])
+  const updated = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.params.id])
   res.json(updated.rows[0] || { id: Number(req.params.id) })
 })
 
@@ -660,7 +647,7 @@ app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, re
   const source = normalizeEnum(req.query.source, LEAD_SOURCES, { defaultValue: null, allowNull: true })
   const search = String(req.query.search || '').trim()
   const { limit, offset } = parsePagination(req.query, 10, 50)
-  let sql = 'SELECT * FROM leads WHERE 1=1'
+  let sql = `SELECT ${LEAD_COLUMNS} FROM leads WHERE 1=1`
   const params = []
   if (status) {
     params.push(status)
@@ -674,7 +661,7 @@ app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, re
     params.push(`%${search}%`)
     sql += ` AND (company_name ILIKE $${params.length} OR contact_name ILIKE $${params.length} OR email ILIKE $${params.length})`
   }
-  const countSql = sql.replace('SELECT *', 'SELECT COUNT(*)::int AS total')
+  const countSql = sql.replace(`SELECT ${LEAD_COLUMNS}`, 'SELECT COUNT(*)::int AS total')
   const countResult = await db.query(countSql, params)
   params.push(limit)
   params.push(offset)
@@ -824,7 +811,7 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid lead id' })
   const payload = req.body || {}
-  const { rows } = await db.query('SELECT * FROM leads WHERE id = $1', [id])
+  const { rows } = await db.query(`SELECT ${LEAD_COLUMNS} FROM leads WHERE id = $1`, [id])
   const lead = rows[0]
   if (!lead) return res.status(404).json({ message: 'Lead not found' })
   if (lead.status === 'converted') return res.status(400).json({ message: 'Lead already converted' })
@@ -878,7 +865,7 @@ app.get('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, 
   const status = normalizeEnum(req.query.status, CLIENT_STATUSES, { defaultValue: null, allowNull: true })
   const search = String(req.query.search || '').trim()
   const { limit, offset } = parsePagination(req.query, 10, 50)
-  let sql = 'SELECT * FROM clients WHERE 1=1'
+  let sql = `SELECT ${CLIENT_COLUMNS} FROM clients WHERE 1=1`
   const params = []
   if (status) {
     params.push(status)
@@ -888,7 +875,7 @@ app.get('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, 
     params.push(`%${search}%`)
     sql += ` AND (company_name ILIKE $${params.length} OR contact_name ILIKE $${params.length} OR email ILIKE $${params.length})`
   }
-  const countSql = sql.replace('SELECT *', 'SELECT COUNT(*)::int AS total')
+  const countSql = sql.replace(`SELECT ${CLIENT_COLUMNS}`, 'SELECT COUNT(*)::int AS total')
   const countResult = await db.query(countSql, params)
   params.push(limit)
   params.push(offset)
@@ -960,7 +947,7 @@ app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr']), async (r
   if (!payload.company_name || !payload.contact_name || !payload.email || !payload.contract_start_date) {
     return res.status(400).json({ message: 'Company, contact, email, and contract start date are required' })
   }
-  const currentResult = await db.query('SELECT * FROM clients WHERE id = $1', [id])
+  const currentResult = await db.query(`SELECT ${CLIENT_COLUMNS} FROM clients WHERE id = $1`, [id])
   if (!currentResult.rows.length) return res.status(404).json({ message: 'Client not found' })
   const current = currentResult.rows[0]
   const status = normalizeEnum(payload.status, CLIENT_STATUSES, { defaultValue: 'active' })
@@ -1011,7 +998,7 @@ app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr']), async (r
       id,
     ]
   )
-  const { rows } = await db.query('SELECT * FROM clients WHERE id = $1', [id])
+  const { rows } = await db.query(`SELECT ${CLIENT_COLUMNS} FROM clients WHERE id = $1`, [id])
   await addAuditLog(req.user.id, 'update_client', 'clients', id)
   res.json(rows[0])
 })
@@ -1253,7 +1240,12 @@ app.post('/api/tasks/:id/complete', authRequired, uploadProof, requireRole(['adm
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const ownCheck = req.user.role === 'employee' ? ' AND assigned_to = $2' : ''
   const taskParams = req.user.role === 'employee' ? [id, req.user.id] : [id]
-  const taskResult = await db.query(`SELECT * FROM tasks WHERE id = $1${ownCheck}`, taskParams)
+  const taskResult = await db.query(
+    `SELECT id, title, assigned_to, proof_of_work_name, proof_of_work_type, proof_of_work_data
+     FROM tasks
+     WHERE id = $1${ownCheck}`,
+    taskParams
+  )
   const task = taskResult.rows[0]
   if (!task) return res.status(404).json({ message: 'Task not found' })
 
@@ -1503,7 +1495,7 @@ app.get('/api/notifications', authRequired, async (req, res) => {
   params.push(limit)
   params.push(offset)
   const { rows } = await db.query(
-    `SELECT *
+    `SELECT ${NOTIFICATION_COLUMNS}
      FROM notifications
      ${where}
      ORDER BY created_at DESC
@@ -1582,19 +1574,19 @@ app.get('/api/leave-requests', authRequired, async (req, res) => {
   if (scope === 'mine') {
     if (!user.employee_id) return res.json([])
     const { rows } = await db.query(
-      `SELECT * FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,
+      `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,
       [user.employee_id]
     )
     return res.json(rows)
   }
   if (user.role === 'employee') {
     const { rows } = await db.query(
-      `SELECT * FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,
+      `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,
       [user.employee_id]
     )
     return res.json(rows)
   }
-  const { rows } = await db.query('SELECT * FROM leave_requests ORDER BY created_at DESC')
+  const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests ORDER BY created_at DESC`)
   res.json(rows)
 })
 
@@ -1605,7 +1597,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     return res.status(400).json({ message: 'Missing required fields' })
   }
 
-  const empResult = await db.query('SELECT * FROM employees WHERE id = $1', [user.employee_id])
+  const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
   if (emp.status === 'on_leave') return res.status(403).json({ message: 'Currently on leave' })
@@ -1669,14 +1661,14 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     targetId: createdId,
   })
   await addAuditLog(req.user.id, 'create_leave_request', 'leave_requests', createdId)
-  const created = await db.query('SELECT * FROM leave_requests WHERE id = $1', [createdId])
+  const created = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [createdId])
   res.json(created.rows[0] || { id: createdId })
 })
 
 app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
-  const { rows } = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   const request = rows[0]
   if (!request) return res.status(404).json({ message: 'Leave request not found' })
   if (request.employee_id !== req.user.employee_id) {
@@ -1705,7 +1697,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   if (!leaveTypeName) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
-  const empResult = await db.query('SELECT * FROM employees WHERE id = $1', [req.user.employee_id])
+  const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
   const compensation = resolveLeaveCompensation(emp, start_date, end_date, leave_pay_type)
@@ -1745,14 +1737,14 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   )
 
   await addAuditLog(req.user.id, 'update_leave_request', 'leave_requests', id)
-  const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   res.json(updated.rows[0] || { id })
 })
 
 app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
-  const { rows } = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   const leaveRequest = rows[0]
   if (!leaveRequest) return res.status(404).json({ message: 'Leave request not found' })
   if (leaveRequest.status !== 'pending') {
@@ -1778,7 +1770,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
     [req.user.id, req.user.email, req.user.role, id]
   )
 
-  const approvedResult = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const approvedResult = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   const approvedRequest = approvedResult.rows[0]
   const creditsToDeduct = Number(approvedRequest?.credits_deducted || 0)
   if (approvedRequest?.leave_pay_type === 'paid' && creditsToDeduct > 0) {
@@ -1803,7 +1795,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
   const employeeId = approvedRequest?.employee_id
   await updateEmployeeStatus(employeeId)
   await addAuditLog(req.user.id, 'approve_leave_request', 'leave_requests', id)
-  const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   res.json(updated.rows[0] || { id })
 })
 
@@ -1827,13 +1819,13 @@ app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', '
   })
   await updateEmployeeStatus(employeeId)
   await addAuditLog(req.user.id, 'reject_leave_request', 'leave_requests', id)
-  const updated = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   res.json(updated.rows[0] || { id })
 })
 
 app.post('/api/leave-requests/:id/cancel', authRequired, async (req, res) => {
   const id = req.params.id
-  const { rows } = await db.query('SELECT * FROM leave_requests WHERE id = $1', [id])
+  const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   const request = rows[0]
   if (!request) return res.status(404).json({ message: 'Leave request not found' })
   if (request.employee_id !== req.user.employee_id) {
@@ -1872,7 +1864,7 @@ app.get('/api/leave-requests/:id/attachment', authRequired, async (req, res) => 
 // Reports
 app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { from, to } = req.query
-  let sql = 'SELECT * FROM leave_requests WHERE 1=1'
+  let sql = `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE 1=1`
   const params = []
   if (from) {
     params.push(from)
@@ -1889,7 +1881,7 @@ app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async 
 
 app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { from, to } = req.query
-  let sql = 'SELECT * FROM leave_requests WHERE 1=1'
+  let sql = `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE 1=1`
   const params = []
   if (from) {
     params.push(from)
@@ -1970,15 +1962,23 @@ app.get('/api/audit-logs', authRequired, requireRole(['admin']), async (req, res
 })
 
 const PORT = process.env.PORT || 3000
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`API running on port ${PORT}`)
-  ensureSchemaColumns()
-  runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
-  setInterval(() => {
+
+async function startServer() {
+  await runMigrations()
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`API running on port ${PORT}`)
     runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
-  }, 60 * 60 * 1000)
-  cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
-  setInterval(() => {
+    setInterval(() => {
+      runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
+    }, 60 * 60 * 1000)
     cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
-  }, 24 * 60 * 60 * 1000)
+    setInterval(() => {
+      cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
+    }, 24 * 60 * 60 * 1000)
+  })
+}
+
+startServer().catch((err) => {
+  console.error('Failed to start server', err)
+  process.exit(1)
 })
