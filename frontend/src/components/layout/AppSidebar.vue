@@ -65,7 +65,7 @@ function isActive(path) {
     @click="emit('close')"
   />
   <aside
-    class="fixed inset-y-0 left-0 z-40 w-64 flex-col border-r border-primary-900/40 bg-gray-900 transition-transform"
+    class="fixed inset-y-0 left-0 z-40 flex h-[100dvh] w-64 flex-col overflow-hidden border-r border-primary-900/40 bg-gray-900 transition-transform"
     :class="[
       open ? 'translate-x-0' : '-translate-x-full',
       'lg:translate-x-0 lg:flex'
@@ -74,7 +74,7 @@ function isActive(path) {
     <div class="flex h-14 shrink-0 items-center border-b border-gray-800 px-4">
       <span class="text-lg font-semibold text-primary-300">Joyno HR</span>
     </div>
-    <nav class="flex-1 space-y-0.5 overflow-y-auto px-2 py-4">
+    <nav class="sidebar-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-4 pb-8">
       <template v-for="(item, i) in filteredItems" :key="i">
         <div v-if="item.divider" class="my-2 border-t border-primary-900/30" />
         <div v-else-if="item.header" class="px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-primary-300/80">
@@ -166,4 +166,9 @@ function isActive(path) {
   fill: currentColor;
   stroke: currentColor;
 }
+
+.sidebar-scroll {
+  -webkit-overflow-scrolling: touch;
+}
 </style>
+
