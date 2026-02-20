@@ -26,13 +26,6 @@ export const navItems = [
   { divider: true, roles: ['admin', 'hr', 'employee'] },
   { label: 'Account', header: true, roles: ['admin', 'hr', 'employee'] },
   { path: '/profile', name: 'Profile', icon: 'user', roles: ['admin', 'hr', 'employee'] },
-  {
-    path: 'https://joyno-ca.web.app/',
-    name: 'Cash Advance',
-    icon: 'service',
-    external: true,
-    roles: ['admin', 'hr', 'employee'],
-  },
 ]
 
 export function getNavForRole(role) {
