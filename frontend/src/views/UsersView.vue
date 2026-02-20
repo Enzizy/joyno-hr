@@ -103,7 +103,7 @@ async function removeUser(row) {
         <tr>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Email</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Role</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee ID</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Linked Employee</th>
           <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
         </tr>
       </thead>
@@ -113,7 +113,12 @@ async function removeUser(row) {
           <td class="px-4 py-3">
             <StatusBadge :status="row.role" />
           </td>
-          <td class="px-4 py-3 text-sm text-gray-300">{{ row.employee_code ?? row.employee_id ?? '-' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">
+            <span v-if="row.employee_id">
+              {{ row.employee_code || '-' }} - {{ [row.first_name, row.last_name].filter(Boolean).join(' ') || '-' }}
+            </span>
+            <span v-else>-</span>
+          </td>
           <td class="px-4 py-3 text-right">
             <AppButton variant="danger" size="sm" @click="removeUser(row)">Delete</AppButton>
           </td>
