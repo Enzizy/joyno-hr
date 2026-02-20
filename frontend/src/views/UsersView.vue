@@ -55,13 +55,17 @@ async function createUser() {
     toast.warning('Email and password are required.')
     return
   }
+  if (!form.value.employee_id) {
+    toast.warning('Please link this account to an employee.')
+    return
+  }
   submitting.value = true
   try {
     await createUserApi({
       email: form.value.email,
       password: form.value.password,
       role: form.value.role,
-      employee_id: form.value.employee_id || null,
+      employee_id: Number(form.value.employee_id),
     })
     toast.success('User created.')
     showModal.value = false
@@ -136,17 +140,18 @@ async function removeUser(row) {
           </select>
         </div>
         <div>
-          <label class="mb-1 block text-sm font-medium text-gray-200">Link to employee (optional)</label>
+          <label class="mb-1 block text-sm font-medium text-gray-200">Link to employee *</label>
           <select
             v-model="form.employee_id"
+            required
             class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
           >
-            <option value="">- No employee -</option>
+            <option value="">Select employee</option>
             <option v-for="e in employees" :key="e.id" :value="e.id" class="bg-gray-900 text-primary-200">
               {{ e.employee_code }} - {{ e.first_name }} {{ e.last_name }}
             </option>
           </select>
-          <p class="mt-1 text-xs text-gray-400">Link this account to an employee so they can use Leave requests.</p>
+          <p class="mt-1 text-xs text-gray-400">Required for role-based leave and task assignment.</p>
         </div>
       </form>
       <template #footer>

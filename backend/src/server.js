@@ -447,10 +447,17 @@ app.get('/api/users', authRequired, requireRole(['admin']), async (req, res) => 
 app.post('/api/users', authRequired, requireRole(['admin']), async (req, res) => {
   const { email, password, role = 'employee', employee_id = null } = req.body || {}
   if (!email || !password) return res.status(400).json({ message: 'Email and password required' })
+  if (!employee_id) return res.status(400).json({ message: 'Employee link is required' })
+  const employeeId = Number(employee_id)
+  if (!employeeId) return res.status(400).json({ message: 'Invalid employee id' })
+  const employeeExists = await db.query('SELECT id FROM employees WHERE id = $1', [employeeId])
+  if (!employeeExists.rows.length) return res.status(404).json({ message: 'Employee not found' })
+  const alreadyLinked = await db.query('SELECT id FROM users WHERE employee_id = $1 LIMIT 1', [employeeId])
+  if (alreadyLinked.rows.length) return res.status(409).json({ message: 'Selected employee already has an account' })
   const hash = await bcrypt.hash(password, 10)
   const { rows } = await db.query(
     'INSERT INTO users (email, password_hash, role, employee_id) VALUES ($1,$2,$3,$4) RETURNING id',
-    [email, hash, role, employee_id]
+    [email, hash, role, employeeId]
   )
   const createdId = rows[0]?.id
   await addAuditLog(req.user.id, 'create_user', 'users', createdId)
