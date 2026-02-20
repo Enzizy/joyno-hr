@@ -62,6 +62,11 @@ const leaveTypeMap = computed(() =>
     return acc
   }, {})
 )
+const selectedLeaveType = computed(() => leaveTypeMap.value[form.value.leave_type_id] || null)
+const medicalCertRequiredForPaid = computed(() => {
+  const typeName = String(selectedLeaveType.value?.name || '').toLowerCase()
+  return typeName === 'sick leave' && requestedDays.value > 1 && !attachment.value
+})
 
 function paidDaysUsedForType(typeName, year) {
   return myRequests.value
@@ -85,10 +90,11 @@ function remainingPaidDays(typeId, date) {
 }
 
 const payTypePreview = computed(() => {
-  const type = leaveTypeMap.value[form.value.leave_type_id]
+  const type = selectedLeaveType.value
   if (!requestedDays.value || !type) return '-'
   if (!Number(type.paid_days_per_year || 0)) return 'unpaid'
   if (!eligibleForPaid.value) return 'unpaid'
+  if (medicalCertRequiredForPaid.value) return 'unpaid'
   const remaining = remainingPaidDays(type.id, form.value.start_date)
   return requestedDays.value <= remaining ? 'paid' : 'unpaid'
 })
@@ -325,6 +331,9 @@ function onEditAttachmentChange(event) {
           <span class="font-semibold text-primary-200">{{ requestedDays }}</span>
           - This request will be
           <span class="font-semibold uppercase text-primary-200">{{ payTypePreview }}</span>.
+        </p>
+        <p v-if="medicalCertRequiredForPaid" class="text-amber-300">
+          Paid sick leave above 1 day requires a medical certificate (attachment). Without it, this request is unpaid.
         </p>
       </div>
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">

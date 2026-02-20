@@ -257,7 +257,14 @@ async function createServicesForClient(clientId, selectedServices = []) {
 
 const LEAVE_TYPES = [
   { id: 'vacation_leave', name: 'Vacation Leave', paid_days_per_year: 10, requires_one_year: true, aliases: ['vacation'] },
-  { id: 'sick_leave', name: 'Sick Leave', paid_days_per_year: 5, requires_one_year: true, aliases: ['sick'] },
+  {
+    id: 'sick_leave',
+    name: 'Sick Leave',
+    paid_days_per_year: 5,
+    requires_one_year: true,
+    requires_medical_cert_if_more_than_days: 1,
+    aliases: ['sick'],
+  },
   { id: 'leave_of_absence', name: 'Leave of Absence', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
   { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
   { id: 'emergency_leave', name: 'Emergency Leave', paid_days_per_year: 0, requires_one_year: false, aliases: ['emergency'] },
@@ -317,7 +324,7 @@ async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, exclude
   return Number(rows[0]?.used_days || 0)
 }
 
-async function resolveLeaveCompensation(employee, leaveType, startDate, endDate, excludeRequestId = null) {
+async function resolveLeaveCompensation(employee, leaveType, startDate, endDate, hasMedicalAttachment = false, excludeRequestId = null) {
   const leaveDays = calculateLeaveDays(startDate, endDate)
   if (!leaveDays || leaveDays <= 0) return null
 
@@ -327,6 +334,13 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
 
   const eligible = leaveType.requires_one_year ? isPaidLeaveEligible(employee?.date_hired, startDate) : true
   if (!eligible) {
+    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+  }
+  if (
+    Number(leaveType.requires_medical_cert_if_more_than_days || 0) > 0 &&
+    leaveDays > Number(leaveType.requires_medical_cert_if_more_than_days) &&
+    !hasMedicalAttachment
+  ) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
 
@@ -1625,8 +1639,6 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   if (!leaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
-  const compensation = await resolveLeaveCompensation(emp, leaveType, start_date, end_date)
-  if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
   let attachmentName = null
   let attachmentType = null
   let attachmentData = null
@@ -1635,6 +1647,14 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     attachmentType = req.file.mimetype
     attachmentData = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
   }
+  const compensation = await resolveLeaveCompensation(
+    emp,
+    leaveType,
+    start_date,
+    end_date,
+    Boolean(attachmentData)
+  )
+  if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 
   const { rows } = await db.query(
     `INSERT INTO leave_requests
@@ -1706,8 +1726,6 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
-  const compensation = await resolveLeaveCompensation(emp, leaveType, start_date, end_date, id)
-  if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 
   let attachmentName = request.attachment_name
   let attachmentType = request.attachment_type
@@ -1717,6 +1735,15 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     attachmentType = req.file.mimetype
     attachmentData = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`
   }
+  const compensation = await resolveLeaveCompensation(
+    emp,
+    leaveType,
+    start_date,
+    end_date,
+    Boolean(attachmentData),
+    id
+  )
+  if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 
   await db.query(
     `UPDATE leave_requests
