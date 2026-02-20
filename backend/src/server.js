@@ -34,7 +34,7 @@ app.set('trust proxy', 1)
 
 const USER_AUTH_COLUMNS = 'id, email, password_hash, role, employee_id, created_at'
 const EMPLOYEE_COLUMNS =
-  'id, employee_code, first_name, last_name, department, position, shift, date_hired, status, leave_credits, created_at, updated_at'
+  'id, employee_code, first_name, last_name, department, position, shift, date_hired, status, created_at, updated_at'
 const LEAD_COLUMNS =
   'id, company_name, contact_name, email, phone, source, status, interested_services, estimated_value, next_follow_up, notes, converted_client_id, created_at'
 const CLIENT_COLUMNS =
@@ -378,7 +378,7 @@ function requireRole(roles) {
 
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department, e.shift, e.date_hired, e.leave_credits
+    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department, e.shift, e.date_hired
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
      WHERE u.id = $1`,
@@ -482,11 +482,10 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
-  const leaveCredits = Number(e.leave_credits ?? 0)
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, shift, date_hired, status, leave_credits)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     (employee_code, first_name, last_name, department, position, shift, date_hired, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING id`,
     [
       e.employee_code,
@@ -497,7 +496,6 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
       e.shift || 'day',
       e.date_hired,
       e.status || 'active',
-      Number.isFinite(leaveCredits) ? leaveCredits : 0,
     ]
   )
   const createdId = rows[0]?.id
@@ -508,11 +506,10 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
 
 app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
-  const leaveCredits = Number(e.leave_credits ?? 0)
   await db.query(
     `UPDATE employees
-     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, date_hired=$7, status=$8, leave_credits=$9
-     WHERE id=$10`,
+     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, date_hired=$7, status=$8
+     WHERE id=$9`,
     [
       e.employee_code,
       e.first_name,
@@ -522,7 +519,6 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
       e.shift || 'day',
       e.date_hired,
       e.status || 'active',
-      Number.isFinite(leaveCredits) ? leaveCredits : 0,
       req.params.id,
     ]
   )
@@ -571,14 +567,11 @@ app.get('/api/dashboard/overview', authRequired, async (req, res) => {
        LIMIT 8`,
       [req.user.id, todayISO, nextWeekISO]
     )
-    const leaveSummary = await db.query('SELECT leave_credits FROM employees WHERE id = $1', [req.user.employee_id])
-    const leaveCredits = Number(leaveSummary.rows[0]?.leave_credits || 0)
     return res.json({
       role: req.user.role,
       metrics: {
         tasks_due_today: Number(dueToday.rows[0]?.count || 0),
         overdue_tasks: Number(overdue.rows[0]?.count || 0),
-        leave_credits: leaveCredits,
         upcoming_deadlines: upcoming.rows.length,
       },
       upcoming_tasks: upcoming.rows,
@@ -641,27 +634,6 @@ app.get('/api/dashboard/overview', authRequired, async (req, res) => {
     overdue_tasks_list: overdueTaskItems.rows,
     lead_follow_ups: leadFollowUps.rows,
   })
-})
-
-app.post('/api/employees/:id/grant-credits', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const id = Number(req.params.id)
-  const amount = Number(req.body?.amount)
-  if (!id) return res.status(400).json({ message: 'Invalid employee id' })
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return res.status(400).json({ message: 'Amount must be greater than 0' })
-  }
-
-  const { rows } = await db.query(
-    `UPDATE employees
-     SET leave_credits = leave_credits + $1, updated_at = NOW()
-     WHERE id = $2
-     RETURNING *`,
-    [amount, id]
-  )
-  if (!rows.length) return res.status(404).json({ message: 'Employee not found' })
-
-  await addAuditLog(req.user.id, 'grant_leave_credits', 'employees', id)
-  res.json(rows[0])
 })
 
 // Leads (CRM)

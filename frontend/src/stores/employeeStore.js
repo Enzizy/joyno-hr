@@ -6,7 +6,6 @@ import {
   createEmployee,
   updateEmployee,
   deleteEmployee,
-  grantEmployeeCredits,
 } from '@/services/backendService'
 
 export const useEmployeeStore = defineStore('employee', () => {
@@ -58,14 +57,6 @@ export const useEmployeeStore = defineStore('employee', () => {
     if (current.value?.id === id) current.value = null
   }
 
-  async function grantCredits(id, amount) {
-    const data = await grantEmployeeCredits(id, amount)
-    const idx = list.value.findIndex((e) => e.id === id)
-    if (idx !== -1) list.value[idx] = { ...list.value[idx], ...data }
-    if (current.value?.id === id) current.value = { ...current.value, ...data }
-    return data
-  }
-
   function clearCurrent() {
     current.value = null
   }
@@ -81,7 +72,6 @@ export const useEmployeeStore = defineStore('employee', () => {
     create,
     update,
     remove,
-    grantCredits,
     clearCurrent,
   }
 })

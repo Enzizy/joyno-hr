@@ -29,10 +29,6 @@ export async function deleteEmployee(id) {
   return api.deleteEmployee(id)
 }
 
-export async function grantEmployeeCredits(id, amount) {
-  return api.grantEmployeeCredits(id, amount)
-}
-
 export async function getUsers() {
   return api.getUsers()
 }

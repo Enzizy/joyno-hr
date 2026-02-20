@@ -90,13 +90,6 @@ export async function deleteEmployee(id) {
   return request(`/api/employees/${id}`, { method: 'DELETE' })
 }
 
-export async function grantEmployeeCredits(id, amount) {
-  return request(`/api/employees/${id}/grant-credits`, {
-    method: 'POST',
-    body: JSON.stringify({ amount }),
-  })
-}
-
 export async function getUsers() {
   return request('/api/users')
 }

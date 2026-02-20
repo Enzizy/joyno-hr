@@ -104,6 +104,34 @@ const overdueTaskItems = computed(() => overview.value?.overdue_tasks_list || []
 const leadFollowUps = computed(() => overview.value?.lead_follow_ups || [])
 const employeeKpis = computed(() => overview.value?.metrics || {})
 const employeeUpcomingTasks = computed(() => overview.value?.upcoming_tasks || [])
+const paidLeaveEligible = computed(() => {
+  if (!authStore.user?.date_hired) return false
+  const hired = new Date(authStore.user.date_hired)
+  if (Number.isNaN(hired.getTime())) return false
+  hired.setFullYear(hired.getFullYear() + 1)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return hired <= today
+})
+const paidLeaveBalances = computed(() => {
+  const year = new Date().getFullYear()
+  const approvedPaid = leaveStore.requests.filter((r) => {
+    if (r.status !== 'approved') return false
+    if ((r.leave_pay_type || '').toLowerCase() !== 'paid') return false
+    const startYear = Number(String(r.start_date || '').slice(0, 4))
+    return startYear === year
+  })
+  const vacationUsed = approvedPaid
+    .filter((r) => String(r.leave_type_name || '').toLowerCase() === 'vacation leave')
+    .reduce((sum, r) => sum + Number(r.leave_days || 0), 0)
+  const sickUsed = approvedPaid
+    .filter((r) => String(r.leave_type_name || '').toLowerCase() === 'sick leave')
+    .reduce((sum, r) => sum + Number(r.leave_days || 0), 0)
+  return {
+    vacation: Math.max(0, 10 - vacationUsed),
+    sick: Math.max(0, 5 - sickUsed),
+  }
+})
 
 function actionLabel(row) {
   const roleLabel = row.approved_by_role
@@ -156,8 +184,13 @@ function actionLabel(row) {
         <p class="mt-1 text-xl font-semibold text-red-300">{{ employeeKpis.overdue_tasks ?? 0 }}</p>
       </div>
       <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
-        <p class="text-sm font-medium text-gray-400">Leave Credits</p>
-        <p class="mt-1 text-xl font-semibold text-emerald-300">{{ Number(employeeKpis.leave_credits || 0).toFixed(2) }}</p>
+        <p class="text-sm font-medium text-gray-400">Paid Leave Eligibility</p>
+        <p class="mt-1 text-xl font-semibold" :class="paidLeaveEligible ? 'text-emerald-300' : 'text-amber-300'">
+          {{ paidLeaveEligible ? 'Eligible' : 'Below 1 year' }}
+        </p>
+        <p class="mt-2 text-xs text-gray-400">
+          Vacation: {{ paidLeaveBalances.vacation }} days • Sick: {{ paidLeaveBalances.sick }} days
+        </p>
       </div>
       <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
         <p class="text-sm font-medium text-gray-400">Upcoming Deadlines</p>
