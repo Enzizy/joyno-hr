@@ -15,7 +15,7 @@ const leaveStore = useLeaveStore()
 const authStore = useAuthStore()
 const toast = useToastStore()
 
-const form = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '', leave_pay_type: 'auto' })
+const form = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
 const submitting = ref(false)
 const isOnLeave = computed(() => authStore.user?.status === 'on_leave')
 const attachment = ref(null)
@@ -29,7 +29,7 @@ const editModal = ref(false)
 const editingRow = ref(null)
 const editSubmitting = ref(false)
 const editAttachment = ref(null)
-const editForm = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '', leave_pay_type: 'auto' })
+const editForm = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -39,7 +39,6 @@ const myRequests = computed(() => {
   if (!employeeId) return []
   return leaveStore.requests.filter((r) => r.employee_id === employeeId)
 })
-const leaveCredits = computed(() => Number(authStore.user?.leave_credits || 0))
 const eligibleForPaid = computed(() => isPaidLeaveEligible(authStore.user?.date_hired, form.value.start_date))
 const requestedDays = computed(() => {
   if (!form.value.start_date || !form.value.end_date) return 0
@@ -57,12 +56,54 @@ function isPaidLeaveEligible(dateHired, leaveStartDate) {
   hired.setFullYear(hired.getFullYear() + 1)
   return leaveStart >= hired
 }
+const leaveTypeMap = computed(() =>
+  leaveStore.leaveTypes.reduce((acc, type) => {
+    acc[type.id] = type
+    return acc
+  }, {})
+)
+
+function paidDaysUsedForType(typeName, year) {
+  return myRequests.value
+    .filter((r) => {
+      if (r.status !== 'approved') return false
+      if ((r.leave_pay_type || '').toLowerCase() !== 'paid') return false
+      if ((r.leave_type_name || '').toLowerCase() !== String(typeName || '').toLowerCase()) return false
+      const startYear = String(r.start_date || '').slice(0, 4)
+      return Number(startYear) === Number(year)
+    })
+    .reduce((sum, r) => sum + Number(r.leave_days || 0), 0)
+}
+
+function remainingPaidDays(typeId, date) {
+  const type = leaveTypeMap.value[typeId]
+  if (!type || Number(type.paid_days_per_year || 0) <= 0) return 0
+  const baseDate = date || new Date().toISOString().slice(0, 10)
+  const year = new Date(baseDate).getFullYear()
+  const used = paidDaysUsedForType(type.name, year)
+  return Math.max(0, Number(type.paid_days_per_year || 0) - used)
+}
+
 const payTypePreview = computed(() => {
-  if (!requestedDays.value) return '-'
+  const type = leaveTypeMap.value[form.value.leave_type_id]
+  if (!requestedDays.value || !type) return '-'
+  if (!Number(type.paid_days_per_year || 0)) return 'unpaid'
   if (!eligibleForPaid.value) return 'unpaid'
-  if (form.value.leave_pay_type === 'unpaid') return 'unpaid'
-  if (form.value.leave_pay_type === 'paid') return leaveCredits.value >= requestedDays.value ? 'paid' : 'insufficient credits'
-  return leaveCredits.value >= requestedDays.value ? 'paid' : 'unpaid'
+  const remaining = remainingPaidDays(type.id, form.value.start_date)
+  return requestedDays.value <= remaining ? 'paid' : 'unpaid'
+})
+
+const yearlyEntitlements = computed(() => {
+  const year = new Date().getFullYear()
+  return leaveStore.leaveTypes
+    .filter((type) => Number(type.paid_days_per_year || 0) > 0)
+    .map((type) => ({
+      id: type.id,
+      name: type.name,
+      remaining: remainingPaidDays(type.id),
+      total: Number(type.paid_days_per_year || 0),
+      year,
+    }))
 })
 const todayISO = computed(() => {
   const now = new Date()
@@ -127,14 +168,13 @@ async function submit() {
       payload.append('start_date', form.value.start_date)
       payload.append('end_date', form.value.end_date)
       payload.append('reason', form.value.reason)
-      payload.append('leave_pay_type', form.value.leave_pay_type || 'auto')
       payload.append('attachment', attachment.value)
       await leaveStore.createRequest(payload)
     } else {
       await leaveStore.createRequest({ ...form.value })
     }
     toast.success('Leave request submitted.')
-    form.value = { leave_type_id: '', start_date: '', end_date: '', reason: '', leave_pay_type: 'auto' }
+    form.value = { leave_type_id: '', start_date: '', end_date: '', reason: '' }
     attachment.value = null
   } catch (err) {
     const code = err?.code || err?.response?.data?.code
@@ -158,14 +198,22 @@ function closeCancelModal() {
   cancellingRow.value = null
 }
 
+function resolveLeaveTypeId(row) {
+  const byId = leaveStore.leaveTypes.find((type) => String(type.id) === String(row.leave_type_id))
+  if (byId) return byId.id
+  const byName = leaveStore.leaveTypes.find(
+    (type) => String(type.name || '').toLowerCase() === String(row.leave_type_name || '').toLowerCase()
+  )
+  return byName?.id || ''
+}
+
 function openEditModal(row) {
   editingRow.value = row
   editForm.value = {
-    leave_type_id: row.leave_type_id,
+    leave_type_id: resolveLeaveTypeId(row),
     start_date: row.start_date,
     end_date: row.end_date,
     reason: row.reason || '',
-    leave_pay_type: row.leave_pay_type || 'auto',
   }
   editAttachment.value = null
   editModal.value = true
@@ -199,7 +247,6 @@ async function submitEdit() {
       payload.append('start_date', editForm.value.start_date)
       payload.append('end_date', editForm.value.end_date)
       payload.append('reason', editForm.value.reason)
-      payload.append('leave_pay_type', editForm.value.leave_pay_type || 'auto')
       payload.append('attachment', editAttachment.value)
       await leaveStore.updateRequest(editingRow.value.id, payload)
     } else {
@@ -270,8 +317,15 @@ function onEditAttachmentChange(event) {
         You are currently on leave and cannot submit another request.
       </p>
       <div class="mb-4 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-gray-300">
-        <p>Available leave credits: <span class="font-semibold text-primary-200">{{ leaveCredits.toFixed(2) }}</span></p>
-        <p v-if="requestedDays">Requested days: <span class="font-semibold text-primary-200">{{ requestedDays }}</span> • This request will be <span class="font-semibold uppercase text-primary-200">{{ payTypePreview }}</span>.</p>
+        <p v-for="ent in yearlyEntitlements" :key="ent.id">
+          {{ ent.name }} ({{ ent.year }}): <span class="font-semibold text-primary-200">{{ ent.remaining }}</span> / {{ ent.total }} paid days remaining
+        </p>
+        <p v-if="requestedDays">
+          Requested days:
+          <span class="font-semibold text-primary-200">{{ requestedDays }}</span>
+          - This request will be
+          <span class="font-semibold uppercase text-primary-200">{{ payTypePreview }}</span>.
+        </p>
       </div>
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">
         <div class="sm:col-span-2">
@@ -285,20 +339,6 @@ function onEditAttachmentChange(event) {
             <option value="" class="bg-gray-900 text-primary-200">Select type</option>
             <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
           </select>
-        </div>
-        <div class="sm:col-span-2">
-          <label class="mb-1 block text-sm font-medium text-gray-200">Leave payment</label>
-          <select
-            v-model="form.leave_pay_type"
-            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
-          >
-            <option value="auto" class="bg-gray-900 text-primary-200">Auto</option>
-            <option value="paid" class="bg-gray-900 text-primary-200">Paid leave</option>
-            <option value="unpaid" class="bg-gray-900 text-primary-200">Unpaid leave</option>
-          </select>
-          <p class="mt-1 text-xs text-gray-400">
-            Employees under 1 year tenure are automatically set to unpaid leave.
-          </p>
         </div>
         <AppDatePicker
           v-model="form.start_date"
@@ -423,17 +463,6 @@ function onEditAttachmentChange(event) {
         >
           <option value="" class="bg-gray-900 text-primary-200">Select type</option>
           <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
-        </select>
-      </div>
-      <div class="sm:col-span-2">
-        <label class="mb-1 block text-sm font-medium text-gray-200">Leave payment</label>
-        <select
-          v-model="editForm.leave_pay_type"
-          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
-        >
-          <option value="auto" class="bg-gray-900 text-primary-200">Auto</option>
-          <option value="paid" class="bg-gray-900 text-primary-200">Paid leave</option>
-          <option value="unpaid" class="bg-gray-900 text-primary-200">Unpaid leave</option>
         </select>
       </div>
       <AppDatePicker

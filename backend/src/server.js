@@ -256,18 +256,24 @@ async function createServicesForClient(clientId, selectedServices = []) {
 }
 
 const LEAVE_TYPES = [
-  { id: 'vacation', name: 'Vacation' },
-  { id: 'sick', name: 'Sick' },
-  { id: 'emergency', name: 'Emergency' },
+  { id: 'vacation_leave', name: 'Vacation Leave', paid_days_per_year: 10, requires_one_year: true, aliases: ['vacation'] },
+  { id: 'sick_leave', name: 'Sick Leave', paid_days_per_year: 5, requires_one_year: true, aliases: ['sick'] },
+  { id: 'leave_of_absence', name: 'Leave of Absence', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
+  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
+  { id: 'emergency_leave', name: 'Emergency Leave', paid_days_per_year: 0, requires_one_year: false, aliases: ['emergency'] },
+  { id: 'bereavement_leave', name: 'Bereavement Leave', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
 ]
 
-function resolveLeaveTypeName(value) {
+function resolveLeaveType(value) {
   const raw = String(value || '').trim()
   if (!raw) return null
   const found = LEAVE_TYPES.find(
-    (item) => item.id.toLowerCase() === raw.toLowerCase() || item.name.toLowerCase() === raw.toLowerCase()
+    (item) =>
+      item.id.toLowerCase() === raw.toLowerCase() ||
+      item.name.toLowerCase() === raw.toLowerCase() ||
+      item.aliases.some((alias) => alias.toLowerCase() === raw.toLowerCase())
   )
-  return found ? found.name : null
+  return found || null
 }
 
 async function ensureSchemaColumns() {
@@ -292,29 +298,46 @@ function isPaidLeaveEligible(dateHired, leaveStartDate) {
   return leaveStart >= hired
 }
 
-function resolveLeaveCompensation(employee, startDate, endDate, requestedPayType = 'auto') {
+async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, excludeRequestId = null) {
+  const params = [employeeId, leaveTypeName, String(year)]
+  let sql = `
+    SELECT COALESCE(SUM(leave_days), 0)::numeric AS used_days
+    FROM leave_requests
+    WHERE employee_id = $1
+      AND status = 'approved'
+      AND leave_pay_type = 'paid'
+      AND leave_type_name = $2
+      AND EXTRACT(YEAR FROM start_date) = $3::int
+  `
+  if (excludeRequestId) {
+    params.push(excludeRequestId)
+    sql += ` AND id <> $${params.length}`
+  }
+  const { rows } = await db.query(sql, params)
+  return Number(rows[0]?.used_days || 0)
+}
+
+async function resolveLeaveCompensation(employee, leaveType, startDate, endDate, excludeRequestId = null) {
   const leaveDays = calculateLeaveDays(startDate, endDate)
   if (!leaveDays || leaveDays <= 0) return null
-  const credits = Number(employee?.leave_credits || 0)
-  const eligible = isPaidLeaveEligible(employee?.date_hired, startDate)
-  const requested = ['paid', 'unpaid', 'auto'].includes(String(requestedPayType || '').toLowerCase())
-    ? String(requestedPayType || '').toLowerCase()
-    : 'auto'
+
+  if (!leaveType || !leaveType.paid_days_per_year) {
+    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+  }
+
+  const eligible = leaveType.requires_one_year ? isPaidLeaveEligible(employee?.date_hired, startDate) : true
   if (!eligible) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
-  if (requested === 'unpaid') {
-    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
-  }
-  if (requested === 'paid') {
-    if (credits < leaveDays) {
-      return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays, insufficientCredits: true }
-    }
+
+  const leaveYear = new Date(startDate).getFullYear()
+  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, excludeRequestId)
+  const remainingPaidDays = Math.max(0, Number(leaveType.paid_days_per_year) - usedDays)
+
+  if (leaveDays <= remainingPaidDays) {
     return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
   }
-  if (credits >= leaveDays) {
-    return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
-  }
+
   return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
 }
 
@@ -1560,7 +1583,14 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin']), asy
 
 // Leave types
 app.get('/api/leave-types', authRequired, async (req, res) => {
-  res.json(LEAVE_TYPES)
+  res.json(
+    LEAVE_TYPES.map(({ id, name, paid_days_per_year, requires_one_year }) => ({
+      id,
+      name,
+      paid_days_per_year,
+      requires_one_year,
+    }))
+  )
 })
 
 app.post('/api/leave-types', authRequired, requireRole(['admin']), async (req, res) => {
@@ -1592,7 +1622,7 @@ app.get('/api/leave-requests', authRequired, async (req, res) => {
 
 app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res) => {
   const user = req.user
-  const { leave_type_id, start_date, end_date, reason, leave_pay_type = 'auto' } = req.body || {}
+  const { leave_type_id, start_date, end_date, reason } = req.body || {}
   if (!leave_type_id || !start_date || !end_date || !reason) {
     return res.status(400).json({ message: 'Missing required fields' })
   }
@@ -1612,15 +1642,12 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const leaveTypeName = resolveLeaveTypeName(leave_type_id)
-  if (!leaveTypeName) {
+  const leaveType = resolveLeaveType(leave_type_id)
+  if (!leaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
-  const compensation = resolveLeaveCompensation(emp, start_date, end_date, leave_pay_type)
+  const compensation = await resolveLeaveCompensation(emp, leaveType, start_date, end_date)
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
-  if (compensation.insufficientCredits) {
-    return res.status(400).json({ message: 'Insufficient leave credits for paid leave' })
-  }
   let attachmentName = null
   let attachmentType = null
   let attachmentData = null
@@ -1638,8 +1665,8 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     [
       user.employee_id,
       emp.employee_code,
-      `${emp.first_name} ${emp.last_name}`,
-      leaveTypeName,
+     `${emp.first_name} ${emp.last_name}`,
+      leaveType.name,
       start_date,
       end_date,
       reason,
@@ -1678,7 +1705,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     return res.status(400).json({ message: 'Only pending requests can be edited' })
   }
 
-  const { leave_type_id, start_date, end_date, reason, leave_pay_type = 'auto' } = req.body || {}
+  const { leave_type_id, start_date, end_date, reason } = req.body || {}
   if (!leave_type_id || !start_date || !end_date || !reason) {
     return res.status(400).json({ message: 'Missing required fields' })
   }
@@ -1693,18 +1720,15 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const leaveTypeName = resolveLeaveTypeName(leave_type_id)
-  if (!leaveTypeName) {
+  const leaveType = resolveLeaveType(leave_type_id)
+  if (!leaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
-  const compensation = resolveLeaveCompensation(emp, start_date, end_date, leave_pay_type)
+  const compensation = await resolveLeaveCompensation(emp, leaveType, start_date, end_date, id)
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
-  if (compensation.insufficientCredits) {
-    return res.status(400).json({ message: 'Insufficient leave credits for paid leave' })
-  }
 
   let attachmentName = request.attachment_name
   let attachmentType = request.attachment_type
@@ -1722,7 +1746,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
          attachment_name=$8, attachment_type=$9, attachment_data=$10
      WHERE id=$11`,
     [
-      leaveTypeName,
+      leaveType.name,
       start_date,
       end_date,
       reason,
@@ -1751,18 +1775,6 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
     return res.status(400).json({ message: 'Only pending requests can be approved' })
   }
 
-  if (leaveRequest.leave_pay_type === 'paid') {
-    const employeeResult = await db.query('SELECT leave_credits FROM employees WHERE id = $1', [leaveRequest.employee_id])
-    const currentCredits = Number(employeeResult.rows[0]?.leave_credits || 0)
-    const creditsToDeduct = Number(leaveRequest.credits_deducted || 0)
-    if (creditsToDeduct > 0 && currentCredits < creditsToDeduct) {
-      await db.query(
-        "UPDATE leave_requests SET leave_pay_type='unpaid', credits_deducted=0 WHERE id=$1",
-        [id]
-      )
-    }
-  }
-
   await db.query(
     `UPDATE leave_requests
      SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3
@@ -1772,14 +1784,6 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
 
   const approvedResult = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   const approvedRequest = approvedResult.rows[0]
-  const creditsToDeduct = Number(approvedRequest?.credits_deducted || 0)
-  if (approvedRequest?.leave_pay_type === 'paid' && creditsToDeduct > 0) {
-    await db.query(
-      'UPDATE employees SET leave_credits = GREATEST(leave_credits - $1, 0), updated_at = NOW() WHERE id = $2',
-      [creditsToDeduct, approvedRequest.employee_id]
-    )
-  }
-
   const ownerUserRows = await db.query('SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1', [
     approvedRequest?.employee_id,
   ])

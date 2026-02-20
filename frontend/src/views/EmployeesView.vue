@@ -20,7 +20,7 @@ const departmentFilter = ref('all')
 const statusFilter = ref('all')
 const shiftFilter = ref('all')
 const searchQuery = ref('')
-const departmentOptions = ['Marketing', 'IT', 'Sales', 'CSR']
+const departmentOptions = ['Marketing', 'IT', 'Sales', 'Admin']
 const shiftOptions = ['day', 'night']
 const form = ref({
   employee_code: '',
