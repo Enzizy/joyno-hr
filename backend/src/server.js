@@ -484,9 +484,20 @@ app.delete('/api/users/:id', authRequired, requireRole(['admin']), async (req, r
   if (id === req.user.id) return res.status(400).json({ message: 'Cannot delete your own account' })
   const { rows } = await db.query('SELECT id FROM users WHERE id = $1', [id])
   if (!rows.length) return res.status(404).json({ message: 'User not found' })
+  const reassignedTasks = await db.query('UPDATE tasks SET assigned_to = $1 WHERE assigned_to = $2', [req.user.id, id])
+  const reassignedRules = await db.query('UPDATE automation_rules SET assigned_to = $1 WHERE assigned_to = $2', [
+    req.user.id,
+    id,
+  ])
   await db.query('DELETE FROM users WHERE id = $1', [id])
   await addAuditLog(req.user.id, 'delete_user', 'users', id)
-  res.json({ message: 'User deleted' })
+  res.json({
+    message: 'User deleted',
+    reassigned: {
+      tasks: reassignedTasks.rowCount || 0,
+      automation_rules: reassignedRules.rowCount || 0,
+    },
+  })
 })
 
 // Employees
