@@ -25,6 +25,16 @@ const nameQuery = ref('')
 const page = ref(1)
 const pageSize = ref(10)
 const reasonMax = 24
+const entitlementRows = computed(() =>
+  leaveStore.leaveTypes.map((type) => ({
+    id: type.id,
+    name: type.name,
+    paidDays: Number(type.paid_days_per_year || 0),
+    minMonths: Number(type.min_months_employed || 0),
+    requiresAttachment: Boolean(type.requires_attachment_for_paid),
+    remarks: type.remarks || '',
+  }))
+)
 
 function formatDate(value) {
   if (!value) return '-'
@@ -187,6 +197,21 @@ async function confirmReject() {
     <div>
       <h1 class="text-2xl font-bold text-primary-200">Leave Approvals</h1>
       <p class="mt-1 text-sm text-gray-400">Approve or reject leave requests.</p>
+    </div>
+    <div class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-xs text-gray-300">
+      <p class="mb-2 font-semibold text-primary-200">Leave Entitlements & Conditions</p>
+      <ul class="space-y-2">
+        <li v-for="type in entitlementRows" :key="`ent-${type.id}`">
+          <span class="font-medium text-primary-200">{{ type.name }}</span>:
+          <template v-if="type.paidDays > 0">
+            {{ type.paidDays }} paid day(s)/year after {{ type.minMonths }} month(s).
+          </template>
+          <template v-else>Unpaid by default.</template>
+          <span v-if="type.requiresAttachment"> Supporting document required for paid leave.</span>
+          <span v-if="type.remarks"> {{ type.remarks }}</span>
+        </li>
+      </ul>
+      <p class="mt-2">AWOL is set by Admin/HR from Employee Management and not employee-requestable.</p>
     </div>
     <div class="flex flex-wrap items-end gap-4 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
       <div class="min-w-[220px]">
