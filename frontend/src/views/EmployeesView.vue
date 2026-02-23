@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useToastStore } from '@/stores/toastStore'
+import { setEmployeeAwol as setEmployeeAwolApi } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -12,6 +13,10 @@ const employeeStore = useEmployeeStore()
 const toast = useToastStore()
 const showModal = ref(false)
 const editingId = ref(null)
+const awolModal = ref(false)
+const awolSubmitting = ref(false)
+const awolTarget = ref(null)
+const awolForm = ref({ start_date: '', end_date: '', reason: '' })
 const departmentFilter = ref('all')
 const statusFilter = ref('all')
 const shiftFilter = ref('all')
@@ -110,6 +115,36 @@ async function remove(row) {
     toast.error(err.response?.data?.message || 'Failed to delete.')
   }
 }
+
+function openAwol(row) {
+  awolTarget.value = row
+  awolForm.value = { start_date: '', end_date: '', reason: '' }
+  awolModal.value = true
+}
+
+function closeAwol() {
+  awolModal.value = false
+  awolTarget.value = null
+}
+
+async function submitAwol() {
+  if (!awolTarget.value) return
+  if (!awolForm.value.start_date || !awolForm.value.end_date) {
+    toast.warning('Start date and end date are required.')
+    return
+  }
+  awolSubmitting.value = true
+  try {
+    await setEmployeeAwolApi(awolTarget.value.id, awolForm.value)
+    await employeeStore.fetchList()
+    toast.success('Employee marked as AWOL.')
+    closeAwol()
+  } catch (err) {
+    toast.error(err.response?.data?.message || err.message || 'Failed to set AWOL.')
+  } finally {
+    awolSubmitting.value = false
+  }
+}
 </script>
 
 <template>
@@ -204,7 +239,8 @@ async function remove(row) {
             <StatusBadge :status="row.status" />
           </td>
           <td class="px-4 py-3 text-right">
-            <AppButton variant="ghost" size="sm" @click="openEdit(row)">Edit</AppButton>
+            <AppButton variant="secondary" size="sm" @click="openAwol(row)">Set AWOL</AppButton>
+            <AppButton variant="ghost" size="sm" class="ml-1" @click="openEdit(row)">Edit</AppButton>
             <AppButton variant="danger" size="sm" class="ml-1" @click="remove(row)">Delete</AppButton>
           </td>
         </tr>
@@ -260,6 +296,33 @@ async function remove(row) {
       <template #footer>
         <AppButton variant="secondary" @click="showModal = false">Cancel</AppButton>
         <AppButton @click="save">{{ editingId ? 'Update' : 'Create' }}</AppButton>
+      </template>
+    </AppModal>
+
+    <AppModal :show="awolModal" title="Set Employee AWOL" @close="closeAwol">
+      <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submitAwol">
+        <p class="sm:col-span-2 text-sm text-gray-300">
+          Mark
+          <span class="font-semibold text-primary-200">
+            {{ awolTarget?.first_name }} {{ awolTarget?.last_name }}
+          </span>
+          as Absent Without Official Leave.
+        </p>
+        <AppInput v-model="awolForm.start_date" type="date" label="Start date" required />
+        <AppInput v-model="awolForm.end_date" type="date" label="End date" required />
+        <div class="sm:col-span-2">
+          <label class="mb-1 block text-sm font-medium text-gray-200">Reason (optional)</label>
+          <textarea
+            v-model="awolForm.reason"
+            rows="3"
+            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 placeholder:text-gray-500 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            placeholder="AWOL details"
+          />
+        </div>
+      </form>
+      <template #footer>
+        <AppButton variant="secondary" @click="closeAwol">Cancel</AppButton>
+        <AppButton :loading="awolSubmitting" @click="submitAwol">Set AWOL</AppButton>
       </template>
     </AppModal>
   </div>

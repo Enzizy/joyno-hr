@@ -29,6 +29,10 @@ export async function deleteEmployee(id) {
   return api.deleteEmployee(id)
 }
 
+export async function setEmployeeAwol(id, data) {
+  return api.setEmployeeAwol(id, data)
+}
+
 export async function getUsers() {
   return api.getUsers()
 }

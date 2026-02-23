@@ -90,6 +90,10 @@ export async function deleteEmployee(id) {
   return request(`/api/employees/${id}`, { method: 'DELETE' })
 }
 
+export async function setEmployeeAwol(id, data) {
+  return request(`/api/employees/${id}/awol`, { method: 'POST', body: JSON.stringify(data) })
+}
+
 export async function getUsers() {
   return request('/api/users')
 }

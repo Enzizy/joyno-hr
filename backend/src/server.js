@@ -565,6 +565,53 @@ app.delete('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), asy
   res.json({ message: 'Employee deleted' })
 })
 
+app.post('/api/employees/:id/awol', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  const { start_date, end_date, reason } = req.body || {}
+  if (!id) return res.status(400).json({ message: 'Invalid employee id' })
+  if (!start_date || !end_date) return res.status(400).json({ message: 'Start date and end date are required' })
+  const leaveDays = calculateLeaveDays(start_date, end_date)
+  if (!leaveDays) return res.status(400).json({ message: 'Invalid date range' })
+
+  const employeeResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [id])
+  const employee = employeeResult.rows[0]
+  if (!employee) return res.status(404).json({ message: 'Employee not found' })
+
+  const overlapResult = await db.query(
+    `SELECT id FROM leave_requests
+     WHERE employee_id = $1 AND status IN ('pending','approved')
+       AND start_date <= $2 AND end_date >= $3`,
+    [id, end_date, start_date]
+  )
+  if (overlapResult.rows.length) {
+    return res.status(400).json({ message: 'Overlapping leave request exists' })
+  }
+
+  const inserted = await db.query(
+    `INSERT INTO leave_requests
+     (employee_id, employee_code, employee_name, leave_type_name, start_date, end_date, reason, status, leave_pay_type, leave_days, credits_deducted, approved_by, approved_by_name, approved_by_role)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'approved','unpaid',$8,0,$9,$10,$11)
+     RETURNING id`,
+    [
+      id,
+      employee.employee_code,
+      `${employee.first_name} ${employee.last_name}`,
+      'Absent Without Official Leave',
+      start_date,
+      end_date,
+      reason || 'AWOL set by admin/hr',
+      leaveDays,
+      req.user.id,
+      req.user.email,
+      req.user.role,
+    ]
+  )
+  const leaveId = inserted.rows[0]?.id
+  await updateEmployeeStatus(id)
+  await addAuditLog(req.user.id, 'set_employee_awol', 'leave_requests', leaveId)
+  res.json({ message: 'Employee marked as AWOL', leave_request_id: leaveId })
+})
+
 app.get('/api/dashboard/overview', authRequired, async (req, res) => {
   const today = new Date()
   const yyyy = today.getFullYear()
@@ -1588,7 +1635,7 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin']), asy
 // Leave types
 app.get('/api/leave-types', authRequired, async (req, res) => {
   res.json(
-    LEAVE_TYPES.map(({ id, name, paid_days_per_year, requires_one_year }) => ({
+    LEAVE_TYPES.filter((type) => type.id !== 'awol').map(({ id, name, paid_days_per_year, requires_one_year }) => ({
       id,
       name,
       paid_days_per_year,
@@ -1649,6 +1696,9 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   const leaveType = resolveLeaveType(leave_type_id)
   if (!leaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
+  }
+  if (leaveType.id === 'awol') {
+    return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
   }
   let attachmentName = null
   let attachmentType = null
@@ -1733,6 +1783,9 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   const leaveType = resolveLeaveType(leave_type_id)
   if (!leaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
+  }
+  if (leaveType.id === 'awol') {
+    return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
   }
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
   const emp = empResult.rows[0]
