@@ -12,7 +12,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => role.value === 'admin')
   const isHR = computed(() => role.value === 'hr')
   const isEmployee = computed(() => role.value === 'employee')
-  const canAccessAdmin = computed(() => isAdmin.value)
+  const canAccessAdmin = computed(() => isAdmin.value || isHR.value)
   const canAccessHR = computed(() => isAdmin.value || isHR.value)
 
   async function initAuth() {

@@ -16,7 +16,7 @@ const unreadOnly = ref(false)
 const selectedIds = ref([])
 
 const totalPages = computed(() => Math.max(1, Math.ceil((store.total || 0) / pageSize.value)))
-const isAdmin = computed(() => authStore.role === 'admin')
+const canManageNotifications = computed(() => ['admin', 'hr'].includes(authStore.role))
 const typeOptions = computed(() => {
   const set = new Set()
   store.items.forEach((item) => {
@@ -116,7 +116,7 @@ onMounted(load)
         <p class="mt-1 text-sm text-gray-400">Unread alerts and activity notifications.</p>
       </div>
       <div class="flex gap-2">
-        <AppButton v-if="isAdmin" variant="secondary" @click="runCleanup">Cleanup old read</AppButton>
+        <AppButton v-if="canManageNotifications" variant="secondary" @click="runCleanup">Cleanup old read</AppButton>
         <AppButton variant="secondary" @click="markAll">Mark all read</AppButton>
       </div>
     </div>

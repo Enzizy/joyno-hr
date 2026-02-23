@@ -448,7 +448,7 @@ app.post('/api/auth/change-password', authRequired, async (req, res) => {
 })
 
 // Users (Admin)
-app.get('/api/users', authRequired, requireRole(['admin']), async (req, res) => {
+app.get('/api/users', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { rows } = await db.query(
     `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name
      FROM users u
@@ -458,7 +458,7 @@ app.get('/api/users', authRequired, requireRole(['admin']), async (req, res) => 
   res.json(rows)
 })
 
-app.post('/api/users', authRequired, requireRole(['admin']), async (req, res) => {
+app.post('/api/users', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { email, password, role = 'employee', employee_id = null } = req.body || {}
   if (!email || !password) return res.status(400).json({ message: 'Email and password required' })
   if (!employee_id) return res.status(400).json({ message: 'Employee link is required' })
@@ -478,7 +478,7 @@ app.post('/api/users', authRequired, requireRole(['admin']), async (req, res) =>
   res.json({ message: 'User created' })
 })
 
-app.delete('/api/users/:id', authRequired, requireRole(['admin']), async (req, res) => {
+app.delete('/api/users/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid user id' })
   if (id === req.user.id) return res.status(400).json({ message: 'Cannot delete your own account' })
@@ -1384,7 +1384,7 @@ app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'emplo
 })
 
 // Automation rules (CRM)
-app.get('/api/automation-rules', authRequired, requireRole(['admin']), async (req, res) => {
+app.get('/api/automation-rules', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const clientId = Number.parseInt(req.query.client_id, 10) || null
   let sql = `SELECT r.*, c.company_name, u.email AS assigned_email, s.service_type,
                     EXISTS (
@@ -1408,7 +1408,7 @@ app.get('/api/automation-rules', authRequired, requireRole(['admin']), async (re
   res.json(rows)
 })
 
-app.post('/api/automation-rules', authRequired, requireRole(['admin']), async (req, res) => {
+app.post('/api/automation-rules', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const payload = req.body || {}
   if (!payload.rule_name || !payload.client_id || !payload.task_title_template || !payload.assigned_to) {
     return res.status(400).json({ message: 'Rule name, client, task title template, and assigned user are required' })
@@ -1442,7 +1442,7 @@ app.post('/api/automation-rules', authRequired, requireRole(['admin']), async (r
   res.json(rows[0])
 })
 
-app.put('/api/automation-rules/:id', authRequired, requireRole(['admin']), async (req, res) => {
+app.put('/api/automation-rules/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const payload = req.body || {}
@@ -1482,7 +1482,7 @@ app.put('/api/automation-rules/:id', authRequired, requireRole(['admin']), async
   res.json(rows[0])
 })
 
-app.post('/api/automation-rules/:id/toggle', authRequired, requireRole(['admin']), async (req, res) => {
+app.post('/api/automation-rules/:id/toggle', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const { rows } = await db.query('SELECT * FROM automation_rules WHERE id = $1', [id])
@@ -1495,7 +1495,7 @@ app.post('/api/automation-rules/:id/toggle', authRequired, requireRole(['admin']
   res.json(result.rows[0])
 })
 
-app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin']), async (req, res) => {
+app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const { rows } = await db.query('SELECT * FROM automation_rules WHERE id = $1', [id])
@@ -1542,7 +1542,7 @@ app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin'
   res.json(taskResult.rows[0])
 })
 
-app.delete('/api/automation-rules/:id', authRequired, requireRole(['admin']), async (req, res) => {
+app.delete('/api/automation-rules/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const { rows } = await db.query('DELETE FROM automation_rules WHERE id = $1 RETURNING id', [id])
@@ -1626,7 +1626,7 @@ app.post('/api/notifications/read-all', authRequired, async (req, res) => {
   res.json({ message: 'All notifications marked as read' })
 })
 
-app.post('/api/notifications/cleanup', authRequired, requireRole(['admin']), async (req, res) => {
+app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const days = Number(req.body?.days || 90)
   await cleanupOldNotifications(days)
   res.json({ message: `Read notifications older than ${Math.max(1, Number(days) || 90)} days were removed` })
@@ -1644,7 +1644,7 @@ app.get('/api/leave-types', authRequired, async (req, res) => {
   )
 })
 
-app.post('/api/leave-types', authRequired, requireRole(['admin']), async (req, res) => {
+app.post('/api/leave-types', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   res.status(405).json({ message: 'Leave types are fixed in system configuration' })
 })
 
@@ -2012,7 +2012,7 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
 
 // Payroll
 // Audit logs
-app.get('/api/audit-logs', authRequired, requireRole(['admin']), async (req, res) => {
+app.get('/api/audit-logs', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50)
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
   const { rows } = await db.query(
