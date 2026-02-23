@@ -256,19 +256,44 @@ async function createServicesForClient(clientId, selectedServices = []) {
 }
 
 const LEAVE_TYPES = [
-  { id: 'vacation_leave', name: 'Vacation Leave', paid_days_per_year: 10, requires_one_year: true, aliases: ['vacation'] },
+  {
+    id: 'vacation_leave',
+    name: 'Vacation Leave',
+    paid_days_per_year: 3,
+    min_months_employed: 6,
+    remarks: 'Annual grant and usage are subject to company approval.',
+    aliases: ['vacation'],
+  },
   {
     id: 'sick_leave',
     name: 'Sick Leave',
     paid_days_per_year: 5,
-    requires_one_year: true,
-    requires_medical_cert_if_more_than_days: 1,
+    min_months_employed: 12,
+    requires_attachment_for_paid: true,
+    remarks: 'Requires a valid medical certificate.',
     aliases: ['sick'],
   },
-  { id: 'leave_of_absence', name: 'Leave of Absence', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
-  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
-  { id: 'emergency_leave', name: 'Emergency Leave', paid_days_per_year: 0, requires_one_year: false, aliases: ['emergency'] },
-  { id: 'bereavement_leave', name: 'Bereavement Leave', paid_days_per_year: 0, requires_one_year: false, aliases: [] },
+  {
+    id: 'bereavement_leave',
+    name: 'Bereavement Leave',
+    paid_days_per_year: 2,
+    min_months_employed: 12,
+    requires_attachment_for_paid: true,
+    remarks:
+      'Granted in the event of death of an immediate family member. Supporting documents are required.',
+    aliases: ['bereavement'],
+  },
+  {
+    id: 'service_incentive_leave',
+    name: 'Service Incentive Leave',
+    paid_days_per_year: 5,
+    min_months_employed: 12,
+    remarks: 'Convertible to cash if unused, based on company policy and labor laws.',
+    aliases: ['sil', 'service incentive'],
+  },
+  { id: 'leave_of_absence', name: 'Leave of Absence', paid_days_per_year: 0, min_months_employed: 0, aliases: [] },
+  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_year: 0, min_months_employed: 0, aliases: [] },
+  { id: 'emergency_leave', name: 'Emergency Leave', paid_days_per_year: 0, min_months_employed: 0, aliases: ['emergency'] },
 ]
 
 function resolveLeaveType(value) {
@@ -296,23 +321,32 @@ function calculateLeaveDays(startDate, endDate) {
   return Math.floor((end - start) / msPerDay) + 1
 }
 
-function isPaidLeaveEligible(dateHired, leaveStartDate) {
+function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
   if (!dateHired || !leaveStartDate) return false
   const hired = new Date(dateHired)
   const leaveStart = new Date(leaveStartDate)
   if (Number.isNaN(hired.getTime()) || Number.isNaN(leaveStart.getTime())) return false
-  hired.setFullYear(hired.getFullYear() + 1)
-  return leaveStart >= hired
+  const minDate = new Date(hired)
+  minDate.setMonth(minDate.getMonth() + Number(minMonths || 0))
+  return leaveStart >= minDate
 }
 
 async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, excludeRequestId = null) {
   const params = [employeeId, leaveTypeName, String(year)]
   let sql = `
-    SELECT COALESCE(SUM(leave_days), 0)::numeric AS used_days
+    SELECT
+      COALESCE(
+        SUM(
+          CASE
+            WHEN leave_pay_type IN ('paid','partial_paid') THEN COALESCE(credits_deducted, leave_days, 0)
+            ELSE 0
+          END
+        ),
+        0
+      )::numeric AS used_days
     FROM leave_requests
     WHERE employee_id = $1
       AND status = 'approved'
-      AND leave_pay_type = 'paid'
       AND leave_type_name = $2
       AND EXTRACT(YEAR FROM start_date) = $3::int
   `
@@ -332,15 +366,11 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
 
-  const eligible = leaveType.requires_one_year ? isPaidLeaveEligible(employee?.date_hired, startDate) : true
+  const eligible = isPaidLeaveEligible(employee?.date_hired, startDate, leaveType.min_months_employed || 0)
   if (!eligible) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
-  if (
-    Number(leaveType.requires_medical_cert_if_more_than_days || 0) > 0 &&
-    leaveDays > Number(leaveType.requires_medical_cert_if_more_than_days) &&
-    !hasMedicalAttachment
-  ) {
+  if (leaveType.requires_attachment_for_paid && !hasMedicalAttachment) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
 
@@ -348,11 +378,14 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
   const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, excludeRequestId)
   const remainingPaidDays = Math.max(0, Number(leaveType.paid_days_per_year) - usedDays)
 
+  if (remainingPaidDays <= 0) {
+    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+  }
   if (leaveDays <= remainingPaidDays) {
     return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
   }
 
-  return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+  return { leaveDays, leavePayType: 'partial_paid', creditsDeducted: remainingPaidDays }
 }
 
 function signToken(user) {
@@ -1659,12 +1692,16 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr']
 // Leave types
 app.get('/api/leave-types', authRequired, async (req, res) => {
   res.json(
-    LEAVE_TYPES.filter((type) => type.id !== 'awol').map(({ id, name, paid_days_per_year, requires_one_year }) => ({
+    LEAVE_TYPES.filter((type) => type.id !== 'awol').map(
+      ({ id, name, paid_days_per_year, min_months_employed, requires_attachment_for_paid, remarks }) => ({
       id,
       name,
       paid_days_per_year,
-      requires_one_year,
-    }))
+      min_months_employed: Number(min_months_employed || 0),
+      requires_attachment_for_paid: Boolean(requires_attachment_for_paid),
+      remarks: remarks || '',
+      })
+    )
   )
 })
 

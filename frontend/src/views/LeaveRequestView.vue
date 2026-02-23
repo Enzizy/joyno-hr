@@ -39,7 +39,6 @@ const myRequests = computed(() => {
   if (!employeeId) return []
   return leaveStore.requests.filter((r) => r.employee_id === employeeId)
 })
-const eligibleForPaid = computed(() => isPaidLeaveEligible(authStore.user?.date_hired, form.value.start_date))
 const requestedDays = computed(() => {
   if (!form.value.start_date || !form.value.end_date) return 0
   const start = new Date(form.value.start_date)
@@ -48,13 +47,14 @@ const requestedDays = computed(() => {
   const msPerDay = 24 * 60 * 60 * 1000
   return Math.floor((end - start) / msPerDay) + 1
 })
-function isPaidLeaveEligible(dateHired, leaveStartDate) {
+function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
   if (!dateHired || !leaveStartDate) return false
   const hired = new Date(dateHired)
   const leaveStart = new Date(leaveStartDate)
   if (Number.isNaN(hired.getTime()) || Number.isNaN(leaveStart.getTime())) return false
-  hired.setFullYear(hired.getFullYear() + 1)
-  return leaveStart >= hired
+  const minDate = new Date(hired)
+  minDate.setMonth(minDate.getMonth() + Number(minMonths || 0))
+  return leaveStart >= minDate
 }
 const leaveTypeMap = computed(() =>
   leaveStore.leaveTypes.reduce((acc, type) => {
@@ -63,21 +63,20 @@ const leaveTypeMap = computed(() =>
   }, {})
 )
 const selectedLeaveType = computed(() => leaveTypeMap.value[form.value.leave_type_id] || null)
-const medicalCertRequiredForPaid = computed(() => {
-  const typeName = String(selectedLeaveType.value?.name || '').toLowerCase()
-  return typeName === 'sick leave' && requestedDays.value > 1 && !attachment.value
-})
+const missingRequiredDocumentForPaid = computed(
+  () => Boolean(selectedLeaveType.value?.requires_attachment_for_paid) && !attachment.value
+)
 
 function paidDaysUsedForType(typeName, year) {
   return myRequests.value
     .filter((r) => {
       if (r.status !== 'approved') return false
-      if ((r.leave_pay_type || '').toLowerCase() !== 'paid') return false
+      if (!['paid', 'partial_paid'].includes((r.leave_pay_type || '').toLowerCase())) return false
       if ((r.leave_type_name || '').toLowerCase() !== String(typeName || '').toLowerCase()) return false
       const startYear = String(r.start_date || '').slice(0, 4)
       return Number(startYear) === Number(year)
     })
-    .reduce((sum, r) => sum + Number(r.leave_days || 0), 0)
+    .reduce((sum, r) => sum + Number(r.credits_deducted || 0), 0)
 }
 
 function remainingPaidDays(typeId, date) {
@@ -93,14 +92,18 @@ const payTypePreview = computed(() => {
   const type = selectedLeaveType.value
   if (!requestedDays.value || !type) return '-'
   if (!Number(type.paid_days_per_year || 0)) return 'unpaid'
-  if (!eligibleForPaid.value) return 'unpaid'
-  if (medicalCertRequiredForPaid.value) return 'unpaid'
+  if (!isPaidLeaveEligible(authStore.user?.date_hired, form.value.start_date, type.min_months_employed || 0)) {
+    return 'unpaid'
+  }
+  if (missingRequiredDocumentForPaid.value) return 'unpaid'
   const remaining = remainingPaidDays(type.id, form.value.start_date)
-  return requestedDays.value <= remaining ? 'paid' : 'unpaid'
+  if (!remaining) return 'unpaid'
+  if (requestedDays.value <= remaining) return 'paid'
+  return 'partial_paid'
 })
 
 const yearlyEntitlements = computed(() => {
-  const year = new Date().getFullYear()
+  const year = new Date(form.value.start_date || Date.now()).getFullYear()
   return leaveStore.leaveTypes
     .filter((type) => Number(type.paid_days_per_year || 0) > 0)
     .map((type) => ({
@@ -108,9 +111,17 @@ const yearlyEntitlements = computed(() => {
       name: type.name,
       remaining: remainingPaidDays(type.id),
       total: Number(type.paid_days_per_year || 0),
+      minMonths: Number(type.min_months_employed || 0),
+      requiresAttachment: Boolean(type.requires_attachment_for_paid),
+      remarks: type.remarks || '',
       year,
     }))
 })
+function formatPayType(value) {
+  const normalized = String(value || 'unpaid').toLowerCase()
+  if (normalized === 'partial_paid') return 'PARTIAL PAID'
+  return normalized.toUpperCase()
+}
 const todayISO = computed(() => {
   const now = new Date()
   const year = now.getFullYear()
@@ -330,11 +341,27 @@ function onEditAttachmentChange(event) {
           Requested days:
           <span class="font-semibold text-primary-200">{{ requestedDays }}</span>
           - This request will be
-          <span class="font-semibold uppercase text-primary-200">{{ payTypePreview }}</span>.
+          <span class="font-semibold uppercase text-primary-200">{{ formatPayType(payTypePreview) }}</span>.
         </p>
-        <p v-if="medicalCertRequiredForPaid" class="text-amber-300">
-          Paid sick leave above 1 day requires a medical certificate (attachment). Without it, this request is unpaid.
+        <p v-if="payTypePreview === 'partial_paid'" class="text-amber-300">
+          This request will use remaining paid days first, then excess days become unpaid.
         </p>
+        <p v-if="missingRequiredDocumentForPaid" class="text-amber-300">
+          {{ selectedLeaveType?.name }} paid leave requires supporting documents. Without attachment, this request is unpaid.
+        </p>
+      </div>
+      <div class="mb-4 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-xs text-gray-300">
+        <p class="mb-2 font-semibold text-primary-200">Leave Entitlements & Conditions</p>
+        <ul class="space-y-2">
+          <li v-for="type in yearlyEntitlements" :key="`info-${type.id}`">
+            <span class="font-medium text-primary-200">{{ type.name }}</span>:
+            {{ type.total }} paid days/year after {{ type.minMonths }} month(s) of service.
+            <span v-if="type.requiresAttachment"> Supporting document required for paid leave.</span>
+            <span v-if="type.remarks"> {{ type.remarks }}</span>
+          </li>
+        </ul>
+        <p class="mt-2">Leave of Absence and Emergency Leave are unpaid by default.</p>
+        <p>AWOL is admin/HR only and cannot be requested by employees.</p>
       </div>
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">
         <div class="sm:col-span-2">
@@ -408,7 +435,7 @@ function onEditAttachmentChange(event) {
           <tr v-for="row in myRequests" :key="row.id" class="hover:bg-gray-950">
             <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
-            <td class="px-4 py-3 text-sm text-gray-300 uppercase">{{ row.leave_pay_type || 'unpaid' }}</td>
+            <td class="px-4 py-3 text-sm text-gray-300 uppercase">{{ formatPayType(row.leave_pay_type) }}</td>
             <td class="px-4 py-3">
               <StatusBadge :status="row.status" />
             </td>
