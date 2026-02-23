@@ -31,4 +31,23 @@ async function updateEmployeeStatus(employeeId) {
   await db.query('UPDATE employees SET status = $1 WHERE id = $2', [onLeave ? 'on_leave' : 'active', employeeId])
 }
 
-module.exports = { addAuditLog, updateEmployeeStatus }
+async function syncAllEmployeeStatuses() {
+  await db.query(
+    `UPDATE employees e
+     SET status = CASE
+       WHEN e.status IN ('inactive','resigned') THEN e.status
+       WHEN EXISTS (
+         SELECT 1
+         FROM leave_requests lr
+         WHERE lr.employee_id = e.id
+           AND lr.status = 'approved'
+           AND lr.start_date <= CURRENT_DATE
+           AND CURRENT_DATE <= lr.end_date
+       ) THEN 'on_leave'
+       ELSE 'active'
+     END
+     WHERE e.status IN ('active', 'on_leave')`
+  )
+}
+
+module.exports = { addAuditLog, updateEmployeeStatus, syncAllEmployeeStatuses }

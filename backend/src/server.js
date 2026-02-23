@@ -9,7 +9,7 @@ const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const db = require('./db')
 const { runMigrations } = require('./migrate')
-const { addAuditLog, updateEmployeeStatus } = require('./helpers')
+const { addAuditLog, updateEmployeeStatus, syncAllEmployeeStatuses } = require('./helpers')
 const {
   LEAD_STATUSES,
   LEAD_SOURCES,
@@ -392,7 +392,29 @@ function requireRole(roles) {
 
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.status, e.department, e.shift, e.date_hired
+    `SELECT
+      u.id,
+      u.email,
+      u.role,
+      u.employee_id,
+      e.employee_code,
+      e.first_name,
+      e.last_name,
+      CASE
+        WHEN e.status IN ('inactive','resigned') THEN e.status
+        WHEN EXISTS (
+          SELECT 1
+          FROM leave_requests lr
+          WHERE lr.employee_id = e.id
+            AND lr.status = 'approved'
+            AND lr.start_date <= CURRENT_DATE
+            AND CURRENT_DATE <= lr.end_date
+        ) THEN 'on_leave'
+        ELSE 'active'
+      END AS status,
+      e.department,
+      e.shift,
+      e.date_hired
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
      WHERE u.id = $1`,
@@ -502,11 +524,13 @@ app.delete('/api/users/:id', authRequired, requireRole(['admin', 'hr']), async (
 
 // Employees
 app.get('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  await syncAllEmployeeStatuses()
   const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees ORDER BY created_at DESC`)
   res.json(rows)
 })
 
 app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  await syncAllEmployeeStatuses()
   const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.params.id])
   if (!rows.length) return res.status(404).json({ message: 'Employee not found' })
   res.json(rows[0])
