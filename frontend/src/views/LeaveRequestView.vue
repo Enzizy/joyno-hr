@@ -104,6 +104,12 @@ function formatPayType(value) {
   if (normalized === 'partial_paid') return 'PARTIAL PAID'
   return normalized.toUpperCase()
 }
+function formatPayBreakdown(row) {
+  const paid = Number(row?.paid_days || 0)
+  const unpaid = Number(row?.unpaid_days || 0)
+  if (paid <= 0 && unpaid <= 0) return ''
+  return `${paid.toFixed(0)} paid / ${unpaid.toFixed(0)} unpaid`
+}
 const todayISO = computed(() => {
   const now = new Date()
   const year = now.getFullYear()
@@ -169,9 +175,11 @@ async function submit() {
       payload.append('end_date', form.value.end_date)
       payload.append('reason', form.value.reason)
       payload.append('attachment', attachment.value)
-      await leaveStore.createRequest(payload)
+      const created = await leaveStore.createRequest(payload)
+      if (created?.compensation_message) toast.info(created.compensation_message)
     } else {
-      await leaveStore.createRequest({ ...form.value })
+      const created = await leaveStore.createRequest({ ...form.value })
+      if (created?.compensation_message) toast.info(created.compensation_message)
     }
     toast.success('Leave request submitted.')
     form.value = { leave_type_id: '', start_date: '', end_date: '', reason: '' }
@@ -248,9 +256,11 @@ async function submitEdit() {
       payload.append('end_date', editForm.value.end_date)
       payload.append('reason', editForm.value.reason)
       payload.append('attachment', editAttachment.value)
-      await leaveStore.updateRequest(editingRow.value.id, payload)
+      const updated = await leaveStore.updateRequest(editingRow.value.id, payload)
+      if (updated?.compensation_message) toast.info(updated.compensation_message)
     } else {
-      await leaveStore.updateRequest(editingRow.value.id, { ...editForm.value })
+      const updated = await leaveStore.updateRequest(editingRow.value.id, { ...editForm.value })
+      if (updated?.compensation_message) toast.info(updated.compensation_message)
     }
     toast.success('Leave request updated.')
     closeEditModal()
@@ -425,7 +435,12 @@ function onEditAttachmentChange(event) {
           <tr v-for="row in myRequests" :key="row.id" class="hover:bg-gray-950">
             <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
-            <td class="px-4 py-3 text-sm text-gray-300 uppercase">{{ formatPayType(row.leave_pay_type) }}</td>
+            <td class="px-4 py-3 text-sm text-gray-300 uppercase">
+              {{ formatPayType(row.leave_pay_type) }}
+              <span v-if="formatPayBreakdown(row)" class="ml-2 text-xs normal-case text-gray-400">
+                ({{ formatPayBreakdown(row) }})
+              </span>
+            </td>
             <td class="px-4 py-3">
               <StatusBadge :status="row.status" />
             </td>

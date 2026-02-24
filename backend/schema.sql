@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS leave_requests (
   status VARCHAR(20) DEFAULT 'pending',
   leave_pay_type VARCHAR(20) NOT NULL DEFAULT 'unpaid',
   leave_days NUMERIC(10,2) NOT NULL DEFAULT 0,
+  paid_days NUMERIC(10,2) NOT NULL DEFAULT 0,
+  unpaid_days NUMERIC(10,2) NOT NULL DEFAULT 0,
   credits_deducted NUMERIC(10,2) NOT NULL DEFAULT 0,
   approved_by INTEGER NULL,
   approved_by_name VARCHAR(150),

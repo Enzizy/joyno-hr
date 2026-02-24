@@ -41,7 +41,7 @@ const LEAD_COLUMNS =
 const CLIENT_COLUMNS =
   'id, lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status, created_at'
 const LEAVE_REQUEST_COLUMNS =
-  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, credits_deducted, attachment_name, attachment_type, attachment_data, created_at'
+  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, created_at'
 const NOTIFICATION_COLUMNS =
   'id, user_id, type, title, message, target_table, target_id, is_read, created_at'
 
@@ -381,28 +381,71 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
 
   const paidDaysCap = Number(leaveType?.paid_days_per_request || 0)
   if (!leaveType || paidDaysCap <= 0) {
-    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+    return {
+      leaveDays,
+      paidDays: 0,
+      unpaidDays: leaveDays,
+      leavePayType: 'unpaid',
+      creditsDeducted: 0,
+      note: `${leaveType?.name || 'This leave type'} is unpaid by policy.`,
+    }
   }
 
   const eligible = isPaidLeaveEligible(employee?.date_hired, startDate, leaveType.min_months_employed || 0)
   if (!eligible) {
-    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+    return {
+      leaveDays,
+      paidDays: 0,
+      unpaidDays: leaveDays,
+      leavePayType: 'unpaid',
+      creditsDeducted: 0,
+      note: `Paid ${leaveType.name} requires at least ${Number(leaveType.min_months_employed || 0)} month(s) of service.`,
+    }
   }
   if (leaveType.requires_attachment_for_paid && !hasMedicalAttachment) {
-    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+    return {
+      leaveDays,
+      paidDays: 0,
+      unpaidDays: leaveDays,
+      leavePayType: 'unpaid',
+      creditsDeducted: 0,
+      note: `${leaveType.name} paid leave requires a supporting document. Without attachment, this request is unpaid.`,
+    }
   }
 
   const availableCredits = Math.max(0, Number(employee?.leave_credits || 0))
-  const payableDays = Math.min(paidDaysCap, availableCredits)
+  const payableDays = Math.min(leaveDays, paidDaysCap, availableCredits)
+  const unpaidDays = Math.max(0, leaveDays - payableDays)
 
   if (payableDays <= 0) {
-    return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
+    return {
+      leaveDays,
+      paidDays: 0,
+      unpaidDays: leaveDays,
+      leavePayType: 'unpaid',
+      creditsDeducted: 0,
+      note: `No paid days available due to insufficient leave credits.`,
+    }
   }
   if (leaveDays <= payableDays) {
-    return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
+    return {
+      leaveDays,
+      paidDays: leaveDays,
+      unpaidDays: 0,
+      leavePayType: 'paid',
+      creditsDeducted: leaveDays,
+      note: `All ${leaveDays} day(s) are paid.`,
+    }
   }
 
-  return { leaveDays, leavePayType: 'partial_paid', creditsDeducted: payableDays }
+  return {
+    leaveDays,
+    paidDays: payableDays,
+    unpaidDays,
+    leavePayType: 'partial_paid',
+    creditsDeducted: payableDays,
+    note: `${payableDays} day(s) paid and ${unpaidDays} day(s) unpaid based on ${leaveType.name} limits and available credits.`,
+  }
 }
 
 function signToken(user) {
@@ -1818,8 +1861,8 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
 
   const { rows } = await db.query(
     `INSERT INTO leave_requests
-     (employee_id, employee_code, employee_name, leave_type_name, start_date, end_date, reason, status, leave_pay_type, leave_days, credits_deducted, attachment_name, attachment_type, attachment_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13)
+     (employee_id, employee_code, employee_name, leave_type_name, start_date, end_date, reason, status, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13,$14,$15)
      RETURNING id`,
     [
       user.employee_id,
@@ -1831,6 +1874,8 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
       reason,
       compensation.leavePayType,
       compensation.leaveDays,
+      compensation.paidDays,
+      compensation.unpaidDays,
       compensation.creditsDeducted,
       attachmentName,
       attachmentType,
@@ -1848,7 +1893,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   })
   await addAuditLog(req.user.id, 'create_leave_request', 'leave_requests', createdId)
   const created = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [createdId])
-  res.json(created.rows[0] || { id: createdId })
+  res.json({ ...(created.rows[0] || { id: createdId }), compensation_message: compensation.note || null })
 })
 
 app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, res) => {
@@ -1911,9 +1956,9 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   await db.query(
     `UPDATE leave_requests
      SET leave_type_name=$1, start_date=$2, end_date=$3, reason=$4,
-         leave_pay_type=$5, leave_days=$6, credits_deducted=$7,
-         attachment_name=$8, attachment_type=$9, attachment_data=$10
-     WHERE id=$11`,
+         leave_pay_type=$5, leave_days=$6, paid_days=$7, unpaid_days=$8, credits_deducted=$9,
+         attachment_name=$10, attachment_type=$11, attachment_data=$12
+     WHERE id=$13`,
     [
       leaveType.name,
       start_date,
@@ -1921,6 +1966,8 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
       reason,
       compensation.leavePayType,
       compensation.leaveDays,
+      compensation.paidDays,
+      compensation.unpaidDays,
       compensation.creditsDeducted,
       attachmentName,
       attachmentType,
@@ -1931,7 +1978,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
 
   await addAuditLog(req.user.id, 'update_leave_request', 'leave_requests', id)
   const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
-  res.json(updated.rows[0] || { id })
+  res.json({ ...(updated.rows[0] || { id }), compensation_message: compensation.note || null })
 })
 
 app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
@@ -1962,14 +2009,16 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
   await db.query(
     `UPDATE leave_requests
      SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3,
-         leave_pay_type=$4, leave_days=$5, credits_deducted=$6
-     WHERE id=$7`,
+         leave_pay_type=$4, leave_days=$5, paid_days=$6, unpaid_days=$7, credits_deducted=$8
+     WHERE id=$9`,
     [
       req.user.id,
       req.user.email,
       req.user.role,
       compensation.leavePayType,
       compensation.leaveDays,
+      compensation.paidDays,
+      compensation.unpaidDays,
       compensation.creditsDeducted,
       id,
     ]
@@ -2001,7 +2050,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
   await updateEmployeeStatus(employeeId)
   await addAuditLog(req.user.id, 'approve_leave_request', 'leave_requests', id)
   const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
-  res.json(updated.rows[0] || { id })
+  res.json({ ...(updated.rows[0] || { id }), compensation_message: compensation.note || null })
 })
 
 app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
@@ -2105,6 +2154,8 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
     { header: 'Employee', key: 'employee', width: 28 },
     { header: 'Leave type', key: 'type', width: 20 },
     { header: 'Pay type', key: 'pay_type', width: 14 },
+    { header: 'Paid days', key: 'paid_days', width: 12 },
+    { header: 'Unpaid days', key: 'unpaid_days', width: 12 },
     { header: 'Reason', key: 'reason', width: 40 },
     { header: 'Days', key: 'days', width: 10 },
   ]
@@ -2129,6 +2180,8 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
       employee: r.employee_name || r.employee_id || '',
       type: r.leave_type_name || r.leave_type_id || '',
       pay_type: r.leave_pay_type || 'unpaid',
+      paid_days: Number(r.paid_days || 0),
+      unpaid_days: Number(r.unpaid_days || 0),
       reason: r.reason || '',
       days,
     })

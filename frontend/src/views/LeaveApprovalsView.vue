@@ -147,6 +147,13 @@ function truncateReason(text) {
   return `${str.slice(0, reasonMax)}…`
 }
 
+function payBreakdown(row) {
+  const paid = Number(row?.paid_days || 0)
+  const unpaid = Number(row?.unpaid_days || 0)
+  if (paid <= 0 && unpaid <= 0) return ''
+  return `${paid.toFixed(0)} paid / ${unpaid.toFixed(0)} unpaid`
+}
+
 async function openAttachment(row) {
   if (!row?.id) return
   attachmentLoading.value = true
@@ -282,6 +289,9 @@ async function confirmReject() {
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">
             <span class="uppercase">{{ row.leave_pay_type || 'unpaid' }}</span>
+            <span v-if="payBreakdown(row)" class="ml-1 text-xs text-gray-400">
+              ({{ payBreakdown(row) }})
+            </span>
             <span v-if="Number(row.credits_deducted || 0) > 0" class="ml-1 text-xs text-gray-400">
               ({{ Number(row.credits_deducted).toFixed(2) }} cr)
             </span>
