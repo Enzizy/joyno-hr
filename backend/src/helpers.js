@@ -11,7 +11,7 @@ async function addAuditLog(userId, action, targetTable, targetId) {
 async function updateEmployeeStatus(employeeId) {
   if (!employeeId) return
   const { rows } = await db.query(
-    `SELECT start_date, end_date FROM leave_requests
+    `SELECT start_date, end_date, leave_type_name FROM leave_requests
      WHERE employee_id = $1 AND status = 'approved'`,
     [employeeId]
   )
@@ -21,21 +21,42 @@ async function updateEmployeeStatus(employeeId) {
   const dd = String(today.getDate()).padStart(2, '0')
   const todayISO = `${yyyy}-${mm}-${dd}`
 
-  let onLeave = false
+  let hasCurrentAwol = false
+  let hasCurrentLeave = false
   for (const r of rows) {
     if (r.start_date <= todayISO && todayISO <= r.end_date) {
-      onLeave = true
-      break
+      const typeName = String(r.leave_type_name || '').toLowerCase()
+      if (typeName === 'absent without official leave' || typeName === 'awol') {
+        hasCurrentAwol = true
+        break
+      }
+      hasCurrentLeave = true
     }
   }
-  await db.query('UPDATE employees SET status = $1 WHERE id = $2', [onLeave ? 'on_leave' : 'active', employeeId])
+  const status = hasCurrentAwol ? 'inactive' : hasCurrentLeave ? 'on_leave' : 'active'
+  await db.query('UPDATE employees SET status = $1 WHERE id = $2 AND status IN ($3, $4, $5)', [
+    status,
+    employeeId,
+    'active',
+    'on_leave',
+    'inactive',
+  ])
 }
 
 async function syncAllEmployeeStatuses() {
   await db.query(
     `UPDATE employees e
      SET status = CASE
-       WHEN e.status IN ('inactive','resigned') THEN e.status
+       WHEN e.status = 'resigned' THEN e.status
+       WHEN EXISTS (
+         SELECT 1
+         FROM leave_requests lr
+         WHERE lr.employee_id = e.id
+           AND lr.status = 'approved'
+           AND lr.start_date <= CURRENT_DATE
+           AND CURRENT_DATE <= lr.end_date
+           AND LOWER(COALESCE(lr.leave_type_name, '')) IN ('absent without official leave', 'awol')
+       ) THEN 'inactive'
        WHEN EXISTS (
          SELECT 1
          FROM leave_requests lr
@@ -46,7 +67,7 @@ async function syncAllEmployeeStatuses() {
        ) THEN 'on_leave'
        ELSE 'active'
      END
-     WHERE e.status IN ('active', 'on_leave')`
+     WHERE e.status IN ('active', 'on_leave', 'inactive')`
   )
 }
 

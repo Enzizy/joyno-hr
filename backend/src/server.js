@@ -555,7 +555,16 @@ async function loadUserProfile(userId) {
       e.first_name,
       e.last_name,
       CASE
-        WHEN e.status IN ('inactive','resigned') THEN e.status
+        WHEN e.status = 'resigned' THEN e.status
+        WHEN EXISTS (
+          SELECT 1
+          FROM leave_requests lr
+          WHERE lr.employee_id = e.id
+            AND lr.status = 'approved'
+            AND lr.start_date <= CURRENT_DATE
+            AND CURRENT_DATE <= lr.end_date
+            AND LOWER(COALESCE(lr.leave_type_name, '')) IN ('absent without official leave', 'awol')
+        ) THEN 'inactive'
         WHEN EXISTS (
           SELECT 1
           FROM leave_requests lr
