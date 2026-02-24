@@ -347,11 +347,11 @@ async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
            ) >= 6 THEN 3
            ELSE 0
          END,
-         leave_credits_reset_year = $2,
+         leave_credits_reset_year = $1,
          updated_at = NOW()
-     WHERE id = $3
-       AND COALESCE(leave_credits_reset_year, 0) < $2`,
-    [DEFAULT_LEAVE_CREDITS, year, id]
+     WHERE id = $2
+       AND COALESCE(leave_credits_reset_year, 0) < $1`,
+    [year, id]
   )
 }
 
@@ -371,10 +371,10 @@ async function resetAllEmployeeLeaveCreditsIfNeeded() {
            ) >= 6 THEN 3
            ELSE 0
          END,
-         leave_credits_reset_year = $2,
+         leave_credits_reset_year = $1,
          updated_at = NOW()
-     WHERE COALESCE(leave_credits_reset_year, 0) < $2`,
-    [DEFAULT_LEAVE_CREDITS, year]
+     WHERE COALESCE(leave_credits_reset_year, 0) < $1`,
+    [year]
   )
 }
 
