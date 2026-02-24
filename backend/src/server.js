@@ -7,6 +7,7 @@ const multer = require('multer')
 const ExcelJS = require('exceljs')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
+const nodemailer = require('nodemailer')
 const db = require('./db')
 const { runMigrations } = require('./migrate')
 const { addAuditLog, updateEmployeeStatus, syncAllEmployeeStatuses } = require('./helpers')
@@ -84,6 +85,70 @@ const loginLimiter = rateLimit({
 })
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
+const SMTP_USER = (process.env.SMTP_USER || '').trim()
+const SMTP_PASS = (process.env.SMTP_PASS || '').trim()
+const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
+let mailTransport = null
+
+function getMailTransport() {
+  if (!SMTP_USER || !SMTP_PASS) return null
+  if (mailTransport) return mailTransport
+  const service = (process.env.SMTP_SERVICE || 'gmail').trim()
+  const host = (process.env.SMTP_HOST || '').trim()
+  const port = Number(process.env.SMTP_PORT || 0)
+  const secure = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true'
+  const config = {
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  }
+  if (host) {
+    config.host = host
+    if (port > 0) config.port = port
+    config.secure = secure
+  } else {
+    config.service = service
+  }
+  mailTransport = nodemailer.createTransport(config)
+  return mailTransport
+}
+
+async function sendEmailNotification({ to, subject, text, html = null }) {
+  if (!to || !subject || !text) return
+  const transport = getMailTransport()
+  if (!transport || !SMTP_FROM) return
+  try {
+    await transport.sendMail({
+      from: SMTP_FROM,
+      to,
+      subject,
+      text,
+      ...(html ? { html } : {}),
+    })
+  } catch (error) {
+    console.error('Email notification failed:', error.message || error)
+  }
+}
+
+async function getUserContactById(userId) {
+  if (!userId) return null
+  const { rows } = await db.query(
+    `SELECT u.id, u.email, e.first_name, e.last_name
+     FROM users u
+     LEFT JOIN employees e ON u.employee_id = e.id
+     WHERE u.id = $1
+     LIMIT 1`,
+    [userId]
+  )
+  const user = rows[0]
+  if (!user) return null
+  return {
+    id: user.id,
+    email: user.email,
+    name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email,
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -1467,6 +1532,22 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, r
     targetTable: 'tasks',
     targetId: rows[0]?.id,
   })
+  const assignee = await getUserContactById(payload.assigned_to)
+  await sendEmailNotification({
+    to: assignee?.email,
+    subject: `Task Assigned: ${payload.title}`,
+    text: [
+      `Hi ${assignee?.name || 'Employee'},`,
+      '',
+      `A new task has been assigned to you.`,
+      `Title: ${payload.title}`,
+      `Due date: ${payload.due_date}`,
+      `Priority: ${priority}`,
+      payload.description ? `Details: ${payload.description}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+  })
   await addAuditLog(req.user.id, 'create_task', 'tasks', rows[0]?.id)
   res.json(rows[0])
 })
@@ -1475,6 +1556,9 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const payload = req.body || {}
+  const currentTaskRows = await db.query('SELECT id, assigned_to, title FROM tasks WHERE id = $1 LIMIT 1', [id])
+  const currentTask = currentTaskRows.rows[0]
+  if (!currentTask) return res.status(404).json({ message: 'Task not found' })
   if (!payload.title || !payload.assigned_to || !payload.due_date) {
     return res.status(400).json({ message: 'Task title, assigned user, and due date are required' })
   }
@@ -1500,6 +1584,32 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req
     ]
   )
   if (!rows.length) return res.status(404).json({ message: 'Task not found' })
+  if (Number(currentTask.assigned_to) !== Number(payload.assigned_to)) {
+    await createNotification({
+      userId: payload.assigned_to,
+      type: 'task_assigned',
+      title: `Task Assigned: ${payload.title}`,
+      message: payload.description || null,
+      targetTable: 'tasks',
+      targetId: id,
+    })
+    const assignee = await getUserContactById(payload.assigned_to)
+    await sendEmailNotification({
+      to: assignee?.email,
+      subject: `Task Assigned: ${payload.title}`,
+      text: [
+        `Hi ${assignee?.name || 'Employee'},`,
+        '',
+        `A task has been assigned to you.`,
+        `Title: ${payload.title}`,
+        `Due date: ${payload.due_date}`,
+        `Priority: ${priority}`,
+        payload.description ? `Details: ${payload.description}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    })
+  }
   await addAuditLog(req.user.id, 'update_task', 'tasks', id)
   res.json(rows[0])
 })
@@ -1748,6 +1858,22 @@ app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin'
     message: 'Created by automation rule.',
     targetTable: 'tasks',
     targetId: taskResult.rows[0]?.id,
+  })
+  const assignee = await getUserContactById(rule.assigned_to)
+  await sendEmailNotification({
+    to: assignee?.email,
+    subject: `Task Assigned: ${rule.task_title_template}`,
+    text: [
+      `Hi ${assignee?.name || 'Employee'},`,
+      '',
+      'A new automated task has been assigned to you.',
+      `Title: ${rule.task_title_template}`,
+      `Due date: ${dueDate}`,
+      `Priority: ${rule.priority || 'medium'}`,
+      rule.task_description_template ? `Details: ${rule.task_description_template}` : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
   })
   await addAuditLog(req.user.id, 'run_automation_rule', 'automation_rules', id)
   res.json(taskResult.rows[0])
@@ -2111,13 +2237,28 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
   const ownerUserRows = await db.query('SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1', [
     approvedRequest?.employee_id,
   ])
+  const ownerUser = ownerUserRows.rows[0]
   await createNotification({
-    userId: ownerUserRows.rows[0]?.id,
+    userId: ownerUser?.id,
     type: 'leave_approved',
     title: 'Leave Approved',
     message: `Your ${approvedRequest?.leave_type_name || 'leave'} request has been approved.`,
     targetTable: 'leave_requests',
     targetId: id,
+  })
+  const ownerContact = await getUserContactById(ownerUser?.id)
+  await sendEmailNotification({
+    to: ownerContact?.email,
+    subject: `Leave Approved: ${approvedRequest?.leave_type_name || 'Leave'}`,
+    text: [
+      `Hi ${ownerContact?.name || 'Employee'},`,
+      '',
+      `Your leave request has been approved.`,
+      `Type: ${approvedRequest?.leave_type_name || '-'}`,
+      `Dates: ${approvedRequest?.start_date || '-'} to ${approvedRequest?.end_date || '-'}`,
+      `Paid days: ${Number(approvedRequest?.paid_days || 0)}`,
+      `Unpaid days: ${Number(approvedRequest?.unpaid_days || 0)}`,
+    ].join('\n'),
   })
 
   const employeeId = approvedRequest?.employee_id
