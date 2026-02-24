@@ -88,6 +88,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
 const SMTP_USER = (process.env.SMTP_USER || '').trim()
 const SMTP_PASS = (process.env.SMTP_PASS || '').trim()
 const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
+const RESEND_API_KEY = (process.env.RESEND_API_KEY || '').trim()
+const RESEND_FROM = (process.env.RESEND_FROM || SMTP_FROM || '').trim()
 let mailTransport = null
 
 function getMailTransport() {
@@ -119,10 +121,32 @@ function getMailTransport() {
 
 function sendEmailNotification({ to, subject, text, html = null }) {
   if (!to || !subject || !text) return
-  const transport = getMailTransport()
-  if (!transport || !SMTP_FROM) return
   setImmediate(async () => {
     try {
+      if (RESEND_API_KEY && RESEND_FROM) {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: RESEND_FROM,
+            to: [to],
+            subject,
+            text,
+            ...(html ? { html } : {}),
+          }),
+        })
+        if (!response.ok) {
+          const errText = await response.text()
+          throw new Error(`Resend API error ${response.status}: ${errText}`)
+        }
+        return
+      }
+
+      const transport = getMailTransport()
+      if (!transport || !SMTP_FROM) return
       await transport.sendMail({
         from: SMTP_FROM,
         to,
