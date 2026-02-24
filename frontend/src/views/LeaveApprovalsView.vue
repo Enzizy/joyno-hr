@@ -14,6 +14,9 @@ const rejectModal = ref(false)
 const rejectingRow = ref(null)
 const rejectionComment = ref('')
 const rejecting = ref(false)
+const deleteModal = ref(false)
+const deletingRow = ref(null)
+const deleting = ref(false)
 const reasonModal = ref(false)
 const reasonRow = ref(null)
 const attachmentModal = ref(false)
@@ -130,6 +133,16 @@ function closeRejectModal() {
   rejectionComment.value = ''
 }
 
+function openDeleteModal(row) {
+  deletingRow.value = row
+  deleteModal.value = true
+}
+
+function closeDeleteModal() {
+  deleteModal.value = false
+  deletingRow.value = null
+}
+
 function openReasonModal(row) {
   reasonRow.value = row
   reasonModal.value = true
@@ -195,6 +208,20 @@ async function confirmReject() {
     toast.error(err.message || 'Failed to reject.')
   } finally {
     rejecting.value = false
+  }
+}
+
+async function confirmDelete() {
+  if (!deletingRow.value) return
+  deleting.value = true
+  try {
+    await leaveStore.removeByAdmin(deletingRow.value.id)
+    toast.success('Leave request deleted.')
+    closeDeleteModal()
+  } catch (err) {
+    toast.error(err.message || 'Failed to delete leave request.')
+  } finally {
+    deleting.value = false
   }
 }
 </script>
@@ -326,9 +353,14 @@ async function confirmReject() {
               <div class="flex justify-end gap-1">
                 <AppButton variant="success" size="sm" @click="approve(row)">Approve</AppButton>
                 <AppButton variant="danger" size="sm" @click="openRejectModal(row)">Reject</AppButton>
+                <AppButton variant="danger" size="sm" @click="openDeleteModal(row)">Delete</AppButton>
               </div>
             </template>
-            <span v-else class="text-sm text-gray-400">-</span>
+            <template v-else>
+              <div class="flex justify-end">
+                <AppButton variant="danger" size="sm" @click="openDeleteModal(row)">Delete</AppButton>
+              </div>
+            </template>
           </td>
         </tr>
         <tr v-if="!pagedRequests.length && !leaveStore.loading">
@@ -378,6 +410,20 @@ async function confirmReject() {
       <p class="text-sm text-gray-200 whitespace-pre-wrap">{{ reasonRow?.reason || '-' }}</p>
       <template #footer>
         <AppButton variant="secondary" @click="closeReasonModal">Close</AppButton>
+      </template>
+    </AppModal>
+    <AppModal :show="deleteModal" title="Delete leave request" @close="closeDeleteModal">
+      <p v-if="deletingRow" class="text-sm text-gray-300">
+        Delete leave request for
+        <strong>{{ deletingRow.employee_name || 'Employee' }}</strong>
+        ({{ formatRange(deletingRow.start_date, deletingRow.end_date) }})?
+      </p>
+      <p class="mt-2 text-xs text-amber-300">
+        This permanently removes the record from the database.
+      </p>
+      <template #footer>
+        <AppButton variant="secondary" @click="closeDeleteModal">Cancel</AppButton>
+        <AppButton variant="danger" :loading="deleting" @click="confirmDelete">Delete</AppButton>
       </template>
     </AppModal>
     <AppModal :show="attachmentModal" title="Attachment" @close="closeAttachment">

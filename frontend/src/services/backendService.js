@@ -81,6 +81,10 @@ export async function cancelLeaveRequest(id) {
   return api.cancelLeaveRequest(id)
 }
 
+export async function deleteLeaveRequest(id) {
+  return api.deleteLeaveRequest(id)
+}
+
 export async function getLeaveReport(from, to) {
   return api.getLeaveReport(from, to)
 }

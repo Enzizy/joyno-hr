@@ -143,6 +143,10 @@ export async function cancelLeaveRequest(id) {
   return request(`/api/leave-requests/${id}/cancel`, { method: 'POST' })
 }
 
+export async function deleteLeaveRequest(id) {
+  return request(`/api/leave-requests/${id}`, { method: 'DELETE' })
+}
+
 export async function getLeaveReport(from, to) {
   const params = new URLSearchParams()
   if (from) params.set('from', from)

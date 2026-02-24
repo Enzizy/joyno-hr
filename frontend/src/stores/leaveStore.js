@@ -10,6 +10,7 @@ import {
   approveLeaveRequest,
   rejectLeaveRequest,
   cancelLeaveRequest,
+  deleteLeaveRequest as deleteLeaveRequestApi,
   updateLeaveRequest as updateLeaveRequestApi,
 } from '@/services/backendService'
 
@@ -96,6 +97,12 @@ export const useLeaveStore = defineStore('leave', () => {
     return true
   }
 
+  async function removeByAdmin(id) {
+    await deleteLeaveRequestApi(id)
+    requests.value = requests.value.filter((r) => r.id !== id)
+    return true
+  }
+
   return {
     leaveTypes,
     balances,
@@ -110,5 +117,6 @@ export const useLeaveStore = defineStore('leave', () => {
     approve,
     reject,
     cancel,
+    removeByAdmin,
   }
 })

@@ -2158,6 +2158,31 @@ app.post('/api/leave-requests/:id/cancel', authRequired, async (req, res) => {
   res.json({ message: 'Leave request deleted' })
 })
 
+app.delete('/api/leave-requests/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
+  const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
+  const leaveRequest = rows[0]
+  if (!leaveRequest) return res.status(404).json({ message: 'Leave request not found' })
+
+  // Keep employee balance consistent if an approved paid/partial leave is removed.
+  const refundCredits = Number(leaveRequest.credits_deducted || 0)
+  if (leaveRequest.status === 'approved' && refundCredits > 0 && leaveRequest.employee_id) {
+    await db.query(
+      `UPDATE employees
+       SET leave_credits = leave_credits + $1,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [refundCredits, leaveRequest.employee_id]
+    )
+  }
+
+  await db.query('DELETE FROM leave_requests WHERE id = $1', [id])
+  if (leaveRequest.employee_id) await updateEmployeeStatus(leaveRequest.employee_id)
+  await addAuditLog(req.user.id, 'delete_leave_request_admin', 'leave_requests', id)
+  res.json({ message: 'Leave request deleted' })
+})
+
 app.get('/api/leave-requests/:id/attachment', authRequired, async (req, res) => {
   const id = req.params.id
   const { rows } = await db.query(
