@@ -129,6 +129,7 @@ const todayISO = computed(() => {
   const day = String(now.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 })
+const leaveCreditsAvailable = computed(() => Number(authStore.user?.leave_credits || 0))
 const endMinDate = computed(() => form.value.start_date || todayISO.value)
 const editEndMinDate = computed(() => editForm.value.start_date || todayISO.value)
 
@@ -334,6 +335,10 @@ function onEditAttachmentChange(event) {
         You are currently on leave and cannot submit another request.
       </p>
       <div class="mb-4 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-gray-300">
+        <p>
+          Leave credits available:
+          <span class="font-semibold text-primary-200">{{ leaveCreditsAvailable.toFixed(2) }}</span>
+        </p>
         <p v-for="ent in yearlyEntitlements" :key="ent.id">
           {{ ent.name }} ({{ ent.year }}): <span class="font-semibold text-primary-200">{{ ent.remaining }}</span> / {{ ent.total }} paid days remaining
         </p>

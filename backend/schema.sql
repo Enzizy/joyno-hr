@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS employees (
   department VARCHAR(100),
   position VARCHAR(100),
   shift VARCHAR(20) NOT NULL DEFAULT 'day',
-  leave_credits NUMERIC(10,2) NOT NULL DEFAULT 0,
+  leave_credits NUMERIC(10,2) NOT NULL DEFAULT 15,
   date_hired DATE,
   status VARCHAR(50) DEFAULT 'active',
   created_at TIMESTAMPTZ DEFAULT NOW(),

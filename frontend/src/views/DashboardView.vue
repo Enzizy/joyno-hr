@@ -132,6 +132,7 @@ const paidLeaveBalances = computed(() => {
     sick: Math.max(0, 5 - sickUsed),
   }
 })
+const leaveCredits = computed(() => Number(authStore.user?.leave_credits || employeeKpis.value?.leave_credits || 0))
 
 function actionLabel(row) {
   const roleLabel = row.approved_by_role
@@ -184,13 +185,12 @@ function actionLabel(row) {
         <p class="mt-1 text-xl font-semibold text-red-300">{{ employeeKpis.overdue_tasks ?? 0 }}</p>
       </div>
       <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
-        <p class="text-sm font-medium text-gray-400">Paid Leave Eligibility</p>
-        <p class="mt-1 text-xl font-semibold" :class="paidLeaveEligible ? 'text-emerald-300' : 'text-amber-300'">
-          {{ paidLeaveEligible ? 'Eligible' : 'Below 1 year' }}
-        </p>
+        <p class="text-sm font-medium text-gray-400">Leave Credits</p>
+        <p class="mt-1 text-xl font-semibold text-emerald-300">{{ leaveCredits.toFixed(2) }}</p>
         <p class="mt-2 text-xs text-gray-400">
-          Vacation: {{ paidLeaveBalances.vacation }} days • Sick: {{ paidLeaveBalances.sick }} days
+          Paid eligibility: <span :class="paidLeaveEligible ? 'text-emerald-300' : 'text-amber-300'">{{ paidLeaveEligible ? 'Eligible' : 'Below 1 year' }}</span>
         </p>
+        <p class="text-xs text-gray-400">Vacation: {{ paidLeaveBalances.vacation }} days • Sick: {{ paidLeaveBalances.sick }} days</p>
       </div>
       <div v-if="authStore.isEmployee" class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
         <p class="text-sm font-medium text-gray-400">Upcoming Deadlines</p>

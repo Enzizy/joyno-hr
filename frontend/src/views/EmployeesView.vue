@@ -30,6 +30,7 @@ const form = ref({
   department: '',
   position: '',
   shift: 'day',
+  leave_credits: 15,
   date_hired: '',
   status: 'active',
 })
@@ -70,6 +71,7 @@ function openCreate() {
     department: '',
     position: '',
     shift: 'day',
+    leave_credits: 15,
     date_hired: '',
     status: 'active',
   }
@@ -85,6 +87,7 @@ function openEdit(row) {
     department: row.department,
     position: row.position,
     shift: row.shift || 'day',
+    leave_credits: Number(row.leave_credits ?? 15),
     date_hired: row.date_hired?.slice(0, 10) ?? '',
     status: row.status,
   }
@@ -223,6 +226,7 @@ async function submitAwol() {
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Name</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Department</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Shift</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Leave Credits</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Position</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
           <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
@@ -234,6 +238,7 @@ async function submitAwol() {
           <td class="px-4 py-3 text-sm text-primary-200">{{ row.first_name }} {{ row.last_name }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.department }}</td>
           <td class="px-4 py-3 text-sm text-gray-300 capitalize">{{ row.shift || 'day' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-300">{{ Number(row.leave_credits || 0).toFixed(2) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.position }}</td>
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
@@ -280,6 +285,7 @@ async function submitAwol() {
             </option>
           </select>
         </div>
+        <AppInput v-model="form.leave_credits" type="number" min="0" step="0.5" label="Leave credits" required />
         <AppInput v-model="form.date_hired" type="date" label="Date hired" required />
         <div>
           <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>

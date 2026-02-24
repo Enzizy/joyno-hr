@@ -34,7 +34,7 @@ app.set('trust proxy', 1)
 
 const USER_AUTH_COLUMNS = 'id, email, password_hash, role, employee_id, created_at'
 const EMPLOYEE_COLUMNS =
-  'id, employee_code, first_name, last_name, department, position, shift, date_hired, status, created_at, updated_at'
+  'id, employee_code, first_name, last_name, department, position, shift, leave_credits, date_hired, status, created_at, updated_at'
 const LEAD_COLUMNS =
   'id, company_name, contact_name, email, phone, source, status, interested_services, estimated_value, next_follow_up, notes, converted_client_id, created_at'
 const CLIENT_COLUMNS =
@@ -377,15 +377,17 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
   const leaveYear = new Date(startDate).getFullYear()
   const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, excludeRequestId)
   const remainingPaidDays = Math.max(0, Number(leaveType.paid_days_per_year) - usedDays)
+  const availableCredits = Math.max(0, Number(employee?.leave_credits || 0))
+  const payableDays = Math.min(remainingPaidDays, availableCredits)
 
-  if (remainingPaidDays <= 0) {
+  if (payableDays <= 0) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
-  if (leaveDays <= remainingPaidDays) {
+  if (leaveDays <= payableDays) {
     return { leaveDays, leavePayType: 'paid', creditsDeducted: leaveDays }
   }
 
-  return { leaveDays, leavePayType: 'partial_paid', creditsDeducted: remainingPaidDays }
+  return { leaveDays, leavePayType: 'partial_paid', creditsDeducted: payableDays }
 }
 
 function signToken(user) {
@@ -447,6 +449,7 @@ async function loadUserProfile(userId) {
       END AS status,
       e.department,
       e.shift,
+      e.leave_credits,
       e.date_hired
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
@@ -571,10 +574,11 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
+  const leaveCredits = Number(e.leave_credits ?? 15)
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, shift, date_hired, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     (employee_code, first_name, last_name, department, position, shift, leave_credits, date_hired, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING id`,
     [
       e.employee_code,
@@ -583,6 +587,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
       e.department,
       e.position,
       e.shift || 'day',
+      Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : 15,
       e.date_hired,
       e.status || 'active',
     ]
@@ -595,10 +600,12 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
 
 app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
+  const leaveCredits = Number(e.leave_credits)
+  const safeLeaveCredits = Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : 15
   await db.query(
     `UPDATE employees
-     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, date_hired=$7, status=$8
-     WHERE id=$9`,
+     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, leave_credits=$7, date_hired=$8, status=$9
+     WHERE id=$10`,
     [
       e.employee_code,
       e.first_name,
@@ -606,6 +613,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
       e.department,
       e.position,
       e.shift || 'day',
+      safeLeaveCredits,
       e.date_hired,
       e.status || 'active',
       req.params.id,
@@ -703,11 +711,14 @@ app.get('/api/dashboard/overview', authRequired, async (req, res) => {
        LIMIT 8`,
       [req.user.id, todayISO, nextWeekISO]
     )
+    const creditsResult = await db.query('SELECT leave_credits FROM employees WHERE id = $1', [req.user.employee_id])
+    const leaveCredits = Number(creditsResult.rows[0]?.leave_credits || 0)
     return res.json({
       role: req.user.role,
       metrics: {
         tasks_due_today: Number(dueToday.rows[0]?.count || 0),
         overdue_tasks: Number(overdue.rows[0]?.count || 0),
+        leave_credits: leaveCredits,
         upcoming_deadlines: upcoming.rows.length,
       },
       upcoming_tasks: upcoming.rows,
@@ -1906,12 +1917,44 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
     return res.status(400).json({ message: 'Only pending requests can be approved' })
   }
 
+  const leaveType = resolveLeaveType(leaveRequest.leave_type_name)
+  if (!leaveType) return res.status(400).json({ message: 'Invalid leave type on request' })
+  const employeeResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [leaveRequest.employee_id])
+  const employee = employeeResult.rows[0]
+  if (!employee) return res.status(404).json({ message: 'Employee not found' })
+  const compensation = await resolveLeaveCompensation(
+    employee,
+    leaveType,
+    leaveRequest.start_date,
+    leaveRequest.end_date,
+    Boolean(leaveRequest.attachment_data),
+    id
+  )
+  if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
+
   await db.query(
     `UPDATE leave_requests
-     SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3
-     WHERE id=$4`,
-    [req.user.id, req.user.email, req.user.role, id]
+     SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3,
+         leave_pay_type=$4, leave_days=$5, credits_deducted=$6
+     WHERE id=$7`,
+    [
+      req.user.id,
+      req.user.email,
+      req.user.role,
+      compensation.leavePayType,
+      compensation.leaveDays,
+      compensation.creditsDeducted,
+      id,
+    ]
   )
+  if (Number(compensation.creditsDeducted || 0) > 0) {
+    await db.query(
+      `UPDATE employees
+       SET leave_credits = GREATEST(0, leave_credits - $1), updated_at = NOW()
+       WHERE id = $2`,
+      [compensation.creditsDeducted, leaveRequest.employee_id]
+    )
+  }
 
   const approvedResult = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   const approvedRequest = approvedResult.rows[0]
