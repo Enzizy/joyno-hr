@@ -2116,36 +2116,60 @@ app.get('/api/leave-requests/:id/attachment', authRequired, async (req, res) => 
 })
 
 // Reports
-app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
-  const { from, to } = req.query
-  let sql = `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE 1=1`
+function buildLeaveReportQuery(from, to) {
+  let sql = `
+    SELECT
+      lr.id,
+      lr.employee_id,
+      lr.employee_code,
+      lr.employee_name,
+      lr.leave_type_id,
+      lr.leave_type_name,
+      lr.start_date,
+      lr.end_date,
+      lr.reason,
+      lr.status,
+      lr.approved_by,
+      lr.approved_by_name,
+      lr.approved_by_role,
+      lr.rejection_comment,
+      lr.leave_pay_type,
+      lr.leave_days,
+      lr.paid_days,
+      lr.unpaid_days,
+      lr.credits_deducted,
+      lr.attachment_name,
+      lr.attachment_type,
+      lr.attachment_data,
+      lr.created_at,
+      e.department
+    FROM leave_requests lr
+    LEFT JOIN employees e ON lr.employee_id = e.id
+    WHERE 1=1
+  `
   const params = []
   if (from) {
     params.push(from)
-    sql += ` AND start_date >= $${params.length}`
+    sql += ` AND lr.start_date >= $${params.length}`
   }
   if (to) {
     params.push(to)
-    sql += ` AND start_date <= $${params.length}`
+    sql += ` AND lr.start_date <= $${params.length}`
   }
-  sql += ' ORDER BY start_date DESC'
+  sql += ' ORDER BY lr.start_date DESC'
+  return { sql, params }
+}
+
+app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const { from, to } = req.query
+  const { sql, params } = buildLeaveReportQuery(from, to)
   const { rows } = await db.query(sql, params)
   res.json(rows)
 })
 
 app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { from, to } = req.query
-  let sql = `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE 1=1`
-  const params = []
-  if (from) {
-    params.push(from)
-    sql += ` AND start_date >= $${params.length}`
-  }
-  if (to) {
-    params.push(to)
-    sql += ` AND start_date <= $${params.length}`
-  }
-  sql += ' ORDER BY start_date DESC'
+  const { sql, params } = buildLeaveReportQuery(from, to)
   const { rows } = await db.query(sql, params)
 
   const workbook = new ExcelJS.Workbook()
@@ -2188,6 +2212,74 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
   })
 
   const filename = `leave-report-${from || 'from'}-to-${to || 'to'}.xlsx`
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  await workbook.xlsx.write(res)
+  res.end()
+})
+
+app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const { from, to } = req.query
+  let sql = `
+    SELECT
+      lr.employee_id,
+      COALESCE(MAX(lr.employee_name), '') AS employee_name,
+      COALESCE(MAX(e.department), '') AS department,
+      COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.paid_days, 0) ELSE 0 END), 0)::numeric AS approved_paid_days,
+      COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.unpaid_days, 0) ELSE 0 END), 0)::numeric AS approved_unpaid_days,
+      COALESCE(SUM(CASE WHEN lr.status = 'pending' THEN COALESCE(lr.leave_days, 0) ELSE 0 END), 0)::numeric AS pending_days,
+      COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.unpaid_days, 0) ELSE 0 END), 0)::numeric AS deduct_salary_days,
+      COUNT(*)::int AS request_count,
+      COUNT(CASE WHEN COALESCE(BTRIM(lr.reason), '') <> '' THEN 1 END)::int AS reasons_count
+    FROM leave_requests lr
+    LEFT JOIN employees e ON lr.employee_id = e.id
+    WHERE 1=1
+  `
+  const params = []
+  if (from) {
+    params.push(from)
+    sql += ` AND lr.start_date >= $${params.length}`
+  }
+  if (to) {
+    params.push(to)
+    sql += ` AND lr.start_date <= $${params.length}`
+  }
+  sql += ' GROUP BY lr.employee_id ORDER BY employee_name ASC'
+  const { rows } = await db.query(sql, params)
+
+  const workbook = new ExcelJS.Workbook()
+  const sheet = workbook.addWorksheet('Payroll Leave Summary')
+  sheet.columns = [
+    { header: 'Employee', key: 'employee', width: 28 },
+    { header: 'Department', key: 'department', width: 18 },
+    { header: 'Approved paid days', key: 'approved_paid_days', width: 16 },
+    { header: 'Approved unpaid days', key: 'approved_unpaid_days', width: 18 },
+    { header: 'Pending days', key: 'pending_days', width: 12 },
+    { header: 'Deduct salary days', key: 'deduct_salary_days', width: 16 },
+    { header: 'Request count', key: 'request_count', width: 12 },
+    { header: 'Reasons count', key: 'reasons_count', width: 12 },
+  ]
+  const headerRow = sheet.getRow(1)
+  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
+  headerRow.alignment = { vertical: 'middle', horizontal: 'left' }
+  headerRow.eachCell((cell) => {
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } }
+  })
+
+  rows.forEach((r) => {
+    sheet.addRow({
+      employee: r.employee_name || r.employee_id || '',
+      department: r.department || '-',
+      approved_paid_days: Number(r.approved_paid_days || 0),
+      approved_unpaid_days: Number(r.approved_unpaid_days || 0),
+      pending_days: Number(r.pending_days || 0),
+      deduct_salary_days: Number(r.deduct_salary_days || 0),
+      request_count: Number(r.request_count || 0),
+      reasons_count: Number(r.reasons_count || 0),
+    })
+  })
+
+  const filename = `leave-payroll-summary-${from || 'from'}-to-${to || 'to'}.xlsx`
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
   await workbook.xlsx.write(res)
