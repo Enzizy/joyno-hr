@@ -110,25 +110,30 @@ function getMailTransport() {
   } else {
     config.service = service
   }
+  config.connectionTimeout = 4000
+  config.greetingTimeout = 4000
+  config.socketTimeout = 6000
   mailTransport = nodemailer.createTransport(config)
   return mailTransport
 }
 
-async function sendEmailNotification({ to, subject, text, html = null }) {
+function sendEmailNotification({ to, subject, text, html = null }) {
   if (!to || !subject || !text) return
   const transport = getMailTransport()
   if (!transport || !SMTP_FROM) return
-  try {
-    await transport.sendMail({
-      from: SMTP_FROM,
-      to,
-      subject,
-      text,
-      ...(html ? { html } : {}),
-    })
-  } catch (error) {
-    console.error('Email notification failed:', error.message || error)
-  }
+  setImmediate(async () => {
+    try {
+      await transport.sendMail({
+        from: SMTP_FROM,
+        to,
+        subject,
+        text,
+        ...(html ? { html } : {}),
+      })
+    } catch (error) {
+      console.error('Email notification failed:', error.message || error)
+    }
+  })
 }
 
 async function getUserContactById(userId) {
