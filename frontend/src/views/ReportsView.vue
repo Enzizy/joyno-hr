@@ -248,21 +248,37 @@ const awolSummary = computed(() => {
         Export Payroll Summary
       </AppButton>
     </div>
-    <div class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
-      <h2 class="text-sm font-semibold text-primary-200">Leave Aging (Pending Approvals)</h2>
-      <div class="mt-3 grid gap-3 sm:grid-cols-3">
-        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-          <p class="text-xs text-gray-400">1-2 days pending</p>
-          <p class="mt-1 text-lg font-semibold text-primary-200">{{ leaveAging['1_2'] }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-          <p class="text-xs text-gray-400">3-5 days pending</p>
-          <p class="mt-1 text-lg font-semibold text-primary-200">{{ leaveAging['3_5'] }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-          <p class="text-xs text-gray-400">&gt;5 days pending</p>
-          <p class="mt-1 text-lg font-semibold text-amber-300">{{ leaveAging.over_5 }}</p>
-        </div>
+    <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
+      <div class="border-b border-gray-800 px-4 py-3">
+        <h2 class="text-sm font-semibold text-primary-200">Leave Salary Impact Summary</h2>
+        <p class="mt-1 text-xs text-gray-400">
+          Salary deduction basis uses approved unpaid leave days only.
+        </p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-800">
+          <thead class="bg-gray-950">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Approved paid days</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Approved unpaid days</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Pending days</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Deduct salary days</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800 bg-gray-900">
+            <tr v-for="(row, i) in summaryData" :key="`sum-${i}`" class="hover:bg-gray-950">
+              <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name }}</td>
+              <td class="px-4 py-3 text-sm text-gray-300">{{ row.approved_paid_days }}</td>
+              <td class="px-4 py-3 text-sm text-gray-300">{{ row.approved_unpaid_days }}</td>
+              <td class="px-4 py-3 text-sm text-gray-300">{{ row.pending_days }}</td>
+              <td class="px-4 py-3 text-sm font-semibold text-amber-300">{{ row.deductible_salary_days }}</td>
+            </tr>
+            <tr v-if="!summaryData.length && !loading">
+              <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see summary.</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
     <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
@@ -291,6 +307,23 @@ const awolSummary = computed(() => {
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+    <div class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
+      <h2 class="text-sm font-semibold text-primary-200">Leave Aging (Pending Approvals)</h2>
+      <div class="mt-3 grid gap-3 sm:grid-cols-3">
+        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-400">1-2 days pending</p>
+          <p class="mt-1 text-lg font-semibold text-primary-200">{{ leaveAging['1_2'] }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-400">3-5 days pending</p>
+          <p class="mt-1 text-lg font-semibold text-primary-200">{{ leaveAging['3_5'] }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-400">&gt;5 days pending</p>
+          <p class="mt-1 text-lg font-semibold text-amber-300">{{ leaveAging.over_5 }}</p>
+        </div>
       </div>
     </div>
     <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
@@ -326,63 +359,8 @@ const awolSummary = computed(() => {
     </div>
     <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
       <div class="border-b border-gray-800 px-4 py-3">
-        <h2 class="text-sm font-semibold text-primary-200">AWOL Monitoring</h2>
-        <p class="mt-1 text-xs text-gray-400">Active AWOL cases now: <span class="font-semibold text-amber-300">{{ awolSummary.activeNow }}</span></p>
+        <h2 class="text-sm font-semibold text-primary-200">Leave Detail Records</h2>
       </div>
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-800">
-          <thead class="bg-gray-950">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">AWOL days (this month)</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-800 bg-gray-900">
-            <tr v-for="(row, i) in awolSummary.rows" :key="`awol-${i}`" class="hover:bg-gray-950">
-              <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name }}</td>
-              <td class="px-4 py-3 text-sm text-gray-300">{{ row.awol_days }}</td>
-            </tr>
-            <tr v-if="!awolSummary.rows.length && !loading">
-              <td colspan="2" class="px-4 py-8 text-center text-sm text-gray-400">No AWOL records for selected range/month.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
-      <div class="border-b border-gray-800 px-4 py-3">
-        <h2 class="text-sm font-semibold text-primary-200">Leave Salary Impact Summary</h2>
-        <p class="mt-1 text-xs text-gray-400">
-          Salary deduction basis uses approved unpaid leave days only.
-        </p>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-800">
-          <thead class="bg-gray-950">
-            <tr>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Approved paid days</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Approved unpaid days</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Pending days</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Deduct salary days</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-800 bg-gray-900">
-            <tr v-for="(row, i) in summaryData" :key="`sum-${i}`" class="hover:bg-gray-950">
-              <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name }}</td>
-              <td class="px-4 py-3 text-sm text-gray-300">{{ row.approved_paid_days }}</td>
-              <td class="px-4 py-3 text-sm text-gray-300">{{ row.approved_unpaid_days }}</td>
-              <td class="px-4 py-3 text-sm text-gray-300">{{ row.pending_days }}</td>
-              <td class="px-4 py-3 text-sm font-semibold text-amber-300">{{ row.deductible_salary_days }}</td>
-            </tr>
-            <tr v-if="!summaryData.length && !loading">
-              <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see summary.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-    <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
       <div v-if="loading" class="flex justify-center py-12">
         <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
       </div>
@@ -411,6 +389,31 @@ const awolSummary = computed(() => {
             </tr>
             <tr v-if="!leaveData.length && !loading">
               <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see data.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
+      <div class="border-b border-gray-800 px-4 py-3">
+        <h2 class="text-sm font-semibold text-primary-200">AWOL Monitoring</h2>
+        <p class="mt-1 text-xs text-gray-400">Active AWOL cases now: <span class="font-semibold text-amber-300">{{ awolSummary.activeNow }}</span></p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-800">
+          <thead class="bg-gray-950">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">AWOL days (this month)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-800 bg-gray-900">
+            <tr v-for="(row, i) in awolSummary.rows" :key="`awol-${i}`" class="hover:bg-gray-950">
+              <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name }}</td>
+              <td class="px-4 py-3 text-sm text-gray-300">{{ row.awol_days }}</td>
+            </tr>
+            <tr v-if="!awolSummary.rows.length && !loading">
+              <td colspan="2" class="px-4 py-8 text-center text-sm text-gray-400">No AWOL records for selected range/month.</td>
             </tr>
           </tbody>
         </table>
