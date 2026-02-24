@@ -360,7 +360,7 @@ async function confirmDelete() {
               <div class="flex justify-end">
                 <button
                   type="button"
-                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/40 bg-red-600/20 text-red-300 transition hover:bg-red-600/30 hover:text-red-200"
+                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-700 bg-transparent text-red-400 transition hover:border-red-500/50 hover:text-red-300"
                   title="Delete leave request"
                   @click="openDeleteModal(row)"
                 >
