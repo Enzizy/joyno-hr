@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS employees (
   position VARCHAR(100),
   shift VARCHAR(20) NOT NULL DEFAULT 'day',
   leave_credits NUMERIC(10,2) NOT NULL DEFAULT 15,
+  leave_credits_reset_year INTEGER NOT NULL DEFAULT EXTRACT(YEAR FROM CURRENT_DATE),
   date_hired DATE,
   status VARCHAR(50) DEFAULT 'active',
   created_at TIMESTAMPTZ DEFAULT NOW(),

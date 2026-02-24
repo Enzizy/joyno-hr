@@ -29,7 +29,7 @@ const entitlementRows = computed(() =>
   leaveStore.leaveTypes.map((type) => ({
     id: type.id,
     name: type.name,
-    paidDays: Number(type.paid_days_per_year || 0),
+    paidDays: Number(type.paid_days_per_request ?? type.paid_days_per_year ?? 0),
     minMonths: Number(type.min_months_employed || 0),
     requiresAttachment: Boolean(type.requires_attachment_for_paid),
     remarks: type.remarks || '',
@@ -204,7 +204,7 @@ async function confirmReject() {
         <li v-for="type in entitlementRows" :key="`ent-${type.id}`">
           <span class="font-medium text-primary-200">{{ type.name }}</span>:
           <template v-if="type.paidDays > 0">
-            {{ type.paidDays }} paid day(s)/year after {{ type.minMonths }} month(s).
+            {{ type.paidDays }} max paid day(s) per request after {{ type.minMonths }} month(s).
           </template>
           <template v-else>Unpaid by default.</template>
           <span v-if="type.requiresAttachment"> Supporting document required for paid leave.</span>

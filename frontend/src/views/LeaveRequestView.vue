@@ -67,54 +67,36 @@ const missingRequiredDocumentForPaid = computed(
   () => Boolean(selectedLeaveType.value?.requires_attachment_for_paid) && !attachment.value
 )
 
-function paidDaysUsedForType(typeName, year) {
-  return myRequests.value
-    .filter((r) => {
-      if (r.status !== 'approved') return false
-      if (!['paid', 'partial_paid'].includes((r.leave_pay_type || '').toLowerCase())) return false
-      if ((r.leave_type_name || '').toLowerCase() !== String(typeName || '').toLowerCase()) return false
-      const startYear = String(r.start_date || '').slice(0, 4)
-      return Number(startYear) === Number(year)
-    })
-    .reduce((sum, r) => sum + Number(r.credits_deducted || 0), 0)
-}
-
-function remainingPaidDays(typeId, date) {
+function paidDaysCap(typeId) {
   const type = leaveTypeMap.value[typeId]
-  if (!type || Number(type.paid_days_per_year || 0) <= 0) return 0
-  const baseDate = date || new Date().toISOString().slice(0, 10)
-  const year = new Date(baseDate).getFullYear()
-  const used = paidDaysUsedForType(type.name, year)
-  return Math.max(0, Number(type.paid_days_per_year || 0) - used)
+  return Number(type?.paid_days_per_request ?? type?.paid_days_per_year ?? 0)
 }
 
 const payTypePreview = computed(() => {
   const type = selectedLeaveType.value
   if (!requestedDays.value || !type) return '-'
-  if (!Number(type.paid_days_per_year || 0)) return 'unpaid'
+  const cap = paidDaysCap(type.id)
+  if (!cap) return 'unpaid'
   if (!isPaidLeaveEligible(authStore.user?.date_hired, form.value.start_date, type.min_months_employed || 0)) {
     return 'unpaid'
   }
   if (missingRequiredDocumentForPaid.value) return 'unpaid'
-  const remaining = remainingPaidDays(type.id, form.value.start_date)
-  if (!remaining) return 'unpaid'
-  if (requestedDays.value <= remaining) return 'paid'
+  const payableDays = Math.min(cap, leaveCreditsAvailable.value)
+  if (!payableDays) return 'unpaid'
+  if (requestedDays.value <= payableDays) return 'paid'
   return 'partial_paid'
 })
 
-const yearlyEntitlements = computed(() => {
-  const year = new Date(form.value.start_date || Date.now()).getFullYear()
+const leaveEntitlements = computed(() => {
   return leaveStore.leaveTypes
-    .filter((type) => Number(type.paid_days_per_year || 0) > 0)
+    .filter((type) => paidDaysCap(type.id) > 0)
     .map((type) => ({
       id: type.id,
       name: type.name,
-      remaining: remainingPaidDays(type.id),
-      total: Number(type.paid_days_per_year || 0),
+      total: paidDaysCap(type.id),
       minMonths: Number(type.min_months_employed || 0),
       requiresAttachment: Boolean(type.requires_attachment_for_paid),
       remarks: type.remarks || '',
-      year,
     }))
 })
 function formatPayType(value) {
@@ -339,8 +321,8 @@ function onEditAttachmentChange(event) {
           Leave credits available:
           <span class="font-semibold text-primary-200">{{ leaveCreditsAvailable.toFixed(2) }}</span>
         </p>
-        <p v-for="ent in yearlyEntitlements" :key="ent.id">
-          {{ ent.name }} ({{ ent.year }}): <span class="font-semibold text-primary-200">{{ ent.remaining }}</span> / {{ ent.total }} paid days remaining
+        <p v-for="ent in leaveEntitlements" :key="ent.id">
+          {{ ent.name }}: <span class="font-semibold text-primary-200">{{ ent.total }}</span> max paid day(s) per request
         </p>
         <p v-if="requestedDays">
           Requested days:
@@ -349,18 +331,21 @@ function onEditAttachmentChange(event) {
           <span class="font-semibold uppercase text-primary-200">{{ formatPayType(payTypePreview) }}</span>.
         </p>
         <p v-if="payTypePreview === 'partial_paid'" class="text-amber-300">
-          This request will use remaining paid days first, then excess days become unpaid.
+          This request will use the paid limit first, then excess days become unpaid.
         </p>
         <p v-if="missingRequiredDocumentForPaid" class="text-amber-300">
           {{ selectedLeaveType?.name }} paid leave requires supporting documents. Without attachment, this request is unpaid.
+        </p>
+        <p class="text-xs text-gray-400">
+          Credits reset to 15 every calendar year. Paid days deduct credits; unpaid days do not.
         </p>
       </div>
       <div class="mb-4 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-xs text-gray-300">
         <p class="mb-2 font-semibold text-primary-200">Leave Entitlements & Conditions</p>
         <ul class="space-y-2">
-          <li v-for="type in yearlyEntitlements" :key="`info-${type.id}`">
+          <li v-for="type in leaveEntitlements" :key="`info-${type.id}`">
             <span class="font-medium text-primary-200">{{ type.name }}</span>:
-            {{ type.total }} paid days/year after {{ type.minMonths }} month(s) of service.
+            {{ type.total }} max paid day(s) per request after {{ type.minMonths }} month(s) of service.
             <span v-if="type.requiresAttachment"> Supporting document required for paid leave.</span>
             <span v-if="type.remarks"> {{ type.remarks }}</span>
           </li>

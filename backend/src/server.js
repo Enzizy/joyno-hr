@@ -31,6 +31,7 @@ const {
 
 const app = express()
 app.set('trust proxy', 1)
+const DEFAULT_LEAVE_CREDITS = 15
 
 const USER_AUTH_COLUMNS = 'id, email, password_hash, role, employee_id, created_at'
 const EMPLOYEE_COLUMNS =
@@ -259,7 +260,7 @@ const LEAVE_TYPES = [
   {
     id: 'vacation_leave',
     name: 'Vacation Leave',
-    paid_days_per_year: 3,
+    paid_days_per_request: 3,
     min_months_employed: 6,
     remarks: 'Annual grant and usage are subject to company approval.',
     aliases: ['vacation'],
@@ -267,7 +268,7 @@ const LEAVE_TYPES = [
   {
     id: 'sick_leave',
     name: 'Sick Leave',
-    paid_days_per_year: 5,
+    paid_days_per_request: 5,
     min_months_employed: 12,
     requires_attachment_for_paid: true,
     remarks: 'Requires a valid medical certificate.',
@@ -276,7 +277,7 @@ const LEAVE_TYPES = [
   {
     id: 'bereavement_leave',
     name: 'Bereavement Leave',
-    paid_days_per_year: 2,
+    paid_days_per_request: 2,
     min_months_employed: 12,
     requires_attachment_for_paid: true,
     remarks:
@@ -286,14 +287,26 @@ const LEAVE_TYPES = [
   {
     id: 'service_incentive_leave',
     name: 'Service Incentive Leave',
-    paid_days_per_year: 5,
+    paid_days_per_request: 5,
     min_months_employed: 12,
     remarks: 'Convertible to cash if unused, based on company policy and labor laws.',
     aliases: ['sil', 'service incentive'],
   },
-  { id: 'leave_of_absence', name: 'Leave of Absence', paid_days_per_year: 0, min_months_employed: 0, aliases: [] },
-  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_year: 0, min_months_employed: 0, aliases: [] },
-  { id: 'emergency_leave', name: 'Emergency Leave', paid_days_per_year: 0, min_months_employed: 0, aliases: ['emergency'] },
+  {
+    id: 'leave_of_absence',
+    name: 'Leave of Absence',
+    paid_days_per_request: 0,
+    min_months_employed: 0,
+    aliases: [],
+  },
+  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_request: 0, min_months_employed: 0, aliases: [] },
+  {
+    id: 'emergency_leave',
+    name: 'Emergency Leave',
+    paid_days_per_request: 0,
+    min_months_employed: 0,
+    aliases: ['emergency'],
+  },
 ]
 
 function resolveLeaveType(value) {
@@ -310,6 +323,37 @@ function resolveLeaveType(value) {
 
 async function ensureSchemaColumns() {
   // Kept for backward compatibility; schema updates now run via migrations.
+}
+
+function currentCreditYear() {
+  return new Date().getFullYear()
+}
+
+async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
+  const id = Number(employeeId)
+  if (!id) return
+  const year = currentCreditYear()
+  await db.query(
+    `UPDATE employees
+     SET leave_credits = $1,
+         leave_credits_reset_year = $2,
+         updated_at = NOW()
+     WHERE id = $3
+       AND COALESCE(leave_credits_reset_year, 0) < $2`,
+    [DEFAULT_LEAVE_CREDITS, year, id]
+  )
+}
+
+async function resetAllEmployeeLeaveCreditsIfNeeded() {
+  const year = currentCreditYear()
+  await db.query(
+    `UPDATE employees
+     SET leave_credits = $1,
+         leave_credits_reset_year = $2,
+         updated_at = NOW()
+     WHERE COALESCE(leave_credits_reset_year, 0) < $2`,
+    [DEFAULT_LEAVE_CREDITS, year]
+  )
 }
 
 function calculateLeaveDays(startDate, endDate) {
@@ -331,38 +375,12 @@ function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
   return leaveStart >= minDate
 }
 
-async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, excludeRequestId = null) {
-  const params = [employeeId, leaveTypeName, String(year)]
-  let sql = `
-    SELECT
-      COALESCE(
-        SUM(
-          CASE
-            WHEN leave_pay_type IN ('paid','partial_paid') THEN COALESCE(credits_deducted, leave_days, 0)
-            ELSE 0
-          END
-        ),
-        0
-      )::numeric AS used_days
-    FROM leave_requests
-    WHERE employee_id = $1
-      AND status = 'approved'
-      AND leave_type_name = $2
-      AND EXTRACT(YEAR FROM start_date) = $3::int
-  `
-  if (excludeRequestId) {
-    params.push(excludeRequestId)
-    sql += ` AND id <> $${params.length}`
-  }
-  const { rows } = await db.query(sql, params)
-  return Number(rows[0]?.used_days || 0)
-}
-
-async function resolveLeaveCompensation(employee, leaveType, startDate, endDate, hasMedicalAttachment = false, excludeRequestId = null) {
+async function resolveLeaveCompensation(employee, leaveType, startDate, endDate, hasMedicalAttachment = false) {
   const leaveDays = calculateLeaveDays(startDate, endDate)
   if (!leaveDays || leaveDays <= 0) return null
 
-  if (!leaveType || !leaveType.paid_days_per_year) {
+  const paidDaysCap = Number(leaveType?.paid_days_per_request || 0)
+  if (!leaveType || paidDaysCap <= 0) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
 
@@ -374,11 +392,8 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
   }
 
-  const leaveYear = new Date(startDate).getFullYear()
-  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, excludeRequestId)
-  const remainingPaidDays = Math.max(0, Number(leaveType.paid_days_per_year) - usedDays)
   const availableCredits = Math.max(0, Number(employee?.leave_credits || 0))
-  const payableDays = Math.min(remainingPaidDays, availableCredits)
+  const payableDays = Math.min(paidDaysCap, availableCredits)
 
   if (payableDays <= 0) {
     return { leaveDays, leavePayType: 'unpaid', creditsDeducted: 0 }
@@ -404,12 +419,15 @@ function signToken(user) {
   )
 }
 
-function authRequired(req, res, next) {
+async function authRequired(req, res, next) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return res.status(401).json({ message: 'Unauthorized' })
   try {
     req.user = jwt.verify(token, JWT_SECRET)
+    if (req.user?.employee_id) {
+      await resetEmployeeLeaveCreditsIfNeeded(req.user.employee_id)
+    }
     return next()
   } catch {
     return res.status(401).json({ message: 'Invalid token' })
@@ -560,12 +578,14 @@ app.delete('/api/users/:id', authRequired, requireRole(['admin', 'hr']), async (
 
 // Employees
 app.get('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  await resetAllEmployeeLeaveCreditsIfNeeded()
   await syncAllEmployeeStatuses()
   const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees ORDER BY created_at DESC`)
   res.json(rows)
 })
 
 app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  await resetEmployeeLeaveCreditsIfNeeded(req.params.id)
   await syncAllEmployeeStatuses()
   const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.params.id])
   if (!rows.length) return res.status(404).json({ message: 'Employee not found' })
@@ -574,11 +594,12 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
-  const leaveCredits = Number(e.leave_credits ?? 15)
+  const leaveCredits = Number(e.leave_credits ?? DEFAULT_LEAVE_CREDITS)
+  const resetYear = currentCreditYear()
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, shift, leave_credits, date_hired, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     (employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_reset_year, date_hired, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      RETURNING id`,
     [
       e.employee_code,
@@ -587,7 +608,8 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
       e.department,
       e.position,
       e.shift || 'day',
-      Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : 15,
+      Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : DEFAULT_LEAVE_CREDITS,
+      resetYear,
       e.date_hired,
       e.status || 'active',
     ]
@@ -601,11 +623,13 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
 app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
   const leaveCredits = Number(e.leave_credits)
-  const safeLeaveCredits = Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : 15
+  const safeLeaveCredits = Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : DEFAULT_LEAVE_CREDITS
+  const resetYear = currentCreditYear()
   await db.query(
     `UPDATE employees
-     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6, leave_credits=$7, date_hired=$8, status=$9
-     WHERE id=$10`,
+     SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6,
+         leave_credits=$7, leave_credits_reset_year=$8, date_hired=$9, status=$10
+     WHERE id=$11`,
     [
       e.employee_code,
       e.first_name,
@@ -614,6 +638,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
       e.position,
       e.shift || 'day',
       safeLeaveCredits,
+      resetYear,
       e.date_hired,
       e.status || 'active',
       req.params.id,
@@ -1704,10 +1729,11 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr']
 app.get('/api/leave-types', authRequired, async (req, res) => {
   res.json(
     LEAVE_TYPES.filter((type) => type.id !== 'awol').map(
-      ({ id, name, paid_days_per_year, min_months_employed, requires_attachment_for_paid, remarks }) => ({
+      ({ id, name, paid_days_per_request, min_months_employed, requires_attachment_for_paid, remarks }) => ({
       id,
       name,
-      paid_days_per_year,
+      paid_days_per_request,
+      paid_days_per_year: paid_days_per_request,
       min_months_employed: Number(min_months_employed || 0),
       requires_attachment_for_paid: Boolean(requires_attachment_for_paid),
       remarks: remarks || '',
@@ -1750,6 +1776,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     return res.status(400).json({ message: 'Missing required fields' })
   }
 
+  await resetEmployeeLeaveCreditsIfNeeded(user.employee_id)
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
@@ -1859,6 +1886,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   if (leaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
   }
+  await resetEmployeeLeaveCreditsIfNeeded(req.user.employee_id)
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
@@ -1876,8 +1904,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     leaveType,
     start_date,
     end_date,
-    Boolean(attachmentData),
-    id
+    Boolean(attachmentData)
   )
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 
@@ -1919,6 +1946,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
 
   const leaveType = resolveLeaveType(leaveRequest.leave_type_name)
   if (!leaveType) return res.status(400).json({ message: 'Invalid leave type on request' })
+  await resetEmployeeLeaveCreditsIfNeeded(leaveRequest.employee_id)
   const employeeResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [leaveRequest.employee_id])
   const employee = employeeResult.rows[0]
   if (!employee) return res.status(404).json({ message: 'Employee not found' })
@@ -1927,8 +1955,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
     leaveType,
     leaveRequest.start_date,
     leaveRequest.end_date,
-    Boolean(leaveRequest.attachment_data),
-    id
+    Boolean(leaveRequest.attachment_data)
   )
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 
