@@ -260,7 +260,7 @@ const LEAVE_TYPES = [
   {
     id: 'vacation_leave',
     name: 'Vacation Leave',
-    paid_days_per_request: 3,
+    paid_days_per_year: 3,
     min_months_employed: 6,
     remarks: 'Annual grant and usage are subject to company approval.',
     aliases: ['vacation'],
@@ -268,7 +268,7 @@ const LEAVE_TYPES = [
   {
     id: 'sick_leave',
     name: 'Sick Leave',
-    paid_days_per_request: 5,
+    paid_days_per_year: 5,
     min_months_employed: 12,
     requires_attachment_for_paid: true,
     remarks: 'Requires a valid medical certificate.',
@@ -277,7 +277,7 @@ const LEAVE_TYPES = [
   {
     id: 'bereavement_leave',
     name: 'Bereavement Leave',
-    paid_days_per_request: 2,
+    paid_days_per_year: 2,
     min_months_employed: 12,
     requires_attachment_for_paid: true,
     remarks:
@@ -287,7 +287,7 @@ const LEAVE_TYPES = [
   {
     id: 'service_incentive_leave',
     name: 'Service Incentive Leave',
-    paid_days_per_request: 5,
+    paid_days_per_year: 5,
     min_months_employed: 12,
     remarks: 'Convertible to cash if unused, based on company policy and labor laws.',
     aliases: ['sil', 'service incentive'],
@@ -295,15 +295,15 @@ const LEAVE_TYPES = [
   {
     id: 'leave_of_absence',
     name: 'Leave of Absence',
-    paid_days_per_request: 0,
+    paid_days_per_year: 0,
     min_months_employed: 0,
     aliases: [],
   },
-  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_request: 0, min_months_employed: 0, aliases: [] },
+  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_year: 0, min_months_employed: 0, aliases: [] },
   {
     id: 'emergency_leave',
     name: 'Emergency Leave',
-    paid_days_per_request: 0,
+    paid_days_per_year: 0,
     min_months_employed: 0,
     aliases: ['emergency'],
   },
@@ -335,7 +335,18 @@ async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
   const year = currentCreditYear()
   await db.query(
     `UPDATE employees
-     SET leave_credits = $1,
+     SET leave_credits = CASE
+           WHEN date_hired IS NULL THEN 0
+           WHEN (
+             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
+             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
+           ) >= 12 THEN 15
+           WHEN (
+             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
+             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
+           ) >= 6 THEN 3
+           ELSE 0
+         END,
          leave_credits_reset_year = $2,
          updated_at = NOW()
      WHERE id = $3
@@ -348,7 +359,18 @@ async function resetAllEmployeeLeaveCreditsIfNeeded() {
   const year = currentCreditYear()
   await db.query(
     `UPDATE employees
-     SET leave_credits = $1,
+     SET leave_credits = CASE
+           WHEN date_hired IS NULL THEN 0
+           WHEN (
+             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
+             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
+           ) >= 12 THEN 15
+           WHEN (
+             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
+             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
+           ) >= 6 THEN 3
+           ELSE 0
+         END,
          leave_credits_reset_year = $2,
          updated_at = NOW()
      WHERE COALESCE(leave_credits_reset_year, 0) < $2`,
@@ -379,7 +401,7 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
   const leaveDays = calculateLeaveDays(startDate, endDate)
   if (!leaveDays || leaveDays <= 0) return null
 
-  const paidDaysCap = Number(leaveType?.paid_days_per_request || 0)
+  const paidDaysCap = Number(leaveType?.paid_days_per_year || 0)
   if (!leaveType || paidDaysCap <= 0) {
     return {
       leaveDays,
@@ -413,8 +435,11 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
     }
   }
 
+  const leaveYear = new Date(startDate).getFullYear()
+  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear)
+  const remainingTypePaidDays = Math.max(0, paidDaysCap - usedDays)
   const availableCredits = Math.max(0, Number(employee?.leave_credits || 0))
-  const payableDays = Math.min(leaveDays, paidDaysCap, availableCredits)
+  const payableDays = Math.min(leaveDays, remainingTypePaidDays, availableCredits)
   const unpaidDays = Math.max(0, leaveDays - payableDays)
 
   if (payableDays <= 0) {
@@ -424,7 +449,7 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
       unpaidDays: leaveDays,
       leavePayType: 'unpaid',
       creditsDeducted: 0,
-      note: `No paid days available due to insufficient leave credits.`,
+      note: `No paid days available. ${leaveType.name} yearly paid limit is already used or credits are insufficient.`,
     }
   }
   if (leaveDays <= payableDays) {
@@ -446,6 +471,33 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
     creditsDeducted: payableDays,
     note: `${payableDays} day(s) paid and ${unpaidDays} day(s) unpaid based on ${leaveType.name} limits and available credits.`,
   }
+}
+
+async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, excludeRequestId = null) {
+  const params = [employeeId, leaveTypeName, String(year)]
+  let sql = `
+    SELECT
+      COALESCE(
+        SUM(
+          CASE
+            WHEN leave_pay_type IN ('paid','partial_paid') THEN COALESCE(credits_deducted, leave_days, 0)
+            ELSE 0
+          END
+        ),
+        0
+      )::numeric AS used_days
+    FROM leave_requests
+    WHERE employee_id = $1
+      AND status = 'approved'
+      AND leave_type_name = $2
+      AND EXTRACT(YEAR FROM start_date) = $3::int
+  `
+  if (excludeRequestId) {
+    params.push(excludeRequestId)
+    sql += ` AND id <> $${params.length}`
+  }
+  const { rows } = await db.query(sql, params)
+  return Number(rows[0]?.used_days || 0)
 }
 
 function signToken(user) {
@@ -637,7 +689,15 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const e = req.body || {}
-  const leaveCredits = Number(e.leave_credits ?? DEFAULT_LEAVE_CREDITS)
+  const leaveCreditsInput = Number(e.leave_credits)
+  const hasLeaveCreditsInput = Number.isFinite(leaveCreditsInput) && leaveCreditsInput >= 0
+  const dateHired = e.date_hired ? new Date(e.date_hired) : null
+  const tenureMonths =
+    dateHired && !Number.isNaN(dateHired.getTime())
+      ? (new Date().getFullYear() - dateHired.getFullYear()) * 12 + (new Date().getMonth() - dateHired.getMonth())
+      : 0
+  const defaultCreditsByTenure = tenureMonths >= 12 ? 15 : tenureMonths >= 6 ? 3 : 0
+  const leaveCredits = hasLeaveCreditsInput ? leaveCreditsInput : defaultCreditsByTenure
   const resetYear = currentCreditYear()
   const { rows } = await db.query(
     `INSERT INTO employees
@@ -651,7 +711,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
       e.department,
       e.position,
       e.shift || 'day',
-      Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : DEFAULT_LEAVE_CREDITS,
+      Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : defaultCreditsByTenure,
       resetYear,
       e.date_hired,
       e.status || 'active',
@@ -1772,11 +1832,10 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr']
 app.get('/api/leave-types', authRequired, async (req, res) => {
   res.json(
     LEAVE_TYPES.filter((type) => type.id !== 'awol').map(
-      ({ id, name, paid_days_per_request, min_months_employed, requires_attachment_for_paid, remarks }) => ({
+      ({ id, name, paid_days_per_year, min_months_employed, requires_attachment_for_paid, remarks }) => ({
       id,
       name,
-      paid_days_per_request,
-      paid_days_per_year: paid_days_per_request,
+      paid_days_per_year,
       min_months_employed: Number(min_months_employed || 0),
       requires_attachment_for_paid: Boolean(requires_attachment_for_paid),
       remarks: remarks || '',
