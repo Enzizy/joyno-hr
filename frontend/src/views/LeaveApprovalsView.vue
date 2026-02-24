@@ -6,7 +6,7 @@ import AppTable from '@/components/ui/AppTable.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
-import trashIcon from '@/assets/icons/trash.svg'
+import trashIcon from '@/assets/icons/trash.svg?raw'
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
 const leaveStore = useLeaveStore()
@@ -364,7 +364,7 @@ async function confirmDelete() {
                   title="Delete leave request"
                   @click="openDeleteModal(row)"
                 >
-                  <img :src="trashIcon" alt="Delete" class="h-4 w-4" />
+                  <span class="trash-icon" aria-hidden="true" v-html="trashIcon" />
                 </button>
               </div>
             </template>
@@ -447,5 +447,17 @@ async function confirmDelete() {
     </AppModal>
   </div>
 </template>
+
+<style scoped>
+.trash-icon :deep(svg) {
+  width: 1rem;
+  height: 1rem;
+  display: block;
+}
+
+.trash-icon :deep(path) {
+  fill: currentColor;
+}
+</style>
 
 
