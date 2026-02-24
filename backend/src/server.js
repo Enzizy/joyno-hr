@@ -518,15 +518,21 @@ async function authRequired(req, res, next) {
   const header = req.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : null
   if (!token) return res.status(401).json({ message: 'Unauthorized' })
+  let decoded
   try {
-    req.user = jwt.verify(token, JWT_SECRET)
-    if (req.user?.employee_id) {
-      await resetEmployeeLeaveCreditsIfNeeded(req.user.employee_id)
-    }
-    return next()
+    decoded = jwt.verify(token, JWT_SECRET)
   } catch {
     return res.status(401).json({ message: 'Invalid token' })
   }
+  req.user = decoded
+  if (req.user?.employee_id) {
+    try {
+      await resetEmployeeLeaveCreditsIfNeeded(req.user.employee_id)
+    } catch (err) {
+      console.error('Failed to run leave credit reset check', err)
+    }
+  }
+  return next()
 }
 
 function requireRole(roles) {
