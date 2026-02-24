@@ -6,6 +6,7 @@ import AppTable from '@/components/ui/AppTable.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
+import trashIcon from '@/assets/icons/trash.svg'
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
 const leaveStore = useLeaveStore()
@@ -353,12 +354,18 @@ async function confirmDelete() {
               <div class="flex justify-end gap-1">
                 <AppButton variant="success" size="sm" @click="approve(row)">Approve</AppButton>
                 <AppButton variant="danger" size="sm" @click="openRejectModal(row)">Reject</AppButton>
-                <AppButton variant="danger" size="sm" @click="openDeleteModal(row)">Delete</AppButton>
               </div>
             </template>
             <template v-else>
               <div class="flex justify-end">
-                <AppButton variant="danger" size="sm" @click="openDeleteModal(row)">Delete</AppButton>
+                <button
+                  type="button"
+                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/40 bg-red-600/20 text-red-300 transition hover:bg-red-600/30 hover:text-red-200"
+                  title="Delete leave request"
+                  @click="openDeleteModal(row)"
+                >
+                  <img :src="trashIcon" alt="Delete" class="h-4 w-4" />
+                </button>
               </div>
             </template>
           </td>
