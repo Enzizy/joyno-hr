@@ -33,6 +33,8 @@ const {
 const app = express()
 app.set('trust proxy', 1)
 const DEFAULT_LEAVE_CREDITS = 15
+let dbReady = false
+let backgroundJobsStarted = false
 
 const USER_AUTH_COLUMNS = 'id, email, password_hash, role, employee_id, created_at'
 const EMPLOYEE_COLUMNS =
@@ -770,7 +772,10 @@ function isRuleExpired(rule) {
 }
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok' })
+  if (!dbReady) {
+    return res.status(503).json({ status: 'starting', database: 'disconnected' })
+  }
+  return res.json({ status: 'ok', database: 'connected' })
 })
 
 // Auth
@@ -2690,23 +2695,42 @@ app.get('/api/audit-logs', authRequired, requireRole(['admin', 'hr']), async (re
 })
 
 const PORT = process.env.PORT || 3000
+const DB_RETRY_MS = Number(process.env.DB_RETRY_MS || 15000)
 
-async function startServer() {
-  await runMigrations()
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`API running on port ${PORT}`)
-    runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
-    setInterval(() => {
-      runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
-    }, 60 * 60 * 1000)
-    cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
-    setInterval(() => {
-      cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
-    }, 24 * 60 * 60 * 1000)
-  })
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server', err)
-  process.exit(1)
+async function ensureDatabaseReadyWithRetry() {
+  while (true) {
+    try {
+      await runMigrations()
+      dbReady = true
+      console.log('Database connection ready')
+      if (!backgroundJobsStarted) {
+        backgroundJobsStarted = true
+        runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
+        setInterval(() => {
+          runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
+        }, 60 * 60 * 1000)
+        cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
+        setInterval(() => {
+          cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
+        }, 24 * 60 * 60 * 1000)
+      }
+      return
+    } catch (err) {
+      dbReady = false
+      console.error(`Database startup failed, retrying in ${DB_RETRY_MS}ms`, err?.message || err)
+      await sleep(DB_RETRY_MS)
+    }
+  }
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`API running on port ${PORT}`)
+  ensureDatabaseReadyWithRetry().catch((err) => {
+    dbReady = false
+    console.error('Unexpected database bootstrap failure', err)
+  })
 })
