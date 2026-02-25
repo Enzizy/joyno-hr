@@ -151,6 +151,22 @@ function buildBrandedEmailHtml({ subject, text }) {
 </html>`
 }
 
+function formatEmailDate(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatEmailDateRange(start, end) {
+  if (!start && !end) return '-'
+  return `${formatEmailDate(start)} - ${formatEmailDate(end)}`
+}
+
 function getMailTransport() {
   if (!SMTP_USER || !SMTP_PASS) return null
   if (mailTransport) return mailTransport
@@ -2347,7 +2363,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
       '',
       `Your leave request has been approved.`,
       `Type: ${approvedRequest?.leave_type_name || '-'}`,
-      `Dates: ${approvedRequest?.start_date || '-'} to ${approvedRequest?.end_date || '-'}`,
+      `Dates: ${formatEmailDateRange(approvedRequest?.start_date, approvedRequest?.end_date)}`,
       `Paid days: ${Number(approvedRequest?.paid_days || 0)}`,
       `Unpaid days: ${Number(approvedRequest?.unpaid_days || 0)}`,
     ].join('\n'),
