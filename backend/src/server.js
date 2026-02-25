@@ -88,8 +88,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
 const SMTP_USER = (process.env.SMTP_USER || '').trim()
 const SMTP_PASS = (process.env.SMTP_PASS || '').trim()
 const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
-const RESEND_API_KEY = (process.env.RESEND_API_KEY || '').trim()
-const RESEND_FROM = (process.env.RESEND_FROM || SMTP_FROM || '').trim()
+const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim()
+const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim()
+const BREVO_FROM_NAME = (process.env.BREVO_FROM_NAME || '').trim()
 let mailTransport = null
 
 function getMailTransport() {
@@ -123,24 +124,27 @@ function sendEmailNotification({ to, subject, text, html = null }) {
   if (!to || !subject || !text) return
   setImmediate(async () => {
     try {
-      if (RESEND_API_KEY && RESEND_FROM) {
-        const response = await fetch('https://api.resend.com/emails', {
+      if (BREVO_API_KEY && BREVO_FROM_EMAIL) {
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${RESEND_API_KEY}`,
+            'api-key': BREVO_API_KEY,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            from: RESEND_FROM,
-            to: [to],
+            sender: {
+              email: BREVO_FROM_EMAIL,
+              ...(BREVO_FROM_NAME ? { name: BREVO_FROM_NAME } : {}),
+            },
+            to: [{ email: to }],
             subject,
-            text,
-            ...(html ? { html } : {}),
+            textContent: text,
+            ...(html ? { htmlContent: html } : {}),
           }),
         })
         if (!response.ok) {
           const errText = await response.text()
-          throw new Error(`Resend API error ${response.status}: ${errText}`)
+          throw new Error(`Brevo API error ${response.status}: ${errText}`)
         }
         return
       }
