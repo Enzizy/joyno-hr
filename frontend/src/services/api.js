@@ -59,6 +59,14 @@ export async function markManyNotificationsRead(ids = []) {
   return request('/api/notifications/read-many', { method: 'POST', body: JSON.stringify({ ids }) })
 }
 
+export async function deleteNotification(id) {
+  return request(`/api/notifications/${id}`, { method: 'DELETE' })
+}
+
+export async function deleteManyNotifications(ids = []) {
+  return request('/api/notifications/delete-many', { method: 'POST', body: JSON.stringify({ ids }) })
+}
+
 export async function cleanupNotifications(days = 90) {
   return request('/api/notifications/cleanup', { method: 'POST', body: JSON.stringify({ days }) })
 }

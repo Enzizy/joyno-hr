@@ -5,6 +5,8 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
   markManyNotificationsRead,
+  deleteNotification,
+  deleteManyNotifications,
   cleanupNotifications,
 } from '@/services/backendService'
 
@@ -83,6 +85,32 @@ export const useNotificationStore = defineStore('notification', () => {
     return cleanupNotifications(days)
   }
 
+  async function remove(id) {
+    const result = await deleteNotification(id)
+    const idx = items.value.findIndex((item) => Number(item.id) === Number(id))
+    if (idx !== -1) {
+      const removed = items.value[idx]
+      items.value.splice(idx, 1)
+      total.value = Math.max(0, total.value - 1)
+      if (removed && !removed.is_read) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    } else if (result && result.is_read === false) {
+      unreadCount.value = Math.max(0, unreadCount.value - 1)
+    }
+    return result
+  }
+
+  async function removeMany(ids = []) {
+    if (!ids.length) return { deleted: 0, unreadDeleted: 0 }
+    const result = await deleteManyNotifications(ids)
+    const idSet = new Set(ids.map((id) => Number(id)))
+    const before = items.value.length
+    items.value = items.value.filter((item) => !idSet.has(Number(item.id)))
+    const removedCount = before - items.value.length
+    total.value = Math.max(0, total.value - removedCount)
+    unreadCount.value = Math.max(0, unreadCount.value - Number(result.unreadDeleted || 0))
+    return result
+  }
+
   return {
     items,
     total,
@@ -95,5 +123,7 @@ export const useNotificationStore = defineStore('notification', () => {
     markAllRead,
     markManyRead,
     runCleanup,
+    remove,
+    removeMany,
   }
 })

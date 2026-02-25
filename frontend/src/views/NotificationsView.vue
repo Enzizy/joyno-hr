@@ -14,6 +14,17 @@ const pageSize = ref(20)
 const typeFilter = ref('')
 const unreadOnly = ref(false)
 const selectedIds = ref([])
+const TYPE_LABELS = {
+  leave_pending: 'Leave: Pending Approval',
+  leave_approved: 'Leave: Approved',
+  leave_rejected: 'Leave: Rejected',
+  task_assigned: 'Task: Assigned',
+  task_completed: 'Task: Completed',
+  task_sla_24h: 'Task: Overdue 24h',
+  task_sla_48h: 'Task: Overdue 48h',
+  leave_sla_24h: 'Leave: Pending 24h',
+  leave_sla_48h: 'Leave: Pending 48h',
+}
 
 const totalPages = computed(() => Math.max(1, Math.ceil((store.total || 0) / pageSize.value)))
 const canManageNotifications = computed(() => ['admin', 'hr'].includes(authStore.role))
@@ -52,6 +63,14 @@ function resolveLink(item) {
   if (item.target_table === 'leads') return '/leads'
   if (item.target_table === 'automation_rules') return '/automation'
   return null
+}
+
+function formatType(type) {
+  if (!type) return '-'
+  if (TYPE_LABELS[type]) return TYPE_LABELS[type]
+  return String(type)
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
 async function load() {
@@ -99,6 +118,20 @@ async function runCleanup() {
   await load()
 }
 
+async function deleteItem(item) {
+  const ok = window.confirm('Delete this notification?')
+  if (!ok) return
+  await store.remove(item.id)
+}
+
+async function deleteSelected() {
+  if (!selectedIds.value.length) return
+  const ok = window.confirm(`Delete ${selectedIds.value.length} selected notification(s)?`)
+  if (!ok) return
+  await store.removeMany(selectedIds.value)
+  selectedIds.value = []
+}
+
 async function openItem(item) {
   if (!item.is_read) await store.markRead(item.id)
   const link = resolveLink(item)
@@ -130,7 +163,7 @@ onMounted(load)
           @change="page = 1; load()"
         >
           <option value="">All types</option>
-          <option v-for="type in typeOptions" :key="type" :value="type">{{ type }}</option>
+          <option v-for="type in typeOptions" :key="type" :value="type">{{ formatType(type) }}</option>
         </select>
       </div>
       <label class="inline-flex items-center gap-2 text-sm text-gray-300">
@@ -138,6 +171,7 @@ onMounted(load)
         Unread only
       </label>
       <AppButton variant="secondary" :disabled="!hasSelection" @click="markSelectedRead">Mark selected read</AppButton>
+      <AppButton variant="danger" :disabled="!hasSelection" @click="deleteSelected">Delete selected</AppButton>
     </div>
 
     <AppTable :loading="store.loading">
@@ -167,14 +201,15 @@ onMounted(load)
               {{ item.is_read ? 'Read' : 'Unread' }}
             </span>
           </td>
-          <td class="px-4 py-3 text-sm text-gray-400">{{ item.type || '-' }}</td>
+          <td class="px-4 py-3 text-sm text-gray-400">{{ formatType(item.type) }}</td>
           <td class="px-4 py-3 text-sm text-primary-200">{{ item.title }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ item.message || '-' }}</td>
           <td class="px-4 py-3 text-sm text-gray-400">{{ formatDate(item.created_at) }}</td>
           <td class="px-4 py-3 text-right">
-            <AppButton size="sm" variant="ghost" @click="openItem(item)">
-              Open
-            </AppButton>
+            <div class="flex justify-end gap-2">
+              <AppButton size="sm" variant="ghost" @click="openItem(item)">Open</AppButton>
+              <AppButton size="sm" variant="danger" @click="deleteItem(item)">Delete</AppButton>
+            </div>
           </td>
         </tr>
         <tr v-if="!store.items.length && !store.loading">

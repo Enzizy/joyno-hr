@@ -2071,6 +2071,36 @@ app.post('/api/notifications/read-all', authRequired, async (req, res) => {
   res.json({ message: 'All notifications marked as read' })
 })
 
+app.delete('/api/notifications/:id', authRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid notification id' })
+  const { rows } = await db.query(
+    `DELETE FROM notifications
+     WHERE id = $1 AND user_id = $2
+     RETURNING id, is_read`,
+    [id, req.user.id]
+  )
+  if (!rows.length) return res.status(404).json({ message: 'Notification not found' })
+  res.json({ id: rows[0].id, is_read: rows[0].is_read })
+})
+
+app.post('/api/notifications/delete-many', authRequired, async (req, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+    : []
+  if (!ids.length) return res.status(400).json({ message: 'No notification ids provided' })
+
+  const { rows } = await db.query(
+    `DELETE FROM notifications
+     WHERE user_id = $1
+       AND id = ANY($2::int[])
+     RETURNING id, is_read`,
+    [req.user.id, ids]
+  )
+  const unreadDeleted = rows.filter((row) => !row.is_read).length
+  res.json({ deleted: rows.length, unreadDeleted })
+})
+
 app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const days = Number(req.body?.days || 90)
   await cleanupOldNotifications(days)

@@ -116,6 +116,14 @@ export async function markManyNotificationsRead(ids = []) {
   return api.markManyNotificationsRead(ids)
 }
 
+export async function deleteNotification(id) {
+  return api.deleteNotification(id)
+}
+
+export async function deleteManyNotifications(ids = []) {
+  return api.deleteManyNotifications(ids)
+}
+
 export async function cleanupNotifications(days = 90) {
   return api.cleanupNotifications(days)
 }
