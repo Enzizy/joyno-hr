@@ -2254,6 +2254,34 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     targetTable: 'leave_requests',
     targetId: createdId,
   })
+  const approverEmailResult = await db.query(
+    `SELECT DISTINCT u.email
+     FROM users u
+     WHERE u.role IN ('admin', 'hr')
+       AND u.employee_id IS NOT NULL
+       AND u.email IS NOT NULL
+       AND u.email <> ''`
+  )
+  const approverEmails = approverEmailResult.rows.map((row) => String(row.email || '').trim()).filter(Boolean)
+  const leaveApprovalsUrl = PRIMARY_FRONTEND_ORIGIN ? `${PRIMARY_FRONTEND_ORIGIN}/leave-approvals` : ''
+  for (const email of approverEmails) {
+    await sendEmailNotification({
+      to: email,
+      subject: `New Leave Request: ${emp.first_name} ${emp.last_name}`,
+      text:
+        `Hi,\n\n` +
+        `A new leave request was submitted and needs review.\n` +
+        `Employee: ${emp.first_name} ${emp.last_name}\n` +
+        `Type: ${leaveType.name}\n` +
+        `Dates: ${formatEmailDateRange(start_date, end_date)}\n` +
+        `Pay: ${String(compensation.leavePayType || '').toUpperCase()}\n` +
+        `Paid days: ${compensation.paidDays}\n` +
+        `Unpaid days: ${compensation.unpaidDays}\n` +
+        `Reason: ${reason}\n` +
+        (leaveApprovalsUrl ? `\nOpen leave approvals: ${leaveApprovalsUrl}\n` : '\n') +
+        `\n- Joyno HR`,
+    })
+  }
   await addAuditLog(req.user.id, 'create_leave_request', 'leave_requests', createdId)
   const created = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [createdId])
   res.json({ ...(created.rows[0] || { id: createdId }), compensation_message: compensation.note || null })
