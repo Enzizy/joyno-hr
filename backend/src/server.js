@@ -93,6 +93,13 @@ const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
 const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim()
 const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim()
 const BREVO_FROM_NAME = (process.env.BREVO_FROM_NAME || '').trim()
+const PRIMARY_FRONTEND_ORIGIN = FRONTEND_ORIGIN.split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)[0]
+const EMAIL_LOGO_URL = (
+  process.env.EMAIL_LOGO_URL ||
+  (PRIMARY_FRONTEND_ORIGIN ? `${PRIMARY_FRONTEND_ORIGIN}/joynomedia-logo.png` : 'https://joyno-hr.pages.dev/joynomedia-logo.png')
+).trim()
 let mailTransport = null
 
 function escapeHtml(value) {
@@ -128,8 +135,21 @@ function buildBrandedEmailHtml({ subject, text }) {
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
             <tr>
               <td style="background:#111827;padding:18px 22px;">
-                <div style="font-size:18px;font-weight:700;color:#fbbf24;letter-spacing:0.2px;">${appName}</div>
-                <div style="margin-top:4px;font-size:12px;color:#9ca3af;">Employee & Operations Notification</div>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                  <tr>
+                    <td style="vertical-align:top;">
+                      <div style="font-size:18px;font-weight:700;color:#fbbf24;letter-spacing:0.2px;">${appName}</div>
+                      <div style="margin-top:4px;font-size:12px;color:#9ca3af;">Employee & Operations Notification</div>
+                    </td>
+                    <td align="right" style="vertical-align:top;">
+                      ${
+                        EMAIL_LOGO_URL
+                          ? `<img src="${escapeHtml(EMAIL_LOGO_URL)}" alt="${appName} Logo" width="36" style="display:block;opacity:.45;max-width:36px;height:auto;" />`
+                          : ''
+                      }
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
             <tr>
