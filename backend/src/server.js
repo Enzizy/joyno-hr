@@ -93,6 +93,64 @@ const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim()
 const BREVO_FROM_NAME = (process.env.BREVO_FROM_NAME || '').trim()
 let mailTransport = null
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function buildBrandedEmailHtml({ subject, text }) {
+  const appName = 'Joyno HR'
+  const lines = String(text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const body = lines
+    .map((line) => `<p style="margin:0 0 10px;color:#1f2937;font-size:14px;line-height:1.55;">${escapeHtml(line)}</p>`)
+    .join('')
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${escapeHtml(subject)}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f4f6;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+            <tr>
+              <td style="background:#111827;padding:18px 22px;">
+                <div style="font-size:18px;font-weight:700;color:#fbbf24;letter-spacing:0.2px;">${appName}</div>
+                <div style="margin-top:4px;font-size:12px;color:#9ca3af;">Employee & Operations Notification</div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px;">
+                <h2 style="margin:0 0 14px;color:#111827;font-size:20px;line-height:1.3;">${escapeHtml(subject)}</h2>
+                ${body || '<p style="margin:0;color:#374151;font-size:14px;">No details provided.</p>'}
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 22px;border-top:1px solid #e5e7eb;background:#f9fafb;">
+                <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.5;">
+                  This is an automated message from ${appName}. Please do not reply directly.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`
+}
+
 function getMailTransport() {
   if (!SMTP_USER || !SMTP_PASS) return null
   if (mailTransport) return mailTransport
@@ -122,6 +180,7 @@ function getMailTransport() {
 
 function sendEmailNotification({ to, subject, text, html = null }) {
   if (!to || !subject || !text) return
+  const finalHtml = html || buildBrandedEmailHtml({ subject, text })
   setImmediate(async () => {
     try {
       if (BREVO_API_KEY && BREVO_FROM_EMAIL) {
@@ -139,7 +198,7 @@ function sendEmailNotification({ to, subject, text, html = null }) {
             to: [{ email: to }],
             subject,
             textContent: text,
-            ...(html ? { htmlContent: html } : {}),
+            htmlContent: finalHtml,
           }),
         })
         if (!response.ok) {
@@ -156,7 +215,7 @@ function sendEmailNotification({ to, subject, text, html = null }) {
         to,
         subject,
         text,
-        ...(html ? { html } : {}),
+        html: finalHtml,
       })
     } catch (error) {
       console.error('Email notification failed:', error.message || error)
