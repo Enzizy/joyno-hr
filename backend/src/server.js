@@ -93,6 +93,7 @@ const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
 const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim()
 const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim()
 const BREVO_FROM_NAME = (process.env.BREVO_FROM_NAME || '').trim()
+const MAIL_APP_NAME = (process.env.MAIL_APP_NAME || BREVO_FROM_NAME || 'Joyno HR').trim()
 const PRIMARY_FRONTEND_ORIGIN = FRONTEND_ORIGIN.split(',')
   .map((origin) => origin.trim())
   .filter(Boolean)[0]
@@ -112,7 +113,7 @@ function escapeHtml(value) {
 }
 
 function buildBrandedEmailHtml({ subject, text }) {
-  const appName = 'Joyno HR'
+  const appName = MAIL_APP_NAME || 'Joyno HR'
   const lines = String(text || '')
     .split('\n')
     .map((line) => line.trim())
@@ -2279,7 +2280,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
         `Unpaid days: ${compensation.unpaidDays}\n` +
         `Reason: ${reason}\n` +
         (leaveApprovalsUrl ? `\nOpen leave approvals: ${leaveApprovalsUrl}\n` : '\n') +
-        `\n- Joyno HR`,
+        `\n- ${MAIL_APP_NAME || 'Joyno HR'}`,
     })
   }
   await addAuditLog(req.user.id, 'create_leave_request', 'leave_requests', createdId)
