@@ -15,6 +15,7 @@ import {
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
+import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 
 const toast = useToastStore()
 const loading = ref(false)
@@ -27,6 +28,8 @@ const showModal = ref(false)
 const editingRule = ref(null)
 const saving = ref(false)
 const actionLoadingId = ref(null)
+const showDeleteModal = ref(false)
+const deletingRule = ref(null)
 
 const scheduleOptions = [
   { value: 'daily', label: 'Daily' },
@@ -279,11 +282,18 @@ async function runNow(rule) {
 }
 
 async function removeRule(rule) {
-  if (!confirm(`Delete automation rule "${rule.rule_name}"?`)) return
-  actionLoadingId.value = rule.id
+  deletingRule.value = rule
+  showDeleteModal.value = true
+}
+
+async function confirmRemoveRule() {
+  if (!deletingRule.value) return
+  actionLoadingId.value = deletingRule.value.id
   try {
-    await deleteAutomationRule(rule.id)
+    await deleteAutomationRule(deletingRule.value.id)
     toast.success('Rule deleted.')
+    showDeleteModal.value = false
+    deletingRule.value = null
     await loadPage()
   } catch (err) {
     toast.error(err.message || 'Failed to delete rule.')
@@ -424,4 +434,19 @@ async function removeRule(rule) {
       <AppButton :loading="saving" @click="saveRule">{{ editingRule ? 'Update Rule' : 'Create Rule' }}</AppButton>
     </template>
   </AppModal>
+
+  <AppConfirmModal
+    :show="showDeleteModal"
+    title="Delete automation rule"
+    :message="`Delete automation rule ${deletingRule?.rule_name || ''}? This cannot be undone.`"
+    confirm-text="Delete"
+    :loading="Boolean(deletingRule && actionLoadingId === deletingRule.id)"
+    @close="
+      () => {
+        showDeleteModal = false
+        deletingRule = null
+      }
+    "
+    @confirm="confirmRemoveRule"
+  />
 </template>

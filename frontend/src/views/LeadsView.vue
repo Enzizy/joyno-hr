@@ -13,6 +13,7 @@ import {
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 
 const toast = useToastStore()
 const loading = ref(false)
@@ -28,6 +29,8 @@ const showLeadModal = ref(false)
 const editingLead = ref(null)
 const savingLead = ref(false)
 const deletingLeadId = ref(null)
+const showDeleteModal = ref(false)
+const deletingLead = ref(null)
 const openingConversationLeadId = ref(null)
 
 const showConversationModal = ref(false)
@@ -238,11 +241,18 @@ async function saveLead() {
 
 async function removeLead(row) {
   moreOpenId.value = null
-  if (!confirm(`Delete lead ${row.company_name}?`)) return
-  deletingLeadId.value = row.id
+  deletingLead.value = row
+  showDeleteModal.value = true
+}
+
+async function confirmRemoveLead() {
+  if (!deletingLead.value) return
+  deletingLeadId.value = deletingLead.value.id
   try {
-    await deleteLead(row.id)
+    await deleteLead(deletingLead.value.id)
     toast.success('Lead deleted.')
+    showDeleteModal.value = false
+    deletingLead.value = null
     await loadLeads()
   } catch (err) {
     toast.error(err.message || 'Failed to delete lead.')
@@ -582,4 +592,19 @@ async function confirmConvert() {
       <AppButton :loading="Boolean(convertingLeadId)" @click="confirmConvert">Convert to Client</AppButton>
     </template>
   </AppModal>
+
+  <AppConfirmModal
+    :show="showDeleteModal"
+    title="Delete lead"
+    :message="`Delete lead ${deletingLead?.company_name || ''}? This cannot be undone.`"
+    confirm-text="Delete"
+    :loading="deletingLeadId !== null"
+    @close="
+      () => {
+        showDeleteModal = false
+        deletingLead = null
+      }
+    "
+    @confirm="confirmRemoveLead"
+  />
 </template>

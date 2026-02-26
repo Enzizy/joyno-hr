@@ -4,6 +4,7 @@ import { useNotificationStore } from '@/stores/notificationStore'
 import { useAuthStore } from '@/stores/authStore'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppTable from '@/components/ui/AppTable.vue'
+import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -14,6 +15,10 @@ const pageSize = ref(20)
 const typeFilter = ref('')
 const unreadOnly = ref(false)
 const selectedIds = ref([])
+const showDeleteModal = ref(false)
+const deleteMode = ref('single')
+const deletingNotification = ref(null)
+const deletingLoading = ref(false)
 const TYPE_LABELS = {
   leave_pending: 'Leave: Pending Approval',
   leave_approved: 'Leave: Approved',
@@ -118,18 +123,34 @@ async function runCleanup() {
   await load()
 }
 
-async function deleteItem(item) {
-  const ok = window.confirm('Delete this notification?')
-  if (!ok) return
-  await store.remove(item.id)
+function requestDeleteItem(item) {
+  deleteMode.value = 'single'
+  deletingNotification.value = item
+  showDeleteModal.value = true
 }
 
-async function deleteSelected() {
+function requestDeleteSelected() {
   if (!selectedIds.value.length) return
-  const ok = window.confirm(`Delete ${selectedIds.value.length} selected notification(s)?`)
-  if (!ok) return
-  await store.removeMany(selectedIds.value)
-  selectedIds.value = []
+  deleteMode.value = 'multiple'
+  deletingNotification.value = null
+  showDeleteModal.value = true
+}
+
+async function confirmDelete() {
+  deletingLoading.value = true
+  try {
+    if (deleteMode.value === 'single' && deletingNotification.value) {
+      await store.remove(deletingNotification.value.id)
+    } else if (deleteMode.value === 'multiple' && selectedIds.value.length) {
+      await store.removeMany(selectedIds.value)
+      selectedIds.value = []
+    }
+    showDeleteModal.value = false
+  } finally {
+    deletingLoading.value = false
+    deletingNotification.value = null
+    deleteMode.value = 'single'
+  }
 }
 
 async function openItem(item) {
@@ -171,7 +192,7 @@ onMounted(load)
         Unread only
       </label>
       <AppButton variant="secondary" :disabled="!hasSelection" @click="markSelectedRead">Mark selected read</AppButton>
-      <AppButton variant="danger" :disabled="!hasSelection" @click="deleteSelected">Delete selected</AppButton>
+      <AppButton variant="danger" :disabled="!hasSelection" @click="requestDeleteSelected">Delete selected</AppButton>
     </div>
 
     <AppTable :loading="store.loading">
@@ -208,7 +229,7 @@ onMounted(load)
           <td class="px-4 py-3 text-right">
             <div class="flex justify-end gap-2">
               <AppButton size="sm" variant="ghost" @click="openItem(item)">Open</AppButton>
-              <AppButton size="sm" variant="danger" @click="deleteItem(item)">Delete</AppButton>
+              <AppButton size="sm" variant="danger" @click="requestDeleteItem(item)">Delete</AppButton>
             </div>
           </td>
         </tr>
@@ -235,5 +256,19 @@ onMounted(load)
         &rarr;
       </button>
     </div>
+
+    <AppConfirmModal
+      :show="showDeleteModal"
+      title="Delete notification"
+      :message="
+        deleteMode === 'single'
+          ? 'Delete this notification? This cannot be undone.'
+          : `Delete ${selectedIds.length} selected notification(s)? This cannot be undone.`
+      "
+      confirm-text="Delete"
+      :loading="deletingLoading"
+      @close="showDeleteModal = false"
+      @confirm="confirmDelete"
+    />
   </div>
 </template>

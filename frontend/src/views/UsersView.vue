@@ -5,6 +5,7 @@ import { useToastStore } from '@/stores/toastStore'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
@@ -13,6 +14,9 @@ const employees = ref([])
 const loading = ref(false)
 const toast = useToastStore()
 const showModal = ref(false)
+const showDeleteModal = ref(false)
+const deletingUser = ref(null)
+const deletingUserLoading = ref(false)
 const submitting = ref(false)
 const form = ref({
   email: '',
@@ -77,14 +81,24 @@ async function createUser() {
   }
 }
 
-async function removeUser(row) {
-  if (!confirm(`Delete user ${row.email}?`)) return
+function requestRemoveUser(row) {
+  deletingUser.value = row
+  showDeleteModal.value = true
+}
+
+async function removeUser() {
+  if (!deletingUser.value) return
+  deletingUserLoading.value = true
   try {
-    await deleteUserApi(row.id)
+    await deleteUserApi(deletingUser.value.id)
     toast.success('User deleted.')
     load()
+    showDeleteModal.value = false
+    deletingUser.value = null
   } catch (err) {
     toast.error(err.response?.data?.message || err.message || 'Failed to delete user.')
+  } finally {
+    deletingUserLoading.value = false
   }
 }
 </script>
@@ -120,7 +134,7 @@ async function removeUser(row) {
             <span v-else>-</span>
           </td>
           <td class="px-4 py-3 text-right">
-            <AppButton variant="danger" size="sm" @click="removeUser(row)">Delete</AppButton>
+            <AppButton variant="danger" size="sm" @click="requestRemoveUser(row)">Delete</AppButton>
           </td>
         </tr>
         <tr v-if="!list.length && !loading">
@@ -164,6 +178,21 @@ async function removeUser(row) {
         <AppButton :loading="submitting" @click="createUser">Create user</AppButton>
       </template>
     </AppModal>
+
+    <AppConfirmModal
+      :show="showDeleteModal"
+      title="Delete user"
+      :message="`Delete user ${deletingUser?.email || ''}? This cannot be undone.`"
+      confirm-text="Delete"
+      :loading="deletingUserLoading"
+      @close="
+        () => {
+          showDeleteModal = false
+          deletingUser = null
+        }
+      "
+      @confirm="removeUser"
+    />
   </div>
 </template>
 

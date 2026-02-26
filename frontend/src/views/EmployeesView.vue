@@ -6,12 +6,16 @@ import { setEmployeeAwol as setEmployeeAwolApi } from '@/services/backendService
 import AppButton from '@/components/ui/AppButton.vue'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 
 const employeeStore = useEmployeeStore()
 const toast = useToastStore()
 const showModal = ref(false)
+const showDeleteModal = ref(false)
+const deletingEmployee = ref(null)
+const deletingEmployeeLoading = ref(false)
 const editingId = ref(null)
 const awolModal = ref(false)
 const awolSubmitting = ref(false)
@@ -109,13 +113,23 @@ async function save() {
   }
 }
 
-async function remove(row) {
-  if (!confirm(`Delete employee ${row.first_name} ${row.last_name}?`)) return
+function requestRemove(row) {
+  deletingEmployee.value = row
+  showDeleteModal.value = true
+}
+
+async function confirmRemove() {
+  if (!deletingEmployee.value) return
+  deletingEmployeeLoading.value = true
   try {
-    await employeeStore.remove(row.id)
+    await employeeStore.remove(deletingEmployee.value.id)
     toast.success('Employee deleted.')
+    showDeleteModal.value = false
+    deletingEmployee.value = null
   } catch (err) {
     toast.error(err.response?.data?.message || 'Failed to delete.')
+  } finally {
+    deletingEmployeeLoading.value = false
   }
 }
 
@@ -246,7 +260,7 @@ async function submitAwol() {
           <td class="px-4 py-3 text-right">
             <AppButton variant="secondary" size="sm" @click="openAwol(row)">Set AWOL</AppButton>
             <AppButton variant="ghost" size="sm" class="ml-1" @click="openEdit(row)">Edit</AppButton>
-            <AppButton variant="danger" size="sm" class="ml-1" @click="remove(row)">Delete</AppButton>
+            <AppButton variant="danger" size="sm" class="ml-1" @click="requestRemove(row)">Delete</AppButton>
           </td>
         </tr>
         <tr v-if="!filteredEmployees.length && !employeeStore.loading">
@@ -331,6 +345,21 @@ async function submitAwol() {
         <AppButton :loading="awolSubmitting" @click="submitAwol">Set AWOL</AppButton>
       </template>
     </AppModal>
+
+    <AppConfirmModal
+      :show="showDeleteModal"
+      title="Delete employee"
+      :message="`Delete employee ${deletingEmployee?.first_name || ''} ${deletingEmployee?.last_name || ''}? This cannot be undone.`"
+      confirm-text="Delete"
+      :loading="deletingEmployeeLoading"
+      @close="
+        () => {
+          showDeleteModal = false
+          deletingEmployee = null
+        }
+      "
+      @confirm="confirmRemove"
+    />
   </div>
 </template>
 
