@@ -2478,6 +2478,21 @@ app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', '
     targetTable: 'leave_requests',
     targetId: id,
   })
+  const rejectedResult = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
+  const rejectedRequest = rejectedResult.rows[0]
+  const ownerContact = await getUserContactById(ownerUserRows.rows[0]?.id)
+  await sendEmailNotification({
+    to: ownerContact?.email,
+    subject: `Leave Rejected: ${rejectedRequest?.leave_type_name || 'Leave'}`,
+    text: [
+      `Hi ${ownerContact?.name || 'Employee'},`,
+      '',
+      `Your leave request has been rejected.`,
+      `Type: ${rejectedRequest?.leave_type_name || '-'}`,
+      `Dates: ${formatEmailDateRange(rejectedRequest?.start_date, rejectedRequest?.end_date)}`,
+      `Reason: ${comment || '-'}`,
+    ].join('\n'),
+  })
   await updateEmployeeStatus(employeeId)
   await addAuditLog(req.user.id, 'reject_leave_request', 'leave_requests', id)
   const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
