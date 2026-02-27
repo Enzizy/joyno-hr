@@ -80,6 +80,7 @@ const taskForm = ref({
   service_id: '',
   assigned_to: '',
   assigned_to_ids: [],
+  assign_department: '',
   status: 'pending',
   priority: 'medium',
   due_date: '',
@@ -87,6 +88,14 @@ const taskForm = ref({
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const offset = computed(() => (page.value - 1) * pageSize.value)
+const departmentOptions = computed(() => {
+  const values = new Set()
+  for (const user of users.value) {
+    const dept = String(user.department || '').trim()
+    if (dept) values.add(dept)
+  }
+  return Array.from(values).sort((a, b) => a.localeCompare(b))
+})
 const formServices = computed(() => {
   if (!taskForm.value.client_id) return []
   return services.value.filter((s) => Number(s.client_id) === Number(taskForm.value.client_id))
@@ -255,6 +264,7 @@ function openCreate() {
     service_id: '',
     assigned_to: '',
     assigned_to_ids: [],
+    assign_department: '',
     status: 'pending',
     priority: 'medium',
     due_date: new Date().toISOString().slice(0, 10),
@@ -271,6 +281,7 @@ function openEdit(row) {
     service_id: row.service_id ? String(row.service_id) : '',
     assigned_to: row.assigned_to ? String(row.assigned_to) : '',
     assigned_to_ids: [],
+    assign_department: '',
     status: row.status || 'pending',
     priority: row.priority || 'medium',
     due_date: row.due_date ? String(row.due_date).slice(0, 10) : '',
@@ -281,7 +292,7 @@ function openEdit(row) {
 async function saveTask() {
   const hasAssignee = editingTask.value
     ? Boolean(taskForm.value.assigned_to)
-    : Array.isArray(taskForm.value.assigned_to_ids) && taskForm.value.assigned_to_ids.length > 0
+    : (Array.isArray(taskForm.value.assigned_to_ids) && taskForm.value.assigned_to_ids.length > 0) || Boolean(taskForm.value.assign_department)
   if (!taskForm.value.title || !hasAssignee || !taskForm.value.due_date) {
     toast.warning('Task title, assigned user(s), and due date are required.')
     return
@@ -294,6 +305,7 @@ async function saveTask() {
       service_id: taskForm.value.service_id || null,
       assigned_to: Number(taskForm.value.assigned_to),
       assigned_to_ids: (taskForm.value.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
+      assign_department: taskForm.value.assign_department || null,
     }
     if (editingTask.value) {
       await updateTask(editingTask.value.id, payload)
@@ -507,6 +519,14 @@ function proofUrl(taskId) {
             <p class="mt-2 text-xs text-gray-400">Selected: {{ taskForm.assigned_to_ids.length }}</p>
           </div>
         </template>
+      </div>
+      <div v-if="!editingTask">
+        <label class="mb-1 block text-sm font-medium text-gray-200">Assign Department (optional)</label>
+        <select v-model="taskForm.assign_department" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+          <option value="">No department</option>
+          <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
+        </select>
+        <p class="mt-1 text-xs text-gray-400">Creates tasks for all accounts linked to employees in this department.</p>
       </div>
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-200">Priority</label>

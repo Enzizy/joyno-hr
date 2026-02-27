@@ -835,7 +835,7 @@ app.post('/api/auth/change-password', authRequired, async (req, res) => {
 // Users (Admin)
 app.get('/api/users', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name
+    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.department
      FROM users u
      LEFT JOIN employees e ON u.employee_id = e.id
      ORDER BY u.id DESC`
@@ -1633,11 +1633,25 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), as
 
 app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const payload = req.body || {}
+  const department = String(payload.assign_department || '').trim()
   const assignedIds = Array.isArray(payload.assigned_to_ids)
     ? payload.assigned_to_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
     : payload.assigned_to
     ? [Number(payload.assigned_to)].filter((id) => Number.isInteger(id) && id > 0)
     : []
+  if (department) {
+    const deptUsers = await db.query(
+      `SELECT u.id
+       FROM users u
+       INNER JOIN employees e ON e.id = u.employee_id
+       WHERE e.department = $1`,
+      [department]
+    )
+    for (const row of deptUsers.rows) {
+      const userId = Number(row.id)
+      if (Number.isInteger(userId) && userId > 0) assignedIds.push(userId)
+    }
+  }
   const uniqueAssignedIds = [...new Set(assignedIds)]
   if (!payload.title || !uniqueAssignedIds.length || !payload.due_date) {
     return res.status(400).json({ message: 'Task title, assigned user(s), and due date are required' })
