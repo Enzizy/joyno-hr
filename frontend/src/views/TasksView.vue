@@ -41,6 +41,8 @@ const users = ref([])
 const showTaskModal = ref(false)
 const editingTask = ref(null)
 const savingTask = ref(false)
+const showDetailsModal = ref(false)
+const selectedTask = ref(null)
 
 const showCompleteModal = ref(false)
 const completingTask = ref(null)
@@ -145,6 +147,18 @@ function assigneeSummary(row, limit = 4) {
     remaining,
     total: names.length,
   }
+}
+
+function assigneeNames(row) {
+  const ids = Array.isArray(row?.assigned_to_ids) ? row.assigned_to_ids : []
+  const normalized = ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+  const names = (normalized.length ? normalized : [row?.assigned_to]).map((id) => userLabel(id)).filter(Boolean)
+  return names.join(', ') || '-'
+}
+
+function openDetails(row) {
+  selectedTask.value = row
+  showDetailsModal.value = true
 }
 
 function typeLabel(serviceType) {
@@ -474,6 +488,7 @@ function proofUrl(taskId) {
           <div class="mt-2 flex shrink-0 flex-wrap gap-2 md:mt-0 md:justify-end">
             <AppButton v-if="row.status === 'pending'" variant="secondary" size="sm" :loading="actionLoadingId === row.id" @click="startTaskAction(row)">Start Task</AppButton>
             <AppButton v-if="row.status === 'pending' || row.status === 'in_progress'" variant="primary" size="sm" @click="openComplete(row)">Mark Complete</AppButton>
+            <AppButton variant="ghost" size="sm" @click="openDetails(row)">View</AppButton>
             <AppButton v-if="authStore.role !== 'employee'" variant="secondary" size="sm" @click="openEdit(row)">Edit</AppButton>
             <AppButton v-if="authStore.role !== 'employee' && (row.status === 'pending' || row.status === 'in_progress')" variant="danger" size="sm" :loading="actionLoadingId === row.id" @click="cancelTaskAction(row)">Cancel</AppButton>
           </div>
@@ -580,6 +595,48 @@ function proofUrl(taskId) {
     <template #footer>
       <AppButton variant="secondary" @click="showCompleteModal = false">Cancel</AppButton>
       <AppButton :loading="completing" @click="completeTaskAction">Mark Complete</AppButton>
+    </template>
+  </AppModal>
+
+  <AppModal :show="showDetailsModal" title="Task Details" @close="showDetailsModal = false">
+    <div v-if="selectedTask" class="space-y-4">
+      <div>
+        <h3 class="text-lg font-semibold text-primary-200">{{ selectedTask.title }}</h3>
+        <p class="mt-1 text-sm text-gray-300 whitespace-pre-wrap break-words">
+          {{ selectedTask.description || 'No description.' }}
+        </p>
+      </div>
+
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
+          <p class="text-xs text-gray-400">Status</p>
+          <p class="mt-1 text-sm text-gray-200">{{ formatStatus(selectedTask.status) }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
+          <p class="text-xs text-gray-400">Priority</p>
+          <p class="mt-1 text-sm text-gray-200">{{ formatPriority(selectedTask.priority) }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
+          <p class="text-xs text-gray-400">Due Date</p>
+          <p class="mt-1 text-sm text-gray-200">{{ formatDate(selectedTask.due_date) }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
+          <p class="text-xs text-gray-400">Service</p>
+          <p class="mt-1 text-sm text-gray-200">{{ typeLabel(selectedTask.service_type) }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3 sm:col-span-2">
+          <p class="text-xs text-gray-400">Client</p>
+          <p class="mt-1 text-sm text-gray-200">{{ selectedTask.company_name || '-' }}</p>
+        </div>
+      </div>
+
+      <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
+        <p class="text-xs text-gray-400">Assigned Employees</p>
+        <p class="mt-1 text-sm text-gray-200 break-words">{{ assigneeNames(selectedTask) }}</p>
+      </div>
+    </div>
+    <template #footer>
+      <AppButton variant="secondary" @click="showDetailsModal = false">Close</AppButton>
     </template>
   </AppModal>
 </template>
