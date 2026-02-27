@@ -134,11 +134,17 @@ function userLabel(id) {
   return `User #${id}`
 }
 
-function assigneeLabels(row) {
+function assigneeSummary(row, limit = 4) {
   const ids = Array.isArray(row.assigned_to_ids) ? row.assigned_to_ids : []
   const normalized = ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
-  if (!normalized.length && row.assigned_to) return userLabel(row.assigned_to)
-  return normalized.map((id) => userLabel(id)).join(', ')
+  const names = (normalized.length ? normalized : [row.assigned_to]).map((id) => userLabel(id)).filter(Boolean)
+  const shown = names.slice(0, limit)
+  const remaining = Math.max(0, names.length - shown.length)
+  return {
+    text: shown.join(', '),
+    remaining,
+    total: names.length,
+  }
 }
 
 function typeLabel(serviceType) {
@@ -437,7 +443,7 @@ function proofUrl(taskId) {
     <div class="space-y-3">
       <div v-for="row in tasks" :key="row.id" class="rounded-xl border p-4 shadow-sm" :class="[serviceCardClass(row), cardClass(row)]">
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div class="space-y-2">
+          <div class="min-w-0 space-y-2 md:pr-4">
             <div class="flex items-center gap-2">
               <h3 class="text-lg font-semibold text-primary-200">
                 {{ row.title }}
@@ -456,12 +462,16 @@ function proofUrl(taskId) {
               <span>Due: {{ formatDate(row.due_date) }}</span>
               <span>Client: {{ row.company_name || '-' }}</span>
               <span>Service: {{ typeLabel(row.service_type) }}</span>
-              <span>Assigned: {{ assigneeLabels(row) }}</span>
+              <span class="max-w-full">
+                Assigned ({{ assigneeSummary(row).total }}):
+                {{ assigneeSummary(row).text }}
+                <span v-if="assigneeSummary(row).remaining > 0">+{{ assigneeSummary(row).remaining }} more</span>
+              </span>
               <a v-if="row.proof_of_work_data" :href="proofUrl(row.id)" target="_blank" rel="noopener" class="text-primary-300 hover:text-primary-200">View proof</a>
             </div>
           </div>
 
-          <div class="flex flex-wrap gap-2">
+          <div class="mt-2 flex shrink-0 flex-wrap gap-2 md:mt-0 md:justify-end">
             <AppButton v-if="row.status === 'pending'" variant="secondary" size="sm" :loading="actionLoadingId === row.id" @click="startTaskAction(row)">Start Task</AppButton>
             <AppButton v-if="row.status === 'pending' || row.status === 'in_progress'" variant="primary" size="sm" @click="openComplete(row)">Mark Complete</AppButton>
             <AppButton v-if="authStore.role !== 'employee'" variant="secondary" size="sm" @click="openEdit(row)">Edit</AppButton>
