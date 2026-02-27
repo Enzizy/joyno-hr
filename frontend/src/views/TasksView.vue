@@ -79,6 +79,7 @@ const taskForm = ref({
   client_id: '',
   service_id: '',
   assigned_to: '',
+  assigned_to_ids: [],
   status: 'pending',
   priority: 'medium',
   due_date: '',
@@ -253,6 +254,7 @@ function openCreate() {
     client_id: '',
     service_id: '',
     assigned_to: '',
+    assigned_to_ids: [],
     status: 'pending',
     priority: 'medium',
     due_date: new Date().toISOString().slice(0, 10),
@@ -268,6 +270,7 @@ function openEdit(row) {
     client_id: row.client_id ? String(row.client_id) : '',
     service_id: row.service_id ? String(row.service_id) : '',
     assigned_to: row.assigned_to ? String(row.assigned_to) : '',
+    assigned_to_ids: [],
     status: row.status || 'pending',
     priority: row.priority || 'medium',
     due_date: row.due_date ? String(row.due_date).slice(0, 10) : '',
@@ -276,8 +279,11 @@ function openEdit(row) {
 }
 
 async function saveTask() {
-  if (!taskForm.value.title || !taskForm.value.assigned_to || !taskForm.value.due_date) {
-    toast.warning('Task title, assigned user, and due date are required.')
+  const hasAssignee = editingTask.value
+    ? Boolean(taskForm.value.assigned_to)
+    : Array.isArray(taskForm.value.assigned_to_ids) && taskForm.value.assigned_to_ids.length > 0
+  if (!taskForm.value.title || !hasAssignee || !taskForm.value.due_date) {
+    toast.warning('Task title, assigned user(s), and due date are required.')
     return
   }
   savingTask.value = true
@@ -287,13 +293,15 @@ async function saveTask() {
       client_id: taskForm.value.client_id || null,
       service_id: taskForm.value.service_id || null,
       assigned_to: Number(taskForm.value.assigned_to),
+      assigned_to_ids: (taskForm.value.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
     }
     if (editingTask.value) {
       await updateTask(editingTask.value.id, payload)
       toast.success('Task updated.')
     } else {
       await createTask(payload)
-      toast.success('Task created.')
+      const count = payload.assigned_to_ids.length || 1
+      toast.success(count > 1 ? `Created ${count} tasks.` : 'Task created.')
     }
     showTaskModal.value = false
     await loadTasks()
@@ -482,10 +490,23 @@ function proofUrl(taskId) {
       </div>
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-200">Assign To</label>
-        <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option value="" disabled>Select employee</option>
-          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
-        </select>
+        <template v-if="editingTask">
+          <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+            <option value="" disabled>Select employee</option>
+            <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
+          </select>
+        </template>
+        <template v-else>
+          <div class="rounded-lg border border-gray-700 bg-gray-900 p-2">
+            <div class="max-h-36 space-y-1 overflow-y-auto pr-1">
+              <label v-for="user in users" :key="user.id" class="flex items-center gap-2 rounded px-2 py-1 text-sm text-gray-200 hover:bg-gray-800">
+                <input v-model="taskForm.assigned_to_ids" type="checkbox" :value="String(user.id)" class="rounded border-gray-700 bg-gray-900" />
+                <span>{{ userLabel(user.id) }}</span>
+              </label>
+            </div>
+            <p class="mt-2 text-xs text-gray-400">Selected: {{ taskForm.assigned_to_ids.length }}</p>
+          </div>
+        </template>
       </div>
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-200">Priority</label>

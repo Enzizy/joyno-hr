@@ -1633,57 +1633,69 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), as
 
 app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
   const payload = req.body || {}
-  if (!payload.title || !payload.assigned_to || !payload.due_date) {
-    return res.status(400).json({ message: 'Task title, assigned user, and due date are required' })
+  const assignedIds = Array.isArray(payload.assigned_to_ids)
+    ? payload.assigned_to_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+    : payload.assigned_to
+    ? [Number(payload.assigned_to)].filter((id) => Number.isInteger(id) && id > 0)
+    : []
+  const uniqueAssignedIds = [...new Set(assignedIds)]
+  if (!payload.title || !uniqueAssignedIds.length || !payload.due_date) {
+    return res.status(400).json({ message: 'Task title, assigned user(s), and due date are required' })
   }
   const status = normalizeEnum(payload.status, TASK_STATUSES, { defaultValue: 'pending' })
   const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
   if ((payload.status || '') && !status) return res.status(400).json({ message: 'Invalid task status' })
   if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
-  const { rows } = await db.query(
-    `INSERT INTO tasks
-     (title, description, client_id, service_id, assigned_to, status, priority, due_date, is_automated, automation_rule_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-     RETURNING *`,
-    [
-      payload.title,
-      payload.description || null,
-      payload.client_id || null,
-      payload.service_id || null,
-      payload.assigned_to,
-      status,
-      priority,
-      payload.due_date,
-      Boolean(payload.is_automated),
-      payload.automation_rule_id || null,
-    ]
-  )
-  await createNotification({
-    userId: payload.assigned_to,
-    type: 'task_assigned',
-    title: `New Task Assigned: ${payload.title}`,
-    message: payload.description || null,
-    targetTable: 'tasks',
-    targetId: rows[0]?.id,
-  })
-  const assignee = await getUserContactById(payload.assigned_to)
-  await sendEmailNotification({
-    to: assignee?.email,
-    subject: `Task Assigned: ${payload.title}`,
-    text: [
-      `Hi ${assignee?.name || 'Employee'},`,
-      '',
-      `A new task has been assigned to you.`,
-      `Title: ${payload.title}`,
-      `Due date: ${payload.due_date}`,
-      `Priority: ${priority}`,
-      payload.description ? `Details: ${payload.description}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  })
-  await addAuditLog(req.user.id, 'create_task', 'tasks', rows[0]?.id)
-  res.json(rows[0])
+  const createdTasks = []
+  for (const assignedToId of uniqueAssignedIds) {
+    const { rows } = await db.query(
+      `INSERT INTO tasks
+       (title, description, client_id, service_id, assigned_to, status, priority, due_date, is_automated, automation_rule_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING *`,
+      [
+        payload.title,
+        payload.description || null,
+        payload.client_id || null,
+        payload.service_id || null,
+        assignedToId,
+        status,
+        priority,
+        payload.due_date,
+        Boolean(payload.is_automated),
+        payload.automation_rule_id || null,
+      ]
+    )
+    const created = rows[0]
+    createdTasks.push(created)
+    await createNotification({
+      userId: assignedToId,
+      type: 'task_assigned',
+      title: `New Task Assigned: ${payload.title}`,
+      message: payload.description || null,
+      targetTable: 'tasks',
+      targetId: created?.id,
+    })
+    const assignee = await getUserContactById(assignedToId)
+    await sendEmailNotification({
+      to: assignee?.email,
+      subject: `Task Assigned: ${payload.title}`,
+      text: [
+        `Hi ${assignee?.name || 'Employee'},`,
+        '',
+        `A new task has been assigned to you.`,
+        `Title: ${payload.title}`,
+        `Due date: ${payload.due_date}`,
+        `Priority: ${priority}`,
+        payload.description ? `Details: ${payload.description}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    })
+    await addAuditLog(req.user.id, 'create_task', 'tasks', created?.id)
+  }
+  if (createdTasks.length === 1) return res.json(createdTasks[0])
+  res.json({ created_count: createdTasks.length, items: createdTasks })
 })
 
 app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
