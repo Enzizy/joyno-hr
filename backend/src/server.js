@@ -190,6 +190,14 @@ function formatEmailDateRange(start, end) {
   return `${formatEmailDate(start)} - ${formatEmailDate(end)}`
 }
 
+function normalizeAssignedIds(value, fallbackAssignedTo = null) {
+  const base = Array.isArray(value) ? value : []
+  const ids = base.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+  const fallback = Number(fallbackAssignedTo)
+  if (Number.isInteger(fallback) && fallback > 0) ids.push(fallback)
+  return [...new Set(ids)]
+}
+
 function getMailTransport() {
   if (!SMTP_USER || !SMTP_PASS) return null
   if (mailTransport) return mailTransport
@@ -1602,7 +1610,14 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), as
   const params = []
   if (req.user.role === 'employee') {
     params.push(req.user.id)
-    sql += ` AND t.assigned_to = $${params.length}`
+    sql += ` AND (
+      t.assigned_to = $${params.length}
+      OR EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(COALESCE(t.assigned_to_ids, '[]'::jsonb)) AS assignee(user_id)
+        WHERE assignee.user_id::int = $${params.length}
+      )
+    )`
   }
   if (statusTab === 'active') sql += ` AND t.status IN ('pending','in_progress')`
   if (statusTab === 'completed') sql += ` AND t.status = 'completed'`
@@ -1620,7 +1635,14 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), as
   }
   if (assignedTo) {
     params.push(assignedTo)
-    sql += ` AND t.assigned_to = $${params.length}`
+    sql += ` AND (
+      t.assigned_to = $${params.length}
+      OR EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(COALESCE(t.assigned_to_ids, '[]'::jsonb)) AS assignee(user_id)
+        WHERE assignee.user_id::int = $${params.length}
+      )
+    )`
   }
   const countSql = sql.replace('SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email', 'SELECT COUNT(*)::int AS total')
   const countResult = await db.query(countSql, params)
@@ -1660,35 +1682,34 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, r
   const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
   if ((payload.status || '') && !status) return res.status(400).json({ message: 'Invalid task status' })
   if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
-  const createdTasks = []
+  const { rows } = await db.query(
+    `INSERT INTO tasks
+     (title, description, client_id, service_id, assigned_to, assigned_to_ids, status, priority, due_date, is_automated, automation_rule_id)
+     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11)
+     RETURNING *`,
+    [
+      payload.title,
+      payload.description || null,
+      payload.client_id || null,
+      payload.service_id || null,
+      uniqueAssignedIds[0],
+      JSON.stringify(uniqueAssignedIds),
+      status,
+      priority,
+      payload.due_date,
+      Boolean(payload.is_automated),
+      payload.automation_rule_id || null,
+    ]
+  )
+  const created = rows[0]
   for (const assignedToId of uniqueAssignedIds) {
-    const { rows } = await db.query(
-      `INSERT INTO tasks
-       (title, description, client_id, service_id, assigned_to, status, priority, due_date, is_automated, automation_rule_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING *`,
-      [
-        payload.title,
-        payload.description || null,
-        payload.client_id || null,
-        payload.service_id || null,
-        assignedToId,
-        status,
-        priority,
-        payload.due_date,
-        Boolean(payload.is_automated),
-        payload.automation_rule_id || null,
-      ]
-    )
-    const created = rows[0]
-    createdTasks.push(created)
     await createNotification({
       userId: assignedToId,
       type: 'task_assigned',
       title: `New Task Assigned: ${payload.title}`,
       message: payload.description || null,
       targetTable: 'tasks',
-      targetId: created?.id,
+      targetId: created.id,
     })
     const assignee = await getUserContactById(assignedToId)
     await sendEmailNotification({
@@ -1706,10 +1727,9 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, r
         .filter(Boolean)
         .join('\n'),
     })
-    await addAuditLog(req.user.id, 'create_task', 'tasks', created?.id)
   }
-  if (createdTasks.length === 1) return res.json(createdTasks[0])
-  res.json({ created_count: createdTasks.length, items: createdTasks })
+  await addAuditLog(req.user.id, 'create_task', 'tasks', created.id)
+  res.json(created)
 })
 
 app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
@@ -1728,8 +1748,8 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req
   if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
   const { rows } = await db.query(
     `UPDATE tasks
-     SET title=$1, description=$2, client_id=$3, service_id=$4, assigned_to=$5, status=$6, priority=$7, due_date=$8, updated_at=NOW()
-     WHERE id=$9
+     SET title=$1, description=$2, client_id=$3, service_id=$4, assigned_to=$5, assigned_to_ids=$6::jsonb, status=$7, priority=$8, due_date=$9, updated_at=NOW()
+     WHERE id=$10
      RETURNING *`,
     [
       payload.title,
@@ -1737,6 +1757,7 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req
       payload.client_id || null,
       payload.service_id || null,
       payload.assigned_to,
+      JSON.stringify([Number(payload.assigned_to)]),
       status,
       priority,
       payload.due_date,
@@ -1777,7 +1798,17 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req
 app.post('/api/tasks/:id/start', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
-  const ownClause = req.user.role === 'employee' ? ' AND assigned_to = $2' : ''
+  const ownClause =
+    req.user.role === 'employee'
+      ? ` AND (
+          assigned_to = $2
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(assigned_to_ids, '[]'::jsonb)) AS assignee(user_id)
+            WHERE assignee.user_id::int = $2
+          )
+        )`
+      : ''
   const params = req.user.role === 'employee' ? [id, req.user.id] : [id]
   const { rows } = await db.query(
     `UPDATE tasks SET status='in_progress', updated_at=NOW()
@@ -1793,7 +1824,17 @@ app.post('/api/tasks/:id/start', authRequired, requireRole(['admin', 'hr', 'empl
 app.post('/api/tasks/:id/complete', authRequired, uploadProof, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
-  const ownCheck = req.user.role === 'employee' ? ' AND assigned_to = $2' : ''
+  const ownCheck =
+    req.user.role === 'employee'
+      ? ` AND (
+          assigned_to = $2
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(assigned_to_ids, '[]'::jsonb)) AS assignee(user_id)
+            WHERE assignee.user_id::int = $2
+          )
+        )`
+      : ''
   const taskParams = req.user.role === 'employee' ? [id, req.user.id] : [id]
   const taskResult = await db.query(
     `SELECT id, title, assigned_to, proof_of_work_name, proof_of_work_type, proof_of_work_data
@@ -1848,7 +1889,17 @@ app.post('/api/tasks/:id/cancel', authRequired, requireRole(['admin', 'hr']), as
 app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
-  const ownCheck = req.user.role === 'employee' ? ' AND assigned_to = $2' : ''
+  const ownCheck =
+    req.user.role === 'employee'
+      ? ` AND (
+          assigned_to = $2
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(COALESCE(assigned_to_ids, '[]'::jsonb)) AS assignee(user_id)
+            WHERE assignee.user_id::int = $2
+          )
+        )`
+      : ''
   const params = req.user.role === 'employee' ? [id, req.user.id] : [id]
   const { rows } = await db.query(
     `SELECT proof_of_work_name, proof_of_work_type, proof_of_work_data FROM tasks WHERE id = $1${ownCheck}`,

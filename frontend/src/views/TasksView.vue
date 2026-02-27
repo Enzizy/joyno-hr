@@ -134,6 +134,13 @@ function userLabel(id) {
   return `User #${id}`
 }
 
+function assigneeLabels(row) {
+  const ids = Array.isArray(row.assigned_to_ids) ? row.assigned_to_ids : []
+  const normalized = ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+  if (!normalized.length && row.assigned_to) return userLabel(row.assigned_to)
+  return normalized.map((id) => userLabel(id)).join(', ')
+}
+
 function typeLabel(serviceType) {
   if (serviceType === 'social_media_management') return 'Social Media'
   if (serviceType === 'website_development') return 'Website Dev'
@@ -312,8 +319,7 @@ async function saveTask() {
       toast.success('Task updated.')
     } else {
       await createTask(payload)
-      const count = payload.assigned_to_ids.length || 1
-      toast.success(count > 1 ? `Created ${count} tasks.` : 'Task created.')
+      toast.success('Task created.')
     }
     showTaskModal.value = false
     await loadTasks()
@@ -450,7 +456,7 @@ function proofUrl(taskId) {
               <span>Due: {{ formatDate(row.due_date) }}</span>
               <span>Client: {{ row.company_name || '-' }}</span>
               <span>Service: {{ typeLabel(row.service_type) }}</span>
-              <span>Assigned: {{ userLabel(row.assigned_to) }}</span>
+              <span>Assigned: {{ assigneeLabels(row) }}</span>
               <a v-if="row.proof_of_work_data" :href="proofUrl(row.id)" target="_blank" rel="noopener" class="text-primary-300 hover:text-primary-200">View proof</a>
             </div>
           </div>
