@@ -103,6 +103,7 @@ const formServices = computed(() => {
   if (!taskForm.value.client_id) return []
   return services.value.filter((s) => Number(s.client_id) === Number(taskForm.value.client_id))
 })
+const assignableUsers = computed(() => users.value.filter((u) => String(u.role || '').toLowerCase() !== 'ceo'))
 
 function formatStatus(value) {
   return statusOptions.find((v) => v.value === value)?.label || value
@@ -447,7 +448,7 @@ function proofUrl(taskId) {
         <label class="mb-1 block text-xs text-gray-400">Employee</label>
         <select v-model="employeeFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
           <option value="all">All Employees</option>
-          <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
+          <option v-for="user in assignableUsers" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
         </select>
       </div>
       <div>
@@ -540,13 +541,13 @@ function proofUrl(taskId) {
         <template v-if="editingTask">
           <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
             <option value="" disabled>Select employee</option>
-            <option v-for="user in users" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
+            <option v-for="user in assignableUsers" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
           </select>
         </template>
         <template v-else>
           <div class="rounded-lg border border-gray-700 bg-gray-900 p-2">
             <div class="max-h-36 space-y-1 overflow-y-auto pr-1">
-              <label v-for="user in users" :key="user.id" class="flex items-center gap-2 rounded px-2 py-1 text-sm text-gray-200 hover:bg-gray-800">
+              <label v-for="user in assignableUsers" :key="user.id" class="flex items-center gap-2 rounded px-2 py-1 text-sm text-gray-200 hover:bg-gray-800">
                 <input v-model="taskForm.assigned_to_ids" type="checkbox" :value="String(user.id)" class="rounded border-gray-700 bg-gray-900" />
                 <span>{{ userLabel(user.id) }}</span>
               </label>
