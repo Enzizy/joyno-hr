@@ -43,6 +43,7 @@ const editingTask = ref(null)
 const savingTask = ref(false)
 const showDetailsModal = ref(false)
 const selectedTask = ref(null)
+const assigneeSearch = ref('')
 
 const showCompleteModal = ref(false)
 const completingTask = ref(null)
@@ -104,6 +105,15 @@ const formServices = computed(() => {
   return services.value.filter((s) => Number(s.client_id) === Number(taskForm.value.client_id))
 })
 const assignableUsers = computed(() => users.value.filter((u) => String(u.role || '').toLowerCase() !== 'ceo'))
+const filteredAssignableUsers = computed(() => {
+  const q = String(assigneeSearch.value || '').trim().toLowerCase()
+  if (!q) return assignableUsers.value
+  return assignableUsers.value.filter((user) => {
+    const label = userLabel(user.id).toLowerCase()
+    const email = String(user.email || '').toLowerCase()
+    return label.includes(q) || email.includes(q)
+  })
+})
 
 function formatStatus(value) {
   return statusOptions.find((v) => v.value === value)?.label || value
@@ -286,6 +296,7 @@ async function changePage(next) {
 
 function openCreate() {
   editingTask.value = null
+  assigneeSearch.value = ''
   taskForm.value = {
     title: '',
     description: '',
@@ -304,6 +315,7 @@ function openCreate() {
 
 function openEdit(row) {
   editingTask.value = row
+  assigneeSearch.value = ''
   taskForm.value = {
     title: row.title || '',
     description: row.description || '',
@@ -546,11 +558,18 @@ function proofUrl(taskId) {
         </template>
         <template v-else>
           <div class="rounded-lg border border-gray-700 bg-gray-900 p-2">
+            <input
+              v-model="assigneeSearch"
+              type="text"
+              placeholder="Search employee"
+              class="mb-2 block w-full rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-sm text-gray-100"
+            />
             <div class="max-h-36 space-y-1 overflow-y-auto pr-1">
-              <label v-for="user in assignableUsers" :key="user.id" class="flex items-center gap-2 rounded px-2 py-1 text-sm text-gray-200 hover:bg-gray-800">
+              <label v-for="user in filteredAssignableUsers" :key="user.id" class="flex items-center gap-2 rounded px-2 py-1 text-sm text-gray-200 hover:bg-gray-800">
                 <input v-model="taskForm.assigned_to_ids" type="checkbox" :value="String(user.id)" class="rounded border-gray-700 bg-gray-900" />
                 <span>{{ userLabel(user.id) }}</span>
               </label>
+              <p v-if="!filteredAssignableUsers.length" class="px-2 py-1 text-xs text-gray-400">No employee found.</p>
             </div>
             <p class="mt-2 text-xs text-gray-400">Selected: {{ taskForm.assigned_to_ids.length }}</p>
           </div>
