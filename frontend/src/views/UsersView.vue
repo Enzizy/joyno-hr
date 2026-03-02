@@ -108,7 +108,7 @@ async function removeUser() {
     <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h1 class="text-2xl font-bold text-primary-200">User Management</h1>
-        <p class="mt-1 text-sm text-gray-400">Manage system users (Admin).</p>
+        <p class="mt-1 text-sm text-gray-400">Manage system users (Admin/HR/CEO).</p>
       </div>
       <AppButton @click="openAdd">Add user</AppButton>
     </div>
@@ -156,6 +156,7 @@ async function removeUser() {
             <option value="employee" class="bg-gray-900 text-primary-200">Employee</option>
             <option value="hr" class="bg-gray-900 text-primary-200">HR</option>
             <option value="admin" class="bg-gray-900 text-primary-200">Admin</option>
+            <option value="ceo" class="bg-gray-900 text-primary-200">CEO</option>
           </select>
         </div>
         <div>

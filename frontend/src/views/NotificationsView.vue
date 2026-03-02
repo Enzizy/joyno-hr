@@ -32,7 +32,7 @@ const TYPE_LABELS = {
 }
 
 const totalPages = computed(() => Math.max(1, Math.ceil((store.total || 0) / pageSize.value)))
-const canManageNotifications = computed(() => ['admin', 'hr'].includes(authStore.role))
+const canManageNotifications = computed(() => ['admin', 'hr', 'ceo'].includes(authStore.role))
 const typeOptions = computed(() => {
   const set = new Set()
   store.items.forEach((item) => {

@@ -376,7 +376,7 @@ async function runApprovalSlaEscalations() {
      FROM leave_requests
      WHERE status = 'pending'`
   )
-  const reviewerRows = await db.query("SELECT id FROM users WHERE role IN ('admin','hr')")
+  const reviewerRows = await db.query("SELECT id FROM users WHERE role IN ('admin','hr','ceo')")
   const reviewerIds = reviewerRows.rows.map((row) => row.id)
   const now = Date.now()
   for (const leave of pendingLeaveResult.rows) {
@@ -841,7 +841,7 @@ app.post('/api/auth/change-password', authRequired, async (req, res) => {
 })
 
 // Users (Admin)
-app.get('/api/users', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/users', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const { rows } = await db.query(
     `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.department
      FROM users u
@@ -851,7 +851,7 @@ app.get('/api/users', authRequired, requireRole(['admin', 'hr']), async (req, re
   res.json(rows)
 })
 
-app.post('/api/users', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/users', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const { email, password, role = 'employee', employee_id = null } = req.body || {}
   if (!email || !password) return res.status(400).json({ message: 'Email and password required' })
   if (!employee_id) return res.status(400).json({ message: 'Employee link is required' })
@@ -871,7 +871,7 @@ app.post('/api/users', authRequired, requireRole(['admin', 'hr']), async (req, r
   res.json({ message: 'User created' })
 })
 
-app.delete('/api/users/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.delete('/api/users/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid user id' })
   if (id === req.user.id) return res.status(400).json({ message: 'Cannot delete your own account' })
@@ -894,14 +894,14 @@ app.delete('/api/users/:id', authRequired, requireRole(['admin', 'hr']), async (
 })
 
 // Employees
-app.get('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   await resetAllEmployeeLeaveCreditsIfNeeded()
   await syncAllEmployeeStatuses()
   const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees ORDER BY created_at DESC`)
   res.json(rows)
 })
 
-app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   await resetEmployeeLeaveCreditsIfNeeded(req.params.id)
   await syncAllEmployeeStatuses()
   const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.params.id])
@@ -909,7 +909,7 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
   res.json(rows[0])
 })
 
-app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const e = req.body || {}
   const leaveCreditsInput = Number(e.leave_credits)
   const hasLeaveCreditsInput = Number.isFinite(leaveCreditsInput) && leaveCreditsInput >= 0
@@ -945,7 +945,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr']), async (re
   res.json(created.rows[0] || { id: createdId })
 })
 
-app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const e = req.body || {}
   const leaveCredits = Number(e.leave_credits)
   const safeLeaveCredits = Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : DEFAULT_LEAVE_CREDITS
@@ -974,13 +974,13 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async 
   res.json(updated.rows[0] || { id: Number(req.params.id) })
 })
 
-app.delete('/api/employees/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.delete('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   await db.query('DELETE FROM employees WHERE id = $1', [req.params.id])
   await addAuditLog(req.user.id, 'delete_employee', 'employees', req.params.id)
   res.json({ message: 'Employee deleted' })
 })
 
-app.post('/api/employees/:id/awol', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/employees/:id/awol', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   const { start_date, end_date, reason } = req.body || {}
   if (!id) return res.status(400).json({ message: 'Invalid employee id' })
@@ -1134,7 +1134,7 @@ app.get('/api/dashboard/overview', authRequired, async (req, res) => {
 })
 
 // Leads (CRM)
-app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/leads', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const status = normalizeEnum(req.query.status, LEAD_STATUSES, { defaultValue: null, allowNull: true })
   const source = normalizeEnum(req.query.source, LEAD_SOURCES, { defaultValue: null, allowNull: true })
   const search = String(req.query.search || '').trim()
@@ -1162,7 +1162,7 @@ app.get('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, re
   res.json({ items: rows, total: Number(countResult.rows[0]?.total || 0), limit, offset })
 })
 
-app.post('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/leads', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const payload = req.body || {}
   if (!payload.company_name || !payload.contact_name || !payload.email) {
     return res.status(400).json({ message: 'Company name, contact name, and email are required' })
@@ -1206,7 +1206,7 @@ app.post('/api/leads', authRequired, requireRole(['admin', 'hr']), async (req, r
   res.json(created)
 })
 
-app.put('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.put('/api/leads/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid lead id' })
   const payload = req.body || {}
@@ -1254,7 +1254,7 @@ app.put('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (req
   res.json(rows[0])
 })
 
-app.delete('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.delete('/api/leads/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid lead id' })
   const { rows } = await db.query('DELETE FROM leads WHERE id = $1 RETURNING id', [id])
@@ -1263,7 +1263,7 @@ app.delete('/api/leads/:id', authRequired, requireRole(['admin', 'hr']), async (
   res.json({ message: 'Lead deleted' })
 })
 
-app.get('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid lead id' })
   const { rows } = await db.query(
@@ -1277,7 +1277,7 @@ app.get('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr'
   res.json(rows)
 })
 
-app.post('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid lead id' })
   const payload = req.body || {}
@@ -1299,7 +1299,7 @@ app.post('/api/leads/:id/conversations', authRequired, requireRole(['admin', 'hr
   res.json(rows[0])
 })
 
-app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid lead id' })
   const payload = req.body || {}
@@ -1353,7 +1353,7 @@ app.post('/api/leads/:id/convert', authRequired, requireRole(['admin', 'hr']), a
 })
 
 // Clients (CRM)
-app.get('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/clients', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const status = normalizeEnum(req.query.status, CLIENT_STATUSES, { defaultValue: null, allowNull: true })
   const search = String(req.query.search || '').trim()
   const { limit, offset } = parsePagination(req.query, 10, 50)
@@ -1376,7 +1376,7 @@ app.get('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, 
   res.json({ items: rows, total: Number(countResult.rows[0]?.total || 0), limit, offset })
 })
 
-app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/clients', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const payload = req.body || {}
   if (!payload.company_name || !payload.contact_name || !payload.email || !payload.contract_start_date) {
     return res.status(400).json({ message: 'Company, contact, email, and contract start date are required' })
@@ -1432,7 +1432,7 @@ app.post('/api/clients', authRequired, requireRole(['admin', 'hr']), async (req,
   res.json(rows[0])
 })
 
-app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid client id' })
   const payload = req.body || {}
@@ -1495,7 +1495,7 @@ app.put('/api/clients/:id', authRequired, requireRole(['admin', 'hr']), async (r
   res.json(rows[0])
 })
 
-app.get('/api/clients/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/clients/:id/conversations', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid client id' })
   const { rows } = await db.query(
@@ -1509,7 +1509,7 @@ app.get('/api/clients/:id/conversations', authRequired, requireRole(['admin', 'h
   res.json(rows)
 })
 
-app.post('/api/clients/:id/conversations', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/clients/:id/conversations', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid client id' })
   const payload = req.body || {}
@@ -1532,7 +1532,7 @@ app.post('/api/clients/:id/conversations', authRequired, requireRole(['admin', '
 })
 
 // Services (CRM)
-app.get('/api/services', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/services', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const type = normalizeEnum(req.query.type, CLIENT_SERVICES, { defaultValue: null, allowNull: true })
   const clientId = Number.parseInt(req.query.client_id, 10) || null
   const search = String(req.query.search || '').trim()
@@ -1559,7 +1559,7 @@ app.get('/api/services', authRequired, requireRole(['admin', 'hr']), async (req,
   res.json(rows)
 })
 
-app.put('/api/services/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.put('/api/services/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid service id' })
   const payload = req.body || {}
@@ -1653,7 +1653,7 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), as
   res.json({ items: rows, total: Number(countResult.rows[0]?.total || 0), limit, offset })
 })
 
-app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const payload = req.body || {}
   const department = String(payload.assign_department || '').trim()
   const assignedIds = Array.isArray(payload.assigned_to_ids)
@@ -1732,7 +1732,7 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr']), async (req, r
   res.json(created)
 })
 
-app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const payload = req.body || {}
@@ -1874,7 +1874,7 @@ app.post('/api/tasks/:id/complete', authRequired, uploadProof, requireRole(['adm
   res.json(rows[0])
 })
 
-app.post('/api/tasks/:id/cancel', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/tasks/:id/cancel', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const { rows } = await db.query(
@@ -1916,7 +1916,7 @@ app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'emplo
 })
 
 // Automation rules (CRM)
-app.get('/api/automation-rules', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/automation-rules', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const clientId = Number.parseInt(req.query.client_id, 10) || null
   let sql = `SELECT r.*, c.company_name, u.email AS assigned_email, s.service_type,
                     EXISTS (
@@ -1940,7 +1940,7 @@ app.get('/api/automation-rules', authRequired, requireRole(['admin', 'hr']), asy
   res.json(rows)
 })
 
-app.post('/api/automation-rules', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/automation-rules', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const payload = req.body || {}
   if (!payload.rule_name || !payload.client_id || !payload.task_title_template || !payload.assigned_to) {
     return res.status(400).json({ message: 'Rule name, client, task title template, and assigned user are required' })
@@ -1974,7 +1974,7 @@ app.post('/api/automation-rules', authRequired, requireRole(['admin', 'hr']), as
   res.json(rows[0])
 })
 
-app.put('/api/automation-rules/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.put('/api/automation-rules/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const payload = req.body || {}
@@ -2014,7 +2014,7 @@ app.put('/api/automation-rules/:id', authRequired, requireRole(['admin', 'hr']),
   res.json(rows[0])
 })
 
-app.post('/api/automation-rules/:id/toggle', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/automation-rules/:id/toggle', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const { rows } = await db.query('SELECT * FROM automation_rules WHERE id = $1', [id])
@@ -2027,7 +2027,7 @@ app.post('/api/automation-rules/:id/toggle', authRequired, requireRole(['admin',
   res.json(result.rows[0])
 })
 
-app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const { rows } = await db.query('SELECT * FROM automation_rules WHERE id = $1', [id])
@@ -2090,7 +2090,7 @@ app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin'
   res.json(taskResult.rows[0])
 })
 
-app.delete('/api/automation-rules/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.delete('/api/automation-rules/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid rule id' })
   const { rows } = await db.query('DELETE FROM automation_rules WHERE id = $1 RETURNING id', [id])
@@ -2204,7 +2204,7 @@ app.post('/api/notifications/delete-many', authRequired, async (req, res) => {
   res.json({ deleted: rows.length, unreadDeleted })
 })
 
-app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const days = Number(req.body?.days || 90)
   await cleanupOldNotifications(days)
   res.json({ message: `Read notifications older than ${Math.max(1, Number(days) || 90)} days were removed` })
@@ -2226,7 +2226,7 @@ app.get('/api/leave-types', authRequired, async (req, res) => {
   )
 })
 
-app.post('/api/leave-types', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/leave-types', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   res.status(405).json({ message: 'Leave types are fixed in system configuration' })
 })
 
@@ -2325,7 +2325,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   )
 
   const createdId = rows[0]?.id
-  await notifyRoles(['admin', 'hr'], {
+  await notifyRoles(['admin', 'hr', 'ceo'], {
     type: 'leave_pending',
     title: 'New Leave Request',
     message: `${emp.first_name} ${emp.last_name} submitted a ${compensation.leavePayType} leave request.`,
@@ -2335,7 +2335,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   const approverEmailResult = await db.query(
     `SELECT DISTINCT u.email
      FROM users u
-     WHERE u.role IN ('admin', 'hr')
+     WHERE u.role IN ('admin', 'hr', 'ceo')
        AND u.employee_id IS NOT NULL
        AND u.email IS NOT NULL
        AND u.email <> ''`
@@ -2450,7 +2450,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   res.json({ ...(updated.rows[0] || { id }), compensation_message: compensation.note || null })
 })
 
-app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
   const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
@@ -2537,7 +2537,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
   res.json({ ...(updated.rows[0] || { id }), compensation_message: compensation.note || null })
 })
 
-app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = req.params.id
   const { comment = '' } = req.body || {}
   await db.query(
@@ -2592,7 +2592,7 @@ app.post('/api/leave-requests/:id/cancel', authRequired, async (req, res) => {
   res.json({ message: 'Leave request deleted' })
 })
 
-app.delete('/api/leave-requests/:id', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.delete('/api/leave-requests/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
   const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
@@ -2626,7 +2626,7 @@ app.get('/api/leave-requests/:id/attachment', authRequired, async (req, res) => 
   const request = rows[0]
   if (!request) return res.status(404).json({ message: 'Leave request not found' })
   const isOwner = request.employee_id && request.employee_id === req.user.employee_id
-  const isPrivileged = ['admin', 'hr'].includes(req.user.role)
+  const isPrivileged = ['admin', 'hr', 'ceo'].includes(req.user.role)
   if (!isOwner && !isPrivileged) return res.status(403).json({ message: 'Forbidden' })
   if (!request.attachment_data) return res.status(404).json({ message: 'No attachment' })
 
@@ -2684,14 +2684,14 @@ function buildLeaveReportQuery(from, to) {
   return { sql, params }
 }
 
-app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const { from, to } = req.query
   const { sql, params } = buildLeaveReportQuery(from, to)
   const { rows } = await db.query(sql, params)
   res.json(rows)
 })
 
-app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const { from, to } = req.query
   const { sql, params } = buildLeaveReportQuery(from, to)
   const { rows } = await db.query(sql, params)
@@ -2742,7 +2742,7 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr']), a
   res.end()
 })
 
-app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const { from, to } = req.query
   let sql = `
     SELECT
@@ -2812,7 +2812,7 @@ app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', '
 
 // Payroll
 // Audit logs
-app.get('/api/audit-logs', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+app.get('/api/audit-logs', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50)
   const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0)
   const { rows } = await db.query(

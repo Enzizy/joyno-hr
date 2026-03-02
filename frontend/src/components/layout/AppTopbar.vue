@@ -26,6 +26,7 @@ const userLabel = computed(() => {
 
 const roleLabel = computed(() => {
   const r = authStore.role
+  if (r === 'ceo') return 'CEO'
   return r ? r.charAt(0).toUpperCase() + r.slice(1) : ''
 })
 const isLightMode = computed(() => themeStore.mode === 'light')
