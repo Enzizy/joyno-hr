@@ -289,6 +289,24 @@ async function getUserContactById(userId) {
   }
 }
 
+async function getUserContactsByRole(role) {
+  if (!role) return []
+  const { rows } = await db.query(
+    `SELECT u.id, u.email, e.first_name, e.last_name
+     FROM users u
+     LEFT JOIN employees e ON u.employee_id = e.id
+     WHERE u.role = $1
+       AND u.email IS NOT NULL
+       AND u.email <> ''`,
+    [role]
+  )
+  return rows.map((user) => ({
+    id: user.id,
+    email: user.email,
+    name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email,
+  }))
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 1024 * 1024 },
@@ -1657,6 +1675,7 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), as
 
 app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const payload = req.body || {}
+  const notifyCeo = Boolean(payload.notify_ceo)
   const department = String(payload.assign_department || '').trim()
   const assignedIds = Array.isArray(payload.assigned_to_ids)
     ? payload.assigned_to_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
@@ -1729,6 +1748,40 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
         .filter(Boolean)
         .join('\n'),
     })
+  }
+  if (notifyCeo) {
+    const ceoContacts = await getUserContactsByRole('ceo')
+    const assigneeContacts = await Promise.all(uniqueAssignedIds.map((assignedToId) => getUserContactById(assignedToId)))
+    const finalAssignees = assigneeContacts
+      .map((contact) => contact?.name)
+      .filter(Boolean)
+      .join(', ')
+    for (const ceo of ceoContacts) {
+      await sendEmailNotification({
+        to: ceo.email,
+        subject: `Team Task Notice: ${payload.title}`,
+        text: [
+          `Hi ${ceo.name || 'CEO'},`,
+          '',
+          `A team task/meeting has been assigned to employees.`,
+          `Title: ${payload.title}`,
+          `Due date: ${payload.due_date}`,
+          `Priority: ${priority}`,
+          finalAssignees ? `Assigned employees: ${finalAssignees}` : null,
+          payload.description ? `Details: ${payload.description}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      })
+      await createNotification({
+        userId: ceo.id,
+        type: 'task_meeting_notice',
+        title: `Team Task Notice: ${payload.title}`,
+        message: `A team task/meeting was assigned.`,
+        targetTable: 'tasks',
+        targetId: created.id,
+      })
+    }
   }
   await addAuditLog(req.user.id, 'create_task', 'tasks', created.id)
   res.json(created)
@@ -2327,7 +2380,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   )
 
   const createdId = rows[0]?.id
-  await notifyRoles(['admin', 'hr', 'ceo'], {
+  await notifyRoles(['admin', 'hr'], {
     type: 'leave_pending',
     title: 'New Leave Request',
     message: `${emp.first_name} ${emp.last_name} submitted a ${compensation.leavePayType} leave request.`,
@@ -2337,7 +2390,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   const approverEmailResult = await db.query(
     `SELECT DISTINCT u.email
      FROM users u
-     WHERE u.role IN ('admin', 'hr', 'ceo')
+     WHERE u.role IN ('admin', 'hr')
        AND u.employee_id IS NOT NULL
        AND u.email IS NOT NULL
        AND u.email <> ''`

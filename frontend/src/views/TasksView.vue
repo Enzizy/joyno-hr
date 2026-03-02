@@ -83,6 +83,7 @@ const taskForm = ref({
   assigned_to: '',
   assigned_to_ids: [],
   assign_department: '',
+  notify_ceo: false,
   status: 'pending',
   priority: 'medium',
   due_date: '',
@@ -292,6 +293,7 @@ function openCreate() {
     assigned_to: '',
     assigned_to_ids: [],
     assign_department: '',
+    notify_ceo: false,
     status: 'pending',
     priority: 'medium',
     due_date: new Date().toISOString().slice(0, 10),
@@ -309,6 +311,7 @@ function openEdit(row) {
     assigned_to: row.assigned_to ? String(row.assigned_to) : '',
     assigned_to_ids: [],
     assign_department: '',
+    notify_ceo: false,
     status: row.status || 'pending',
     priority: row.priority || 'medium',
     due_date: row.due_date ? String(row.due_date).slice(0, 10) : '',
@@ -333,6 +336,7 @@ async function saveTask() {
       assigned_to: Number(taskForm.value.assigned_to),
       assigned_to_ids: (taskForm.value.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
       assign_department: taskForm.value.assign_department || null,
+      notify_ceo: Boolean(taskForm.value.notify_ceo),
     }
     if (editingTask.value) {
       await updateTask(editingTask.value.id, payload)
@@ -558,6 +562,12 @@ function proofUrl(taskId) {
           <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
         </select>
         <p class="mt-1 text-xs text-gray-400">Creates tasks for all accounts linked to employees in this department.</p>
+      </div>
+      <div v-if="!editingTask" class="sm:col-span-2">
+        <label class="inline-flex items-center gap-2 text-sm text-gray-200">
+          <input v-model="taskForm.notify_ceo" type="checkbox" class="rounded border-gray-700 bg-gray-900" />
+          <span>Notify CEO by email about this employee meeting/task</span>
+        </label>
       </div>
       <div>
         <label class="mb-1 block text-sm font-medium text-gray-200">Priority</label>
