@@ -853,7 +853,9 @@ app.get('/api/users', authRequired, requireRole(['admin', 'hr', 'ceo']), async (
 
 app.post('/api/users', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const { email, password, role = 'employee', employee_id = null } = req.body || {}
+  const allowedRoles = new Set(['employee', 'hr', 'admin'])
   if (!email || !password) return res.status(400).json({ message: 'Email and password required' })
+  if (!allowedRoles.has(role)) return res.status(400).json({ message: 'Invalid role' })
   if (!employee_id) return res.status(400).json({ message: 'Employee link is required' })
   const employeeId = Number(employee_id)
   if (!employeeId) return res.status(400).json({ message: 'Invalid employee id' })

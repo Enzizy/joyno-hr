@@ -156,7 +156,6 @@ async function removeUser() {
             <option value="employee" class="bg-gray-900 text-primary-200">Employee</option>
             <option value="hr" class="bg-gray-900 text-primary-200">HR</option>
             <option value="admin" class="bg-gray-900 text-primary-200">Admin</option>
-            <option value="ceo" class="bg-gray-900 text-primary-200">CEO</option>
           </select>
         </div>
         <div>

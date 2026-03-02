@@ -37,7 +37,7 @@ WITH upsert_employee AS (
 )
 INSERT INTO users (email, password_hash, role, employee_id)
 SELECT
-  'ginothevine@email.com',
+  'ginothevine@gmail.com',
   '$2a$10$HKTkKbEFmC6mR/nZhqwzqeD.5F6eRDSjrptlCG7xvQl9SMiy2IGn.',
   'ceo',
   id
