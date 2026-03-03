@@ -2380,7 +2380,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   )
 
   const createdId = rows[0]?.id
-  await notifyRoles(['admin', 'hr'], {
+  await notifyRoles(['admin', 'hr', 'ceo'], {
     type: 'leave_pending',
     title: 'New Leave Request',
     message: `${emp.first_name} ${emp.last_name} submitted a ${compensation.leavePayType} leave request.`,
@@ -2390,8 +2390,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   const approverEmailResult = await db.query(
     `SELECT DISTINCT u.email
      FROM users u
-     WHERE u.role IN ('admin', 'hr')
-       AND u.employee_id IS NOT NULL
+     WHERE u.role IN ('admin', 'hr', 'ceo')
        AND u.email IS NOT NULL
        AND u.email <> ''`
   )
