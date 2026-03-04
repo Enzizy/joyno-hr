@@ -484,6 +484,7 @@ const LEAVE_TYPES = [
     name: 'Vacation Leave',
     paid_days_per_year: 3,
     min_months_employed: 6,
+    filing_notice_days: 7,
     remarks: 'Annual grant and usage are subject to company approval.',
     aliases: ['vacation'],
   },
@@ -492,6 +493,7 @@ const LEAVE_TYPES = [
     name: 'Sick Leave',
     paid_days_per_year: 5,
     min_months_employed: 12,
+    filing_notice_days: 0,
     requires_attachment_for_paid: true,
     remarks: 'Requires a valid medical certificate.',
     aliases: ['sick'],
@@ -501,6 +503,7 @@ const LEAVE_TYPES = [
     name: 'Bereavement Leave',
     paid_days_per_year: 2,
     min_months_employed: 12,
+    filing_notice_days: 0,
     requires_attachment_for_paid: true,
     remarks:
       'Granted in the event of death of an immediate family member. Supporting documents are required.',
@@ -511,6 +514,7 @@ const LEAVE_TYPES = [
     name: 'Service Incentive Leave',
     paid_days_per_year: 5,
     min_months_employed: 12,
+    filing_notice_days: 7,
     remarks: 'Convertible to cash if unused, based on company policy and labor laws.',
     aliases: ['sil', 'service incentive'],
   },
@@ -519,14 +523,23 @@ const LEAVE_TYPES = [
     name: 'Leave of Absence',
     paid_days_per_year: 0,
     min_months_employed: 0,
+    filing_notice_days: 7,
     aliases: [],
   },
-  { id: 'awol', name: 'Absent Without Official Leave', paid_days_per_year: 0, min_months_employed: 0, aliases: [] },
+  {
+    id: 'awol',
+    name: 'Absent Without Official Leave',
+    paid_days_per_year: 0,
+    min_months_employed: 0,
+    filing_notice_days: 0,
+    aliases: [],
+  },
   {
     id: 'emergency_leave',
     name: 'Emergency Leave',
     paid_days_per_year: 0,
     min_months_employed: 0,
+    filing_notice_days: 7,
     aliases: ['emergency'],
   },
 ]
@@ -541,6 +554,40 @@ function resolveLeaveType(value) {
       item.aliases.some((alias) => alias.toLowerCase() === raw.toLowerCase())
   )
   return found || null
+}
+
+function parseDateOnly(value) {
+  if (!value) return null
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!match) return null
+  const year = Number(match[1])
+  const month = Number(match[2]) - 1
+  const day = Number(match[3])
+  const date = new Date(year, month, day)
+  if (Number.isNaN(date.getTime())) return null
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+function getFilingNoticeDays(leaveType) {
+  return Math.max(0, Number(leaveType?.filing_notice_days || 0))
+}
+
+function validateAdvanceFiling(leaveType, startDate) {
+  const noticeDays = getFilingNoticeDays(leaveType)
+  if (noticeDays <= 0) return null
+  const start = parseDateOnly(startDate)
+  if (!start) return { message: 'Invalid start date' }
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const minStart = new Date(today)
+  minStart.setDate(minStart.getDate() + noticeDays)
+  if (start < minStart) {
+    return {
+      message: `${leaveType?.name || 'This leave type'} must be filed at least ${noticeDays} day(s) in advance.`,
+    }
+  }
+  return null
 }
 
 async function ensureSchemaColumns() {
@@ -2269,11 +2316,12 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr',
 app.get('/api/leave-types', authRequired, async (req, res) => {
   res.json(
     LEAVE_TYPES.filter((type) => type.id !== 'awol').map(
-      ({ id, name, paid_days_per_year, min_months_employed, requires_attachment_for_paid, remarks }) => ({
+      ({ id, name, paid_days_per_year, min_months_employed, filing_notice_days, requires_attachment_for_paid, remarks }) => ({
       id,
       name,
       paid_days_per_year,
       min_months_employed: Number(min_months_employed || 0),
+      filing_notice_days: Number(filing_notice_days || 0),
       requires_attachment_for_paid: Boolean(requires_attachment_for_paid),
       remarks: remarks || '',
       })
@@ -2337,6 +2385,10 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   }
   if (leaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
+  }
+  const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
+  if (advanceNoticeError) {
+    return res.status(400).json(advanceNoticeError)
   }
   let attachmentName = null
   let attachmentType = null
@@ -2453,6 +2505,10 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   }
   if (leaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
+  }
+  const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
+  if (advanceNoticeError) {
+    return res.status(400).json(advanceNoticeError)
   }
   await resetEmployeeLeaveCreditsIfNeeded(req.user.employee_id)
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])

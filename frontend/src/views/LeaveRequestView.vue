@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
@@ -63,9 +63,22 @@ const leaveTypeMap = computed(() =>
   }, {})
 )
 const selectedLeaveType = computed(() => leaveTypeMap.value[form.value.leave_type_id] || null)
+const selectedEditLeaveType = computed(() => leaveTypeMap.value[editForm.value.leave_type_id] || null)
 const missingRequiredDocumentForPaid = computed(
   () => Boolean(selectedLeaveType.value?.requires_attachment_for_paid) && !attachment.value
 )
+function filingNoticeDays(type) {
+  return Math.max(0, Number(type?.filing_notice_days || 0))
+}
+function addDaysToISO(dateStr, daysToAdd = 0) {
+  const date = new Date(`${dateStr}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return dateStr
+  date.setDate(date.getDate() + Number(daysToAdd || 0))
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 function paidDaysCap(typeId) {
   const type = leaveTypeMap.value[typeId]
@@ -144,8 +157,31 @@ const todayISO = computed(() => {
   return `${year}-${month}-${day}`
 })
 const leaveCreditsAvailable = computed(() => Number(authStore.user?.leave_credits || 0))
-const endMinDate = computed(() => form.value.start_date || todayISO.value)
-const editEndMinDate = computed(() => editForm.value.start_date || todayISO.value)
+const startMinDate = computed(() => addDaysToISO(todayISO.value, filingNoticeDays(selectedLeaveType.value)))
+const editStartMinDate = computed(() => addDaysToISO(todayISO.value, filingNoticeDays(selectedEditLeaveType.value)))
+const endMinDate = computed(() => form.value.start_date || startMinDate.value)
+const editEndMinDate = computed(() => editForm.value.start_date || editStartMinDate.value)
+const selectedLeaveFilingNoticeDays = computed(() => filingNoticeDays(selectedLeaveType.value))
+
+watch(
+  () => form.value.leave_type_id,
+  () => {
+    if (form.value.start_date && form.value.start_date < startMinDate.value) {
+      form.value.start_date = ''
+      form.value.end_date = ''
+    }
+  }
+)
+
+watch(
+  () => editForm.value.leave_type_id,
+  () => {
+    if (editForm.value.start_date && editForm.value.start_date < editStartMinDate.value) {
+      editForm.value.start_date = ''
+      editForm.value.end_date = ''
+    }
+  }
+)
 
 function formatDate(value) {
   if (!value) return '-'
@@ -388,6 +424,7 @@ function onEditAttachmentChange(event) {
           </li>
         </ul>
         <p class="mt-2">Leave of Absence and Emergency Leave are unpaid by default.</p>
+        <p>Filing notice: Most leave types require at least 7 days advance filing. Sick Leave and Bereavement Leave are exempt.</p>
         <p>AWOL is admin/HR only and cannot be requested by employees.</p>
       </div>
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">
@@ -407,7 +444,7 @@ function onEditAttachmentChange(event) {
           v-model="form.start_date"
           label="Start date"
           required
-          :min="todayISO"
+          :min="startMinDate"
           :disabled="isOnLeave || submitting"
         />
         <AppDatePicker
@@ -417,6 +454,10 @@ function onEditAttachmentChange(event) {
           :min="endMinDate"
           :disabled="isOnLeave || submitting"
         />
+        <div v-if="selectedLeaveFilingNoticeDays > 0" class="sm:col-span-2 -mt-2 text-xs text-amber-300">
+          {{ selectedLeaveType?.name }} must be filed at least {{ selectedLeaveFilingNoticeDays }} days in advance.
+          Dates within the next {{ selectedLeaveFilingNoticeDays }} days are disabled.
+        </div>
         <div class="sm:col-span-2">
           <label class="mb-1 block text-sm font-medium text-gray-200">Reason <span class="text-red-500">*</span></label>
           <textarea
@@ -537,7 +578,7 @@ function onEditAttachmentChange(event) {
         v-model="editForm.start_date"
         label="Start date"
         required
-        :min="todayISO"
+        :min="editStartMinDate"
       />
       <AppDatePicker
         v-model="editForm.end_date"
