@@ -40,6 +40,8 @@ const users = ref([])
 const showTaskModal = ref(false)
 const editingTask = ref(null)
 const savingTask = ref(false)
+const createMode = ref('task')
+const showCreateMenu = ref(false)
 const showDetailsModal = ref(false)
 const selectedTask = ref(null)
 const assigneeSearch = ref('')
@@ -284,15 +286,20 @@ function closeActionsMenu() {
 }
 
 function handleOutsideActionsClick(event) {
-  if (!openActionsTaskId.value) return
   const target = event.target
   if (!(target instanceof Element)) {
     openActionsTaskId.value = null
+    showCreateMenu.value = false
     return
   }
-  const menuKey = `task-${openActionsTaskId.value}`
-  if (!target.closest(`[data-task-actions-menu="${menuKey}"]`)) {
-    openActionsTaskId.value = null
+  if (openActionsTaskId.value) {
+    const menuKey = `task-${openActionsTaskId.value}`
+    if (!target.closest(`[data-task-actions-menu="${menuKey}"]`)) {
+      openActionsTaskId.value = null
+    }
+  }
+  if (showCreateMenu.value && !target.closest('[data-create-menu="tasks-create"]')) {
+    showCreateMenu.value = false
   }
 }
 
@@ -324,9 +331,15 @@ async function changePage(next) {
   await loadTasks()
 }
 
-function openCreate() {
+function toggleCreateMenu() {
+  showCreateMenu.value = !showCreateMenu.value
+}
+
+function openCreate(mode = 'task') {
   editingTask.value = null
   closeActionsMenu()
+  showCreateMenu.value = false
+  createMode.value = mode === 'meeting' ? 'meeting' : 'task'
   assigneeSearch.value = ''
   taskForm.value = {
     title: '',
@@ -365,6 +378,7 @@ function openEdit(row) {
 }
 
 async function saveTask() {
+  const isMeetingCreate = !editingTask.value && createMode.value === 'meeting'
   const hasAssignee = editingTask.value
     ? Boolean(taskForm.value.assigned_to)
     : (Array.isArray(taskForm.value.assigned_to_ids) && taskForm.value.assigned_to_ids.length > 0) || Boolean(taskForm.value.assign_department)
@@ -376,8 +390,8 @@ async function saveTask() {
   try {
     const payload = {
       ...taskForm.value,
-      client_id: taskForm.value.client_id || null,
-      service_id: taskForm.value.service_id || null,
+      client_id: isMeetingCreate ? null : taskForm.value.client_id || null,
+      service_id: isMeetingCreate ? null : taskForm.value.service_id || null,
       assigned_to: Number(taskForm.value.assigned_to),
       assigned_to_ids: (taskForm.value.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
       assign_department: taskForm.value.assign_department || null,
@@ -457,7 +471,13 @@ function proofUrl(taskId) {
         <h1 class="text-2xl font-bold text-primary-200">Tasks</h1>
         <p class="mt-1 text-sm text-gray-400">Central task management for all CRM work.</p>
       </div>
-      <AppButton @click="openCreate">Create Task</AppButton>
+      <div class="relative" data-create-menu="tasks-create">
+        <AppButton @click.stop="toggleCreateMenu">Create <span class="ml-1 text-xs">v</span></AppButton>
+        <div v-if="showCreateMenu" class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-lg">
+          <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('task')">Create Task</button>
+          <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('meeting')">Create Meeting</button>
+        </div>
+      </div>
     </div>
 
     <div class="flex flex-wrap gap-2">
@@ -590,21 +610,21 @@ function proofUrl(taskId) {
     </div>
   </div>
 
-  <AppModal :show="showTaskModal" :title="editingTask ? 'Edit Task' : 'Create Task'" @close="showTaskModal = false">
+  <AppModal :show="showTaskModal" :title="editingTask ? 'Edit Task' : (createMode === 'meeting' ? 'Create Meeting' : 'Create Task')" @close="showTaskModal = false">
     <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="saveTask">
       <div class="sm:col-span-2"><AppInput v-model="taskForm.title" label="Task Title" required /></div>
       <div class="sm:col-span-2">
         <label class="mb-1 block text-sm font-medium text-gray-200">Description</label>
         <textarea v-model="taskForm.description" rows="3" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" />
       </div>
-      <div>
+      <div v-if="editingTask || createMode === 'task'">
         <label class="mb-1 block text-sm font-medium text-gray-200">Client</label>
         <select v-model="taskForm.client_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
           <option value="">No client</option>
           <option v-for="client in clients" :key="client.id" :value="String(client.id)">{{ client.company_name }}</option>
         </select>
       </div>
-      <div v-if="taskForm.client_id">
+      <div v-if="(editingTask || createMode === 'task') && taskForm.client_id">
         <label class="mb-1 block text-sm font-medium text-gray-200">Service</label>
         <select v-model="taskForm.service_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
           <option value="">No service</option>
@@ -669,7 +689,7 @@ function proofUrl(taskId) {
 
     <template #footer>
       <AppButton variant="secondary" @click="showTaskModal = false">Cancel</AppButton>
-      <AppButton :loading="savingTask" @click="saveTask">{{ editingTask ? 'Update Task' : 'Create Task' }}</AppButton>
+      <AppButton :loading="savingTask" @click="saveTask">{{ editingTask ? 'Update Task' : (createMode === 'meeting' ? 'Create Meeting' : 'Create Task') }}</AppButton>
     </template>
   </AppModal>
 
