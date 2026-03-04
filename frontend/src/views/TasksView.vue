@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
@@ -7,7 +7,6 @@ import {
   getTasks,
   createTask,
   updateTask,
-  startTask,
   completeTask,
   cancelTask,
   getTaskProofUrl,
@@ -44,6 +43,7 @@ const savingTask = ref(false)
 const showDetailsModal = ref(false)
 const selectedTask = ref(null)
 const assigneeSearch = ref('')
+const openActionsTaskId = ref(null)
 
 const showCompleteModal = ref(false)
 const completingTask = ref(null)
@@ -85,7 +85,7 @@ const taskForm = ref({
   assigned_to_ids: [],
   assign_department: '',
   notify_ceo: false,
-  status: 'pending',
+  status: 'in_progress',
   priority: 'medium',
   due_date: '',
 })
@@ -169,6 +169,7 @@ function assigneeNames(row) {
 }
 
 function openDetails(row) {
+  openActionsTaskId.value = null
   selectedTask.value = row
   showDetailsModal.value = true
 }
@@ -274,7 +275,36 @@ async function initPage() {
   }
 }
 
-onMounted(initPage)
+function toggleActionsMenu(taskId) {
+  openActionsTaskId.value = openActionsTaskId.value === taskId ? null : taskId
+}
+
+function closeActionsMenu() {
+  openActionsTaskId.value = null
+}
+
+function handleOutsideActionsClick(event) {
+  if (!openActionsTaskId.value) return
+  const target = event.target
+  if (!(target instanceof Element)) {
+    openActionsTaskId.value = null
+    return
+  }
+  const menuKey = `task-${openActionsTaskId.value}`
+  if (!target.closest(`[data-task-actions-menu="${menuKey}"]`)) {
+    openActionsTaskId.value = null
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleOutsideActionsClick)
+  initPage()
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleOutsideActionsClick)
+})
+
 watch(() => route.query.client, async () => {
   const clientId = Number.parseInt(route.query.client, 10)
   clientFilter.value = clientId ? String(clientId) : 'all'
@@ -296,6 +326,7 @@ async function changePage(next) {
 
 function openCreate() {
   editingTask.value = null
+  closeActionsMenu()
   assigneeSearch.value = ''
   taskForm.value = {
     title: '',
@@ -306,7 +337,7 @@ function openCreate() {
     assigned_to_ids: [],
     assign_department: '',
     notify_ceo: false,
-    status: 'pending',
+    status: 'in_progress',
     priority: 'medium',
     due_date: new Date().toISOString().slice(0, 10),
   }
@@ -314,6 +345,7 @@ function openCreate() {
 }
 
 function openEdit(row) {
+  closeActionsMenu()
   editingTask.value = row
   assigneeSearch.value = ''
   taskForm.value = {
@@ -350,6 +382,7 @@ async function saveTask() {
       assigned_to_ids: (taskForm.value.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
       assign_department: taskForm.value.assign_department || null,
       notify_ceo: Boolean(taskForm.value.notify_ceo),
+      status: editingTask.value ? taskForm.value.status : 'in_progress',
     }
     if (editingTask.value) {
       await updateTask(editingTask.value.id, payload)
@@ -367,20 +400,8 @@ async function saveTask() {
   }
 }
 
-async function startTaskAction(row) {
-  actionLoadingId.value = row.id
-  try {
-    await startTask(row.id)
-    toast.success('Task started.')
-    await loadTasks()
-  } catch (err) {
-    toast.error(err.message || 'Failed to start task.')
-  } finally {
-    actionLoadingId.value = null
-  }
-}
-
 function openComplete(row) {
+  closeActionsMenu()
   completingTask.value = row
   completeNotes.value = ''
   proofFile.value = null
@@ -411,6 +432,7 @@ async function completeTaskAction() {
 }
 
 async function cancelTaskAction(row) {
+  closeActionsMenu()
   actionLoadingId.value = row.id
   try {
     await cancelTask(row.id)
@@ -503,11 +525,47 @@ function proofUrl(taskId) {
           </div>
 
           <div class="mt-2 flex shrink-0 flex-wrap gap-2 md:mt-0 md:justify-end">
-            <AppButton v-if="row.status === 'pending'" variant="secondary" size="sm" :loading="actionLoadingId === row.id" @click="startTaskAction(row)">Start Task</AppButton>
             <AppButton v-if="row.status === 'pending' || row.status === 'in_progress'" variant="primary" size="sm" @click="openComplete(row)">Mark Complete</AppButton>
-            <AppButton variant="ghost" size="sm" @click="openDetails(row)">View</AppButton>
-            <AppButton v-if="authStore.role !== 'employee'" variant="secondary" size="sm" @click="openEdit(row)">Edit</AppButton>
-            <AppButton v-if="authStore.role !== 'employee' && (row.status === 'pending' || row.status === 'in_progress')" variant="danger" size="sm" :loading="actionLoadingId === row.id" @click="cancelTaskAction(row)">Cancel</AppButton>
+            <div class="relative" :data-task-actions-menu="`task-${row.id}`">
+              <button
+                type="button"
+                class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-lg leading-none text-gray-200 hover:bg-gray-700"
+                aria-label="More actions"
+                @click.stop="toggleActionsMenu(row.id)"
+              >
+                ⋮
+              </button>
+              <div
+                v-if="openActionsTaskId === row.id"
+                class="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-lg"
+                @click.stop
+              >
+                <button
+                  type="button"
+                  class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                  @click="openDetails(row)"
+                >
+                  View
+                </button>
+                <button
+                  v-if="authStore.role !== 'employee'"
+                  type="button"
+                  class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                  @click="openEdit(row)"
+                >
+                  Edit
+                </button>
+                <button
+                  v-if="authStore.role !== 'employee' && (row.status === 'pending' || row.status === 'in_progress')"
+                  type="button"
+                  class="block w-full px-3 py-2 text-left text-sm text-red-300 hover:bg-red-900/30"
+                  :disabled="actionLoadingId === row.id"
+                  @click="cancelTaskAction(row)"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -595,7 +653,7 @@ function proofUrl(taskId) {
           <option v-for="priority in priorityOptions" :key="priority.value" :value="priority.value">{{ priority.label }}</option>
         </select>
       </div>
-      <div>
+      <div v-if="editingTask">
         <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
         <select v-model="taskForm.status" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
           <option v-for="status in statusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>

@@ -1746,9 +1746,8 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
   if (!payload.title || !uniqueAssignedIds.length || !payload.due_date) {
     return res.status(400).json({ message: 'Task title, assigned user(s), and due date are required' })
   }
-  const status = normalizeEnum(payload.status, TASK_STATUSES, { defaultValue: 'pending' })
+  const status = 'in_progress'
   const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
-  if ((payload.status || '') && !status) return res.status(400).json({ message: 'Invalid task status' })
   if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
   const { rows } = await db.query(
     `INSERT INTO tasks
@@ -2151,7 +2150,7 @@ app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin'
   const taskResult = await db.query(
     `INSERT INTO tasks
      (title, description, client_id, service_id, assigned_to, status, priority, due_date, is_automated, automation_rule_id)
-     VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,TRUE,$8)
+     VALUES ($1,$2,$3,$4,$5,'in_progress',$6,$7,TRUE,$8)
      RETURNING *`,
     [
       rule.task_title_template,
