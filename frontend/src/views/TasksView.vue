@@ -526,46 +526,51 @@ function proofUrl(taskId) {
 
           <div class="mt-2 flex shrink-0 flex-wrap gap-2 md:mt-0 md:justify-end">
             <AppButton v-if="row.status === 'pending' || row.status === 'in_progress'" variant="primary" size="sm" @click="openComplete(row)">Mark Complete</AppButton>
-            <div class="relative" :data-task-actions-menu="`task-${row.id}`">
-              <button
-                type="button"
-                class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-lg leading-none text-gray-200 hover:bg-gray-700"
-                aria-label="More actions"
-                @click.stop="toggleActionsMenu(row.id)"
-              >
-                ⋮
-              </button>
-              <div
-                v-if="openActionsTaskId === row.id"
-                class="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-lg"
-                @click.stop
-              >
+            <template v-if="row.status === 'pending' || row.status === 'in_progress'">
+              <div class="relative" :data-task-actions-menu="`task-${row.id}`">
                 <button
                   type="button"
-                  class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
-                  @click="openDetails(row)"
+                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-lg leading-none text-gray-200 hover:bg-gray-700"
+                  aria-label="More actions"
+                  @click.stop="toggleActionsMenu(row.id)"
                 >
-                  View
+                  ⋮
                 </button>
-                <button
-                  v-if="authStore.role !== 'employee'"
-                  type="button"
-                  class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
-                  @click="openEdit(row)"
+                <div
+                  v-if="openActionsTaskId === row.id"
+                  class="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-lg"
+                  @click.stop
                 >
-                  Edit
-                </button>
-                <button
-                  v-if="authStore.role !== 'employee' && (row.status === 'pending' || row.status === 'in_progress')"
-                  type="button"
-                  class="block w-full px-3 py-2 text-left text-sm text-red-300 hover:bg-red-900/30"
-                  :disabled="actionLoadingId === row.id"
-                  @click="cancelTaskAction(row)"
-                >
-                  Cancel
-                </button>
+                  <button
+                    type="button"
+                    class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                    @click="openDetails(row)"
+                  >
+                    View
+                  </button>
+                  <button
+                    v-if="authStore.role !== 'employee'"
+                    type="button"
+                    class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                    @click="openEdit(row)"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    v-if="authStore.role !== 'employee'"
+                    type="button"
+                    class="block w-full px-3 py-2 text-left text-sm text-red-300 hover:bg-red-900/30"
+                    :disabled="actionLoadingId === row.id"
+                    @click="cancelTaskAction(row)"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
-            </div>
+            </template>
+            <template v-else>
+              <AppButton variant="ghost" size="sm" @click="openDetails(row)">View</AppButton>
+            </template>
           </div>
         </div>
       </div>
