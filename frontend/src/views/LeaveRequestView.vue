@@ -162,6 +162,7 @@ const editStartMinDate = computed(() => addDaysToISO(todayISO.value, filingNotic
 const endMinDate = computed(() => form.value.start_date || startMinDate.value)
 const editEndMinDate = computed(() => editForm.value.start_date || editStartMinDate.value)
 const selectedLeaveFilingNoticeDays = computed(() => filingNoticeDays(selectedLeaveType.value))
+const selectedEditLeaveFilingNoticeDays = computed(() => filingNoticeDays(selectedEditLeaveType.value))
 
 watch(
   () => form.value.leave_type_id,
@@ -439,6 +440,12 @@ function onEditAttachmentChange(event) {
             <option value="" class="bg-gray-900 text-primary-200">Select type</option>
             <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
           </select>
+          <p
+            v-if="selectedLeaveFilingNoticeDays > 0"
+            class="mt-2 inline-flex rounded-full border border-amber-700/40 bg-amber-900/20 px-3 py-1 text-xs font-medium text-amber-200"
+          >
+            Advance filing required: at least {{ selectedLeaveFilingNoticeDays }} days before start date.
+          </p>
         </div>
         <AppDatePicker
           v-model="form.start_date"
@@ -454,10 +461,6 @@ function onEditAttachmentChange(event) {
           :min="endMinDate"
           :disabled="isOnLeave || submitting"
         />
-        <div v-if="selectedLeaveFilingNoticeDays > 0" class="sm:col-span-2 -mt-2 text-xs text-amber-300">
-          {{ selectedLeaveType?.name }} must be filed at least {{ selectedLeaveFilingNoticeDays }} days in advance.
-          Dates within the next {{ selectedLeaveFilingNoticeDays }} days are disabled.
-        </div>
         <div class="sm:col-span-2">
           <label class="mb-1 block text-sm font-medium text-gray-200">Reason <span class="text-red-500">*</span></label>
           <textarea
@@ -573,6 +576,12 @@ function onEditAttachmentChange(event) {
           <option value="" class="bg-gray-900 text-primary-200">Select type</option>
           <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
         </select>
+        <p
+          v-if="selectedEditLeaveFilingNoticeDays > 0"
+          class="mt-2 inline-flex rounded-full border border-amber-700/40 bg-amber-900/20 px-3 py-1 text-xs font-medium text-amber-200"
+        >
+          Advance filing required: at least {{ selectedEditLeaveFilingNoticeDays }} days before start date.
+        </p>
       </div>
       <AppDatePicker
         v-model="editForm.start_date"
