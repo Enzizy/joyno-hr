@@ -22,6 +22,7 @@ const {
   SOCIAL_PLATFORMS,
   TASK_STATUSES,
   TASK_PRIORITIES,
+  TASK_TYPES,
   AUTOMATION_SCHEDULES,
   normalizeEnum,
   normalizeServices,
@@ -1660,15 +1661,19 @@ app.put('/api/services/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), 
 })
 
 // Tasks (CRM)
-app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo', 'employee']), async (req, res) => {
   const statusTab = String(req.query.tab || 'active').trim().toLowerCase()
   const search = String(req.query.search || '').trim()
   const clientId = Number.parseInt(req.query.client_id, 10) || null
   const assignedTo = Number.parseInt(req.query.assigned_to, 10) || null
+  const rawTaskType = String(req.query.task_type || '').trim().toLowerCase()
+  const taskType = rawTaskType && rawTaskType !== 'all' ? normalizeEnum(rawTaskType, TASK_TYPES, { defaultValue: null }) : null
+  if (rawTaskType && rawTaskType !== 'all' && !taskType) return res.status(400).json({ message: 'Invalid task type' })
   const { limit, offset } = parsePagination(req.query, 10, 50)
   const today = new Date().toISOString().slice(0, 10)
+  const taskTypeExpr = `COALESCE(NULLIF(t.task_type, ''), CASE WHEN t.client_id IS NULL AND t.service_id IS NULL THEN 'meeting' ELSE 'task' END)`
 
-  let sql = `SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email
+  let sql = `SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email, ${taskTypeExpr} AS task_type_resolved
              FROM tasks t
              LEFT JOIN clients c ON t.client_id = c.id
              LEFT JOIN services s ON t.service_id = s.id
@@ -1711,7 +1716,11 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'employee']), as
       )
     )`
   }
-  const countSql = sql.replace('SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email', 'SELECT COUNT(*)::int AS total')
+  if (taskType) {
+    params.push(taskType)
+    sql += ` AND ${taskTypeExpr} = $${params.length}`
+  }
+  const countSql = sql.replace(`SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email, ${taskTypeExpr} AS task_type_resolved`, 'SELECT COUNT(*)::int AS total')
   const countResult = await db.query(countSql, params)
   params.push(limit)
   params.push(offset)
@@ -1724,6 +1733,8 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
   const payload = req.body || {}
   const notifyCeo = Boolean(payload.notify_ceo)
   const department = String(payload.assign_department || '').trim()
+  const requestedTaskType = normalizeEnum(payload.task_type, TASK_TYPES, { defaultValue: null, allowNull: true })
+  if ((payload.task_type || '').trim() && !requestedTaskType) return res.status(400).json({ message: 'Invalid task type' })
   const assignedIds = Array.isArray(payload.assigned_to_ids)
     ? payload.assigned_to_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
     : payload.assigned_to
@@ -1746,19 +1757,23 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
   if (!payload.title || !uniqueAssignedIds.length || !payload.due_date) {
     return res.status(400).json({ message: 'Task title, assigned user(s), and due date are required' })
   }
+  const taskType = requestedTaskType || (payload.client_id || payload.service_id ? 'task' : 'meeting')
+  const clientId = taskType === 'meeting' ? null : payload.client_id || null
+  const serviceId = taskType === 'meeting' ? null : payload.service_id || null
   const status = 'in_progress'
   const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
   if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
   const { rows } = await db.query(
     `INSERT INTO tasks
-     (title, description, client_id, service_id, assigned_to, assigned_to_ids, status, priority, due_date, is_automated, automation_rule_id)
-     VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11)
+     (title, description, client_id, service_id, task_type, assigned_to, assigned_to_ids, status, priority, due_date, is_automated, automation_rule_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12)
      RETURNING *`,
     [
       payload.title,
       payload.description || null,
-      payload.client_id || null,
-      payload.service_id || null,
+      clientId,
+      serviceId,
+      taskType,
       uniqueAssignedIds[0],
       JSON.stringify(uniqueAssignedIds),
       status,
@@ -1837,7 +1852,7 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), asy
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const payload = req.body || {}
-  const currentTaskRows = await db.query('SELECT id, assigned_to, title FROM tasks WHERE id = $1 LIMIT 1', [id])
+  const currentTaskRows = await db.query('SELECT id, assigned_to, title, task_type, client_id, service_id FROM tasks WHERE id = $1 LIMIT 1', [id])
   const currentTask = currentTaskRows.rows[0]
   if (!currentTask) return res.status(404).json({ message: 'Task not found' })
   if (!payload.title || !payload.assigned_to || !payload.due_date) {
@@ -1845,23 +1860,32 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), asy
   }
   const status = normalizeEnum(payload.status, TASK_STATUSES, { defaultValue: 'pending' })
   const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
+  const requestedTaskType = normalizeEnum(payload.task_type, TASK_TYPES, { defaultValue: null, allowNull: true })
+  if ((payload.task_type || '').trim() && !requestedTaskType) return res.status(400).json({ message: 'Invalid task type' })
+  const taskType =
+    requestedTaskType ||
+    String(currentTask.task_type || '').trim().toLowerCase() ||
+    (payload.client_id || currentTask.client_id || payload.service_id || currentTask.service_id ? 'task' : 'meeting')
+  const clientId = taskType === 'meeting' ? null : payload.client_id || null
+  const serviceId = taskType === 'meeting' ? null : payload.service_id || null
   if ((payload.status || '') && !status) return res.status(400).json({ message: 'Invalid task status' })
   if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
   const { rows } = await db.query(
     `UPDATE tasks
-     SET title=$1, description=$2, client_id=$3, service_id=$4, assigned_to=$5, assigned_to_ids=$6::jsonb, status=$7, priority=$8, due_date=$9, updated_at=NOW()
-     WHERE id=$10
+     SET title=$1, description=$2, client_id=$3, service_id=$4, assigned_to=$5, assigned_to_ids=$6::jsonb, status=$7, priority=$8, due_date=$9, task_type=$10, updated_at=NOW()
+     WHERE id=$11
      RETURNING *`,
     [
       payload.title,
       payload.description || null,
-      payload.client_id || null,
-      payload.service_id || null,
-      payload.assigned_to,
-      JSON.stringify([Number(payload.assigned_to)]),
+      clientId,
+      serviceId,
+      Number(payload.assigned_to),
+      JSON.stringify(normalizeAssignedIds(payload.assigned_to_ids, payload.assigned_to)),
       status,
       priority,
       payload.due_date,
+      taskType,
       id,
     ]
   )
@@ -2149,8 +2173,8 @@ app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin'
   const dueDate = new Date().toISOString().slice(0, 10)
   const taskResult = await db.query(
     `INSERT INTO tasks
-     (title, description, client_id, service_id, assigned_to, status, priority, due_date, is_automated, automation_rule_id)
-     VALUES ($1,$2,$3,$4,$5,'in_progress',$6,$7,TRUE,$8)
+     (title, description, client_id, service_id, task_type, assigned_to, assigned_to_ids, status, priority, due_date, is_automated, automation_rule_id)
+     VALUES ($1,$2,$3,$4,'task',$5,$6::jsonb,'in_progress',$7,$8,TRUE,$9)
      RETURNING *`,
     [
       rule.task_title_template,
@@ -2158,6 +2182,7 @@ app.post('/api/automation-rules/:id/run-now', authRequired, requireRole(['admin'
       rule.client_id,
       rule.service_id || null,
       rule.assigned_to,
+      JSON.stringify([Number(rule.assigned_to)]),
       rule.priority || 'medium',
       dueDate,
       id,

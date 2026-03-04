@@ -8,6 +8,7 @@ const SERVICE_STATUSES = ['not_started', 'in_progress', 'active', 'completed', '
 const SOCIAL_PLATFORMS = ['instagram', 'facebook', 'twitter', 'linkedin', 'tiktok', 'youtube']
 const TASK_STATUSES = ['pending', 'in_progress', 'completed', 'cancelled']
 const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent']
+const TASK_TYPES = ['task', 'meeting']
 const AUTOMATION_SCHEDULES = ['daily', 'weekdays', 'custom']
 const WEEK_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
 
@@ -55,6 +56,7 @@ module.exports = {
   SOCIAL_PLATFORMS,
   TASK_STATUSES,
   TASK_PRIORITIES,
+  TASK_TYPES,
   AUTOMATION_SCHEDULES,
   WEEK_DAYS,
   normalizeEnum,

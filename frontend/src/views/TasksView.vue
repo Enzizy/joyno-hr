@@ -32,6 +32,8 @@ const tab = ref('active')
 const searchQuery = ref('')
 const clientFilter = ref('all')
 const employeeFilter = ref('all')
+const taskTypeFilter = ref('all')
+const myRelevantOnly = ref(authStore.isEmployee)
 
 const clients = ref([])
 const services = ref([])
@@ -77,6 +79,11 @@ const priorityOptions = [
 ]
 
 const pageSizeOptions = [10, 20, 50]
+const taskTypeOptions = [
+  { value: 'all', label: 'All Types' },
+  { value: 'task', label: 'Task' },
+  { value: 'meeting', label: 'Meeting' },
+]
 
 const taskForm = ref({
   title: '',
@@ -115,6 +122,10 @@ const filteredAssignableUsers = computed(() => {
     const email = String(user.email || '').toLowerCase()
     return label.includes(q) || email.includes(q)
   })
+})
+const selectedAssigneeUsers = computed(() => {
+  const selected = new Set((taskForm.value.assigned_to_ids || []).map((id) => String(id)))
+  return assignableUsers.value.filter((user) => selected.has(String(user.id)))
 })
 
 function formatStatus(value) {
@@ -231,6 +242,49 @@ function serviceBadgeLabel(serviceType) {
   return 'General'
 }
 
+function resolveTaskType(row) {
+  const direct = String(row?.task_type || row?.task_type_resolved || '').trim().toLowerCase()
+  if (direct === 'meeting' || direct === 'task') return direct
+  if (row?.client_id || row?.service_id) return 'task'
+  return 'meeting'
+}
+
+function taskTypeLabel(value) {
+  return value === 'meeting' ? 'Meeting' : 'Task'
+}
+
+function taskTypeBadgeClass(value) {
+  if (value === 'meeting') return 'border-indigo-600/60 bg-indigo-900/30 text-indigo-200'
+  return 'border-emerald-600/60 bg-emerald-900/30 text-emerald-200'
+}
+
+function addDepartmentAssignees() {
+  const department = String(taskForm.value.assign_department || '').trim()
+  if (!department) {
+    toast.warning('Select a department first.')
+    return
+  }
+  const matches = assignableUsers.value
+    .filter((user) => String(user.department || '').trim() === department)
+    .map((user) => String(user.id))
+  if (!matches.length) {
+    toast.warning('No employees found in selected department.')
+    return
+  }
+  const merged = new Set([...(taskForm.value.assigned_to_ids || []).map((id) => String(id)), ...matches])
+  taskForm.value.assigned_to_ids = Array.from(merged)
+  toast.success(`Added ${matches.length} employee(s) from ${department}.`)
+}
+
+function removeSelectedAssignee(userId) {
+  const id = String(userId)
+  taskForm.value.assigned_to_ids = (taskForm.value.assigned_to_ids || []).filter((value) => String(value) !== id)
+}
+
+function clearSelectedAssignees() {
+  taskForm.value.assigned_to_ids = []
+}
+
 async function loadLookups() {
   const [clientData, serviceRows, userRows] = await Promise.all([
     getClients({ status: 'active', limit: 100, offset: 0 }),
@@ -245,11 +299,14 @@ async function loadLookups() {
 async function loadTasks() {
   loading.value = true
   try {
+    const relevantAssignedTo =
+      myRelevantOnly.value && Number(authStore.user?.id) ? Number(authStore.user?.id) : employeeFilter.value !== 'all' ? employeeFilter.value : null
     const data = await getTasks({
       tab: tab.value,
       search: searchQuery.value.trim(),
       client_id: clientFilter.value !== 'all' ? clientFilter.value : null,
-      assigned_to: employeeFilter.value !== 'all' ? employeeFilter.value : null,
+      assigned_to: relevantAssignedTo,
+      task_type: taskTypeFilter.value !== 'all' ? taskTypeFilter.value : null,
       limit: pageSize.value,
       offset: offset.value,
     })
@@ -359,6 +416,7 @@ function openCreate(mode = 'task') {
 
 function openEdit(row) {
   closeActionsMenu()
+  createMode.value = resolveTaskType(row)
   editingTask.value = row
   assigneeSearch.value = ''
   taskForm.value = {
@@ -392,6 +450,7 @@ async function saveTask() {
       ...taskForm.value,
       client_id: isMeetingCreate ? null : taskForm.value.client_id || null,
       service_id: isMeetingCreate ? null : taskForm.value.service_id || null,
+      task_type: editingTask.value ? resolveTaskType(editingTask.value) : createMode.value,
       assigned_to: Number(taskForm.value.assigned_to),
       assigned_to_ids: (taskForm.value.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
       assign_department: taskForm.value.assign_department || null,
@@ -486,7 +545,7 @@ function proofUrl(taskId) {
       </button>
     </div>
 
-    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-5">
+    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-6">
       <div class="sm:col-span-2">
         <label class="mb-1 block text-xs text-gray-400">Search</label>
         <input v-model="searchQuery" type="text" placeholder="Search task title" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @keyup.enter="applyFilters" />
@@ -500,9 +559,15 @@ function proofUrl(taskId) {
       </div>
       <div>
         <label class="mb-1 block text-xs text-gray-400">Employee</label>
-        <select v-model="employeeFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
+        <select v-model="employeeFilter" :disabled="myRelevantOnly" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 disabled:opacity-60" @change="applyFilters">
           <option value="all">All Employees</option>
           <option v-for="user in assignableUsers" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-gray-400">Type</label>
+        <select v-model="taskTypeFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
+          <option v-for="item in taskTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
         </select>
       </div>
       <div>
@@ -510,6 +575,12 @@ function proofUrl(taskId) {
         <select v-model.number="pageSize" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
           <option v-for="s in pageSizeOptions" :key="s" :value="s">{{ s }}</option>
         </select>
+      </div>
+      <div class="sm:col-span-6">
+        <label class="inline-flex items-center gap-2 text-sm text-gray-300">
+          <input v-model="myRelevantOnly" type="checkbox" class="rounded border-gray-700 bg-gray-900" @change="applyFilters" />
+          <span>My relevant only</span>
+        </label>
       </div>
     </div>
 
@@ -521,6 +592,9 @@ function proofUrl(taskId) {
               <h3 class="text-lg font-semibold text-primary-200">
                 {{ row.title }}
               </h3>
+              <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="taskTypeBadgeClass(resolveTaskType(row))">
+                {{ taskTypeLabel(resolveTaskType(row)) }}
+              </span>
               <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="serviceBadgeClass(row.service_type)">
                 {{ serviceBadgeLabel(row.service_type) }}
               </span>
@@ -612,7 +686,9 @@ function proofUrl(taskId) {
 
   <AppModal :show="showTaskModal" :title="editingTask ? 'Edit Task' : (createMode === 'meeting' ? 'Create Meeting' : 'Create Task')" @close="showTaskModal = false">
     <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="saveTask">
-      <div class="sm:col-span-2"><AppInput v-model="taskForm.title" label="Task Title" required /></div>
+      <div class="sm:col-span-2">
+        <AppInput v-model="taskForm.title" :label="!editingTask && createMode === 'meeting' ? 'Meeting Title' : 'Task Title'" required />
+      </div>
       <div class="sm:col-span-2">
         <label class="mb-1 block text-sm font-medium text-gray-200">Description</label>
         <textarea v-model="taskForm.description" rows="3" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" />
@@ -632,7 +708,7 @@ function proofUrl(taskId) {
         </select>
       </div>
       <div>
-        <label class="mb-1 block text-sm font-medium text-gray-200">Assign To</label>
+        <label class="mb-1 block text-sm font-medium text-gray-200">{{ !editingTask && createMode === 'meeting' ? 'Attendees' : 'Assign To' }}</label>
         <template v-if="editingTask">
           <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
             <option value="" disabled>Select employee</option>
@@ -655,16 +731,38 @@ function proofUrl(taskId) {
               <p v-if="!filteredAssignableUsers.length" class="px-2 py-1 text-xs text-gray-400">No employee found.</p>
             </div>
             <p class="mt-2 text-xs text-gray-400">Selected: {{ taskForm.assigned_to_ids.length }}</p>
+            <div v-if="selectedAssigneeUsers.length" class="mt-2 flex flex-wrap gap-2">
+              <button
+                v-for="user in selectedAssigneeUsers"
+                :key="`selected-${user.id}`"
+                type="button"
+                class="inline-flex items-center gap-1 rounded-full border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                @click="removeSelectedAssignee(user.id)"
+              >
+                {{ userLabel(user.id) }}
+                <span aria-hidden="true">x</span>
+              </button>
+              <button
+                type="button"
+                class="inline-flex items-center rounded-full border border-red-700/60 bg-red-900/20 px-2 py-1 text-xs text-red-200 hover:bg-red-900/30"
+                @click="clearSelectedAssignees"
+              >
+                Clear
+              </button>
+            </div>
           </div>
         </template>
       </div>
       <div v-if="!editingTask">
         <label class="mb-1 block text-sm font-medium text-gray-200">Assign Department (optional)</label>
-        <select v-model="taskForm.assign_department" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option value="">No department</option>
-          <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
-        </select>
-        <p class="mt-1 text-xs text-gray-400">Creates tasks for all accounts linked to employees in this department.</p>
+        <div class="flex gap-2">
+          <select v-model="taskForm.assign_department" class="block flex-1 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+            <option value="">No department</option>
+            <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
+          </select>
+          <AppButton type="button" variant="secondary" size="sm" @click="addDepartmentAssignees">Select All</AppButton>
+        </div>
+        <p class="mt-1 text-xs text-gray-400">One-click add all linked users from a department to assignees.</p>
       </div>
       <div v-if="!editingTask" class="sm:col-span-2">
         <label class="inline-flex items-center gap-2 text-sm text-gray-200">
@@ -728,6 +826,10 @@ function proofUrl(taskId) {
         <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
           <p class="text-xs text-gray-400">Priority</p>
           <p class="mt-1 text-sm text-gray-200">{{ formatPriority(selectedTask.priority) }}</p>
+        </div>
+        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
+          <p class="text-xs text-gray-400">Type</p>
+          <p class="mt-1 text-sm text-gray-200">{{ taskTypeLabel(resolveTaskType(selectedTask)) }}</p>
         </div>
         <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
           <p class="text-xs text-gray-400">Due Date</p>

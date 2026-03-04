@@ -251,6 +251,7 @@ export async function getTasks(options = {}) {
   if (options.search) params.set('search', options.search)
   if (options.client_id) params.set('client_id', options.client_id)
   if (options.assigned_to) params.set('assigned_to', options.assigned_to)
+  if (options.task_type) params.set('task_type', options.task_type)
   if (options.limit) params.set('limit', options.limit)
   if (options.offset || options.offset === 0) params.set('offset', options.offset)
   const qs = params.toString()

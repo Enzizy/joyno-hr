@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   description TEXT,
   client_id INTEGER NULL,
   service_id INTEGER NULL,
+  task_type VARCHAR(20) NOT NULL DEFAULT 'task',
   assigned_to INTEGER NOT NULL,
   assigned_to_ids JSONB DEFAULT '[]'::jsonb,
   status VARCHAR(40) DEFAULT 'pending',

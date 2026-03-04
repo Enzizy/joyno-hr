@@ -14,6 +14,7 @@ const page = ref(1)
 const pageSize = ref(10)
 const tab = ref('active')
 const searchQuery = ref('')
+const taskTypeFilter = ref('all')
 
 const showCompleteModal = ref(false)
 const completingTask = ref(null)
@@ -44,6 +45,11 @@ const priorityOptions = [
 ]
 
 const pageSizeOptions = [10, 20, 50]
+const taskTypeOptions = [
+  { value: 'all', label: 'All Types' },
+  { value: 'task', label: 'Task' },
+  { value: 'meeting', label: 'Meeting' },
+]
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const offset = computed(() => (page.value - 1) * pageSize.value)
@@ -125,12 +131,29 @@ function serviceBadgeLabel(serviceType) {
   return 'General'
 }
 
+function resolveTaskType(row) {
+  const direct = String(row?.task_type || row?.task_type_resolved || '').trim().toLowerCase()
+  if (direct === 'meeting' || direct === 'task') return direct
+  if (row?.client_id || row?.service_id) return 'task'
+  return 'meeting'
+}
+
+function taskTypeLabel(value) {
+  return value === 'meeting' ? 'Meeting' : 'Task'
+}
+
+function taskTypeBadgeClass(value) {
+  if (value === 'meeting') return 'border-indigo-600/60 bg-indigo-900/30 text-indigo-200'
+  return 'border-emerald-600/60 bg-emerald-900/30 text-emerald-200'
+}
+
 async function loadTasks() {
   loading.value = true
   try {
     const data = await getTasks({
       tab: tab.value,
       search: searchQuery.value.trim(),
+      task_type: taskTypeFilter.value !== 'all' ? taskTypeFilter.value : null,
       limit: pageSize.value,
       offset: offset.value,
     })
@@ -223,9 +246,15 @@ function proofUrl(taskId) {
     </div>
 
     <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-4">
-      <div class="sm:col-span-2">
+      <div>
         <label class="mb-1 block text-xs text-gray-400">Search</label>
         <input v-model="searchQuery" type="text" placeholder="Search task title" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @keyup.enter="applyFilters" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs text-gray-400">Type</label>
+        <select v-model="taskTypeFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
+          <option v-for="item in taskTypeOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+        </select>
       </div>
       <div>
         <label class="mb-1 block text-xs text-gray-400">Rows</label>
@@ -244,6 +273,9 @@ function proofUrl(taskId) {
           <div class="space-y-2">
             <div class="flex items-center gap-2">
               <h3 class="text-lg font-semibold text-primary-200">{{ row.title }}</h3>
+              <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="taskTypeBadgeClass(resolveTaskType(row))">
+                {{ taskTypeLabel(resolveTaskType(row)) }}
+              </span>
               <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="serviceBadgeClass(row.service_type)">
                 {{ serviceBadgeLabel(row.service_type) }}
               </span>
