@@ -25,6 +25,8 @@ const cancelling = ref(false)
 const attachmentModal = ref(false)
 const attachmentUrl = ref('')
 const attachmentLoading = ref(false)
+const reasonModal = ref(false)
+const reasonRow = ref(null)
 const editModal = ref(false)
 const editingRow = ref(null)
 const editSubmitting = ref(false)
@@ -209,7 +211,7 @@ function formatDateTime(value) {
   })
 }
 
-function truncateText(value, max = 40) {
+function truncateReason(value, max = 44) {
   const text = String(value || '').trim()
   if (!text) return '-'
   if (text.length <= max) return text
@@ -287,6 +289,16 @@ function openCancelModal(row) {
 function closeCancelModal() {
   cancelModal.value = false
   cancellingRow.value = null
+}
+
+function openReasonModal(row) {
+  reasonRow.value = row
+  reasonModal.value = true
+}
+
+function closeReasonModal() {
+  reasonModal.value = false
+  reasonRow.value = null
 }
 
 function resolveLeaveTypeId(row) {
@@ -529,8 +541,16 @@ function onEditAttachmentChange(event) {
             <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">{{ formatDateTime(row.created_at) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
-            <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.reason || '-'">
-              {{ truncateText(row.reason, 44) }}
+            <td class="px-4 py-3 text-sm text-gray-300 max-w-[140px] truncate">
+              <button
+                v-if="row.reason"
+                class="text-left text-gray-300 hover:text-primary-200"
+                :title="row.reason"
+                @click="openReasonModal(row)"
+              >
+                {{ truncateReason(row.reason) }}
+              </button>
+              <span v-else>-</span>
             </td>
             <td class="px-4 py-3 text-sm text-gray-300 uppercase">
               {{ formatPayType(row.leave_pay_type) }}
@@ -657,6 +677,12 @@ function onEditAttachmentChange(event) {
     </div>
     <template #footer>
       <AppButton variant="secondary" @click="closeAttachment">Close</AppButton>
+    </template>
+  </AppModal>
+  <AppModal :show="reasonModal" title="Leave reason" @close="closeReasonModal">
+    <p class="text-sm whitespace-pre-wrap text-gray-200">{{ reasonRow?.reason || '-' }}</p>
+    <template #footer>
+      <AppButton variant="secondary" @click="closeReasonModal">Close</AppButton>
     </template>
   </AppModal>
 </template>
