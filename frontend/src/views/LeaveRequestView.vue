@@ -196,6 +196,26 @@ function formatRange(start, end) {
   return `${formatDate(start)} - ${formatDate(end)}`
 }
 
+function formatDateTime(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function truncateText(value, max = 40) {
+  const text = String(value || '').trim()
+  if (!text) return '-'
+  if (text.length <= max) return text
+  return `${text.slice(0, max)}...`
+}
+
 function hasOverlap(startDate, endDate, excludeId = null) {
   if (!startDate || !endDate) return false
   return myRequests.value.some((r) => {
@@ -494,7 +514,9 @@ function onEditAttachmentChange(event) {
         <thead class="bg-gray-950">
           <tr>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Dates</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Date filed</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Reason</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Pay</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
@@ -505,7 +527,11 @@ function onEditAttachmentChange(event) {
         <tbody class="divide-y divide-gray-800 bg-gray-900">
           <tr v-for="row in myRequests" :key="row.id" class="hover:bg-gray-950">
             <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
+            <td class="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">{{ formatDateTime(row.created_at) }}</td>
             <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
+            <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.reason || '-'">
+              {{ truncateText(row.reason, 44) }}
+            </td>
             <td class="px-4 py-3 text-sm text-gray-300 uppercase">
               {{ formatPayType(row.leave_pay_type) }}
               <span v-if="formatPayBreakdown(row)" class="ml-2 text-xs normal-case text-gray-400">
@@ -547,7 +573,7 @@ function onEditAttachmentChange(event) {
             </td>
           </tr>
           <tr v-if="!myRequests.length && !leaveStore.loading">
-            <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
+            <td colspan="9" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
           </tr>
         </tbody>
       </AppTable>
