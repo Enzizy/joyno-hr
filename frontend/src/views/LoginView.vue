@@ -68,6 +68,11 @@ async function onSubmit() {
             required
             :error="error && password ? error : ''"
           />
+          <div class="flex justify-end">
+            <RouterLink to="/forgot-password" class="text-sm text-primary-300 hover:text-primary-200">
+              Forgot password?
+            </RouterLink>
+          </div>
           <AppButton type="submit" class="w-full" :loading="loading">
             Sign in
           </AppButton>

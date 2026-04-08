@@ -8,7 +8,7 @@ async function request(path, options = {}) {
   const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData
   const headers = { ...(options.headers || {}) }
   if (!isFormData) headers['Content-Type'] = 'application/json'
-  const token = getToken()
+  const token = options.skipAuth ? null : getToken()
   if (token) headers.Authorization = `Bearer ${token}`
 
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
@@ -26,7 +26,19 @@ async function request(path, options = {}) {
 }
 
 export async function login(email, password) {
-  return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+  return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }), skipAuth: true })
+}
+
+export async function forgotPassword(email) {
+  return request('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }), skipAuth: true })
+}
+
+export async function resetPassword(token, newPassword) {
+  return request('/api/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, newPassword }),
+    skipAuth: true,
+  })
 }
 
 export async function fetchMe() {

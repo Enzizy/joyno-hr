@@ -8,6 +8,7 @@ const ExcelJS = require('exceljs')
 const jwt = require('jsonwebtoken')
 const bcrypt = require('bcryptjs')
 const nodemailer = require('nodemailer')
+const crypto = require('crypto')
 const db = require('./db')
 const { runMigrations } = require('./migrate')
 const { addAuditLog, updateEmployeeStatus, syncAllEmployeeStatuses } = require('./helpers')
@@ -95,6 +96,8 @@ const BREVO_API_KEY = (process.env.BREVO_API_KEY || '').trim()
 const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim()
 const BREVO_FROM_NAME = (process.env.BREVO_FROM_NAME || '').trim()
 const MAIL_APP_NAME = (process.env.MAIL_APP_NAME || BREVO_FROM_NAME || 'Joyno Admin').trim()
+const RESET_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.RESET_TOKEN_TTL_MINUTES || 30))
+const RESET_PASSWORD_PATH = (process.env.RESET_PASSWORD_PATH || '/reset-password').trim()
 const PRIMARY_FRONTEND_ORIGIN = FRONTEND_ORIGIN.split(',')
   .map((origin) => origin.trim())
   .filter(Boolean)[0]
@@ -173,6 +176,19 @@ function buildBrandedEmailHtml({ subject, text }) {
     </table>
   </body>
 </html>`
+}
+
+function hashResetToken(rawToken) {
+  return crypto.createHash('sha256').update(String(rawToken || '')).digest('hex')
+}
+
+function buildResetPasswordUrl(rawToken) {
+  if (!rawToken) return ''
+  const base = (PRIMARY_FRONTEND_ORIGIN || '').trim()
+  if (!base) return ''
+  const normalizedPath = RESET_PASSWORD_PATH.startsWith('/') ? RESET_PASSWORD_PATH : `/${RESET_PASSWORD_PATH}`
+  const separator = normalizedPath.includes('?') ? '&' : '?'
+  return `${base}${normalizedPath}${separator}token=${encodeURIComponent(rawToken)}`
 }
 
 function formatEmailDate(value) {
@@ -904,6 +920,77 @@ app.post('/api/auth/change-password', authRequired, async (req, res) => {
   const hash = await bcrypt.hash(newPassword, 10)
   await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id])
   res.json({ message: 'Password updated' })
+})
+
+app.post('/api/auth/forgot-password', loginLimiter, async (req, res) => {
+  const genericMessage = 'If the account exists, a password reset link has been sent.'
+  const email = String(req.body?.email || '').trim().toLowerCase()
+  if (!email) return res.json({ message: genericMessage })
+
+  const { rows } = await db.query('SELECT id, email FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email])
+  const user = rows[0]
+  if (!user) return res.json({ message: genericMessage })
+
+  const rawToken = crypto.randomBytes(32).toString('hex')
+  const tokenHash = hashResetToken(rawToken)
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000)
+  const resetUrl = buildResetPasswordUrl(rawToken)
+
+  await db.query('DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < NOW()', [user.id])
+  await db.query(
+    'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
+    [user.id, tokenHash, expiresAt.toISOString()]
+  )
+
+  if (resetUrl) {
+    sendEmailNotification({
+      to: user.email,
+      subject: 'Reset your password',
+      text:
+        `Hi,\n\n` +
+        `We received a request to reset your password.\n` +
+        `Use this link to continue:\n${resetUrl}\n\n` +
+        `This link expires in ${RESET_TOKEN_TTL_MINUTES} minutes.\n` +
+        `If you did not request this, you can ignore this email.\n\n` +
+        `- ${MAIL_APP_NAME}`,
+    })
+  }
+
+  return res.json({ message: genericMessage })
+})
+
+app.post('/api/auth/reset-password', loginLimiter, async (req, res) => {
+  const rawToken = String(req.body?.token || '').trim()
+  const newPassword = String(req.body?.newPassword || '')
+  if (!rawToken || !newPassword) return res.status(400).json({ message: 'Token and new password are required.' })
+  if (newPassword.length < 6) return res.status(400).json({ message: 'Password must be at least 6 characters.' })
+
+  const tokenHash = hashResetToken(rawToken)
+  const { rows } = await db.query(
+    `SELECT id, user_id, expires_at, used_at
+     FROM password_reset_tokens
+     WHERE token_hash = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [tokenHash]
+  )
+  const tokenRow = rows[0]
+  if (!tokenRow) return res.status(400).json({ message: 'Invalid or expired reset link.' })
+  if (tokenRow.used_at) return res.status(400).json({ message: 'Reset link has already been used.' })
+  if (new Date(tokenRow.expires_at) < new Date()) return res.status(400).json({ message: 'Reset link has expired.' })
+
+  const passwordHash = await bcrypt.hash(newPassword, 10)
+  await db.query('BEGIN')
+  try {
+    await db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, tokenRow.user_id])
+    await db.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL', [tokenRow.user_id])
+    await db.query('COMMIT')
+  } catch (error) {
+    await db.query('ROLLBACK')
+    throw error
+  }
+
+  return res.json({ message: 'Password reset successful. You can now log in.' })
 })
 
 // Users (Admin)
