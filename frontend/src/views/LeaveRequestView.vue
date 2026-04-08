@@ -32,6 +32,7 @@ const editingRow = ref(null)
 const editSubmitting = ref(false)
 const editAttachment = ref(null)
 const editForm = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
+const reasonMax = 24
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -211,11 +212,11 @@ function formatDateTime(value) {
   })
 }
 
-function truncateReason(value, max = 44) {
+function truncateReason(value) {
   const text = String(value || '').trim()
   if (!text) return '-'
-  if (text.length <= max) return text
-  return `${text.slice(0, max)}...`
+  if (text.length <= reasonMax) return text
+  return `${text.slice(0, reasonMax)}…`
 }
 
 function hasOverlap(startDate, endDate, excludeId = null) {
