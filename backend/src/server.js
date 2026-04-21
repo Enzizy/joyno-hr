@@ -2917,10 +2917,24 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr', 'ce
   const { sql, params } = buildLeaveReportQuery(from, to)
   const { rows } = await db.query(sql, params)
 
+  const formatReportDate = (value) => {
+    if (!value) return ''
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return String(value)
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+    }).format(date)
+  }
+
   const workbook = new ExcelJS.Workbook()
   const sheet = workbook.addWorksheet('Leave Report')
   sheet.columns = [
     { header: 'Employee', key: 'employee', width: 28 },
+    { header: 'Filed date', key: 'filed_date', width: 18 },
+    { header: 'Leave start', key: 'leave_start', width: 18 },
+    { header: 'Leave end', key: 'leave_end', width: 18 },
     { header: 'Leave type', key: 'type', width: 20 },
     { header: 'Pay type', key: 'pay_type', width: 14 },
     { header: 'Paid days', key: 'paid_days', width: 12 },
@@ -2947,6 +2961,9 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr', 'ce
         : '')
     sheet.addRow({
       employee: r.employee_name || r.employee_id || '',
+      filed_date: formatReportDate(r.created_at),
+      leave_start: formatReportDate(r.start_date),
+      leave_end: formatReportDate(r.end_date),
       type: r.leave_type_name || r.leave_type_id || '',
       pay_type: r.leave_pay_type || 'unpaid',
       paid_days: Number(r.paid_days || 0),
