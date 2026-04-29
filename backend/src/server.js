@@ -40,7 +40,7 @@ let backgroundJobsStarted = false
 
 const USER_AUTH_COLUMNS = 'id, email, password_hash, role, employee_id, created_at'
 const EMPLOYEE_COLUMNS =
-  'id, employee_code, first_name, last_name, department, position, shift, leave_credits, date_hired, status, created_at, updated_at'
+  'id, employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_entitlement, date_hired, status, created_at, updated_at'
 const LEAD_COLUMNS =
   'id, company_name, contact_name, email, phone, source, status, interested_services, estimated_value, next_follow_up, notes, converted_client_id, created_at'
 const CLIENT_COLUMNS =
@@ -615,13 +615,28 @@ function currentCreditYear() {
   return new Date().getFullYear()
 }
 
+function calculateTenureMonths(dateValue, asOf = new Date()) {
+  if (!dateValue) return 0
+  const hired = new Date(dateValue)
+  const date = new Date(asOf)
+  if (Number.isNaN(hired.getTime()) || Number.isNaN(date.getTime())) return 0
+  let months = (date.getFullYear() - hired.getFullYear()) * 12 + (date.getMonth() - hired.getMonth())
+  if (date.getDate() < hired.getDate()) months -= 1
+  return Math.max(0, months)
+}
+
+function leaveCreditsByTenure(dateValue, asOf = new Date()) {
+  const months = calculateTenureMonths(dateValue, asOf)
+  if (months >= 12) return DEFAULT_LEAVE_CREDITS
+  if (months >= 6) return 3
+  return 0
+}
+
 async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
   const id = Number(employeeId)
   if (!id) return
   const year = currentCreditYear()
-  await db.query(
-    `UPDATE employees
-     SET leave_credits = CASE
+  const entitlementExpression = `CASE
            WHEN date_hired IS NULL THEN 0
            WHEN (
              DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
@@ -632,20 +647,32 @@ async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
              DATE_PART('month', AGE(CURRENT_DATE, date_hired))
            ) >= 6 THEN 3
            ELSE 0
-         END,
+         END`
+  await db.query(
+    `UPDATE employees
+     SET leave_credits = ${entitlementExpression},
+         leave_credits_entitlement = ${entitlementExpression},
          leave_credits_reset_year = $1,
          updated_at = NOW()
      WHERE id = $2
        AND COALESCE(leave_credits_reset_year, 0) < $1`,
     [year, id]
   )
+  await db.query(
+    `UPDATE employees
+     SET leave_credits = leave_credits + (${entitlementExpression} - COALESCE(leave_credits_entitlement, 0)),
+         leave_credits_entitlement = ${entitlementExpression},
+         updated_at = NOW()
+     WHERE id = $1
+       AND COALESCE(leave_credits_reset_year, $2) = $2
+       AND ${entitlementExpression} > COALESCE(leave_credits_entitlement, 0)`,
+    [id, year]
+  )
 }
 
 async function resetAllEmployeeLeaveCreditsIfNeeded() {
   const year = currentCreditYear()
-  await db.query(
-    `UPDATE employees
-     SET leave_credits = CASE
+  const entitlementExpression = `CASE
            WHEN date_hired IS NULL THEN 0
            WHEN (
              DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
@@ -656,10 +683,23 @@ async function resetAllEmployeeLeaveCreditsIfNeeded() {
              DATE_PART('month', AGE(CURRENT_DATE, date_hired))
            ) >= 6 THEN 3
            ELSE 0
-         END,
+         END`
+  await db.query(
+    `UPDATE employees
+     SET leave_credits = ${entitlementExpression},
+         leave_credits_entitlement = ${entitlementExpression},
          leave_credits_reset_year = $1,
          updated_at = NOW()
      WHERE COALESCE(leave_credits_reset_year, 0) < $1`,
+    [year]
+  )
+  await db.query(
+    `UPDATE employees
+     SET leave_credits = leave_credits + (${entitlementExpression} - COALESCE(leave_credits_entitlement, 0)),
+         leave_credits_entitlement = ${entitlementExpression},
+         updated_at = NOW()
+     WHERE COALESCE(leave_credits_reset_year, $1) = $1
+       AND ${entitlementExpression} > COALESCE(leave_credits_entitlement, 0)`,
     [year]
   )
 }
@@ -1066,20 +1106,12 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const e = req.body || {}
-  const leaveCreditsInput = Number(e.leave_credits)
-  const hasLeaveCreditsInput = Number.isFinite(leaveCreditsInput) && leaveCreditsInput >= 0
-  const dateHired = e.date_hired ? new Date(e.date_hired) : null
-  const tenureMonths =
-    dateHired && !Number.isNaN(dateHired.getTime())
-      ? (new Date().getFullYear() - dateHired.getFullYear()) * 12 + (new Date().getMonth() - dateHired.getMonth())
-      : 0
-  const defaultCreditsByTenure = tenureMonths >= 12 ? 15 : tenureMonths >= 6 ? 3 : 0
-  const leaveCredits = hasLeaveCreditsInput ? leaveCreditsInput : defaultCreditsByTenure
+  const leaveCredits = leaveCreditsByTenure(e.date_hired)
   const resetYear = currentCreditYear()
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_reset_year, date_hired, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+     (employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_entitlement, leave_credits_reset_year, date_hired, status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING id`,
     [
       e.employee_code,
@@ -1088,7 +1120,8 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), as
       e.department,
       e.position,
       e.shift || 'day',
-      Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : defaultCreditsByTenure,
+      leaveCredits,
+      leaveCredits,
       resetYear,
       e.date_hired,
       e.status || 'active',
@@ -1102,13 +1135,25 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), as
 
 app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const e = req.body || {}
-  const leaveCredits = Number(e.leave_credits)
-  const safeLeaveCredits = Number.isFinite(leaveCredits) && leaveCredits >= 0 ? leaveCredits : DEFAULT_LEAVE_CREDITS
-  const resetYear = currentCreditYear()
+  const existingResult = await db.query(
+    'SELECT leave_credits, COALESCE(leave_credits_entitlement, leave_credits) AS leave_credits_entitlement FROM employees WHERE id = $1',
+    [req.params.id]
+  )
+  const existingEmployee = existingResult.rows[0]
+  if (!existingEmployee) return res.status(404).json({ message: 'Employee not found' })
+  const nextEntitlement = leaveCreditsByTenure(e.date_hired)
+  const currentCredits = Math.max(0, Number(existingEmployee.leave_credits || 0))
+  const currentEntitlement = Math.max(0, Number(existingEmployee.leave_credits_entitlement || 0))
+  let nextCredits = currentCredits
+  if (nextEntitlement > currentEntitlement) {
+    nextCredits = currentCredits + (nextEntitlement - currentEntitlement)
+  } else if (nextEntitlement < currentEntitlement) {
+    nextCredits = Math.min(currentCredits, nextEntitlement)
+  }
   await db.query(
     `UPDATE employees
      SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6,
-         leave_credits=$7, leave_credits_reset_year=$8, date_hired=$9, status=$10
+         leave_credits=$7, leave_credits_entitlement=$8, date_hired=$9, status=$10
      WHERE id=$11`,
     [
       e.employee_code,
@@ -1117,8 +1162,8 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
       e.department,
       e.position,
       e.shift || 'day',
-      safeLeaveCredits,
-      resetYear,
+      nextCredits,
+      nextEntitlement,
       e.date_hired,
       e.status || 'active',
       req.params.id,

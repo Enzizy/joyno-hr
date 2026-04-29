@@ -34,7 +34,6 @@ const form = ref({
   department: '',
   position: '',
   shift: 'day',
-  leave_credits: 15,
   date_hired: '',
   status: 'active',
 })
@@ -66,6 +65,25 @@ const filteredEmployees = computed(() => {
 const totalEmployees = computed(() => employeeStore.list.length)
 const visibleEmployees = computed(() => filteredEmployees.value.length)
 
+function monthsEmployed(dateValue) {
+  if (!dateValue) return 0
+  const hired = new Date(dateValue)
+  if (Number.isNaN(hired.getTime())) return 0
+  const today = new Date()
+  let months = (today.getFullYear() - hired.getFullYear()) * 12 + (today.getMonth() - hired.getMonth())
+  if (today.getDate() < hired.getDate()) months -= 1
+  return Math.max(0, months)
+}
+
+function creditsByTenure(dateValue) {
+  const months = monthsEmployed(dateValue)
+  if (months >= 12) return 15
+  if (months >= 6) return 3
+  return 0
+}
+
+const computedFormCredits = computed(() => creditsByTenure(form.value.date_hired))
+
 function openCreate() {
   editingId.value = null
   form.value = {
@@ -75,7 +93,6 @@ function openCreate() {
     department: '',
     position: '',
     shift: 'day',
-    leave_credits: 15,
     date_hired: '',
     status: 'active',
   }
@@ -91,7 +108,6 @@ function openEdit(row) {
     department: row.department,
     position: row.position,
     shift: row.shift || 'day',
-    leave_credits: Number(row.leave_credits ?? 15),
     date_hired: row.date_hired?.slice(0, 10) ?? '',
     status: row.status,
   }
@@ -264,7 +280,7 @@ async function submitAwol() {
           </td>
         </tr>
         <tr v-if="!filteredEmployees.length && !employeeStore.loading">
-          <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">No employees yet.</td>
+          <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-400">No employees yet.</td>
         </tr>
       </tbody>
     </AppTable>
@@ -299,8 +315,12 @@ async function submitAwol() {
             </option>
           </select>
         </div>
-        <AppInput v-model="form.leave_credits" type="number" min="0" step="0.5" label="Leave credits" required />
         <AppInput v-model="form.date_hired" type="date" label="Date hired" required />
+        <div class="rounded-lg border border-gray-800 bg-gray-950/70 px-4 py-3">
+          <p class="text-sm font-medium text-gray-200">Auto leave credits</p>
+          <p class="mt-1 text-2xl font-bold text-primary-200">{{ computedFormCredits.toFixed(2) }}</p>
+          <p class="mt-1 text-xs text-gray-400">Based on date hired: below 6 months = 0, 6-11 months = 3, 12+ months = 15.</p>
+        </div>
         <div>
           <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
           <select
