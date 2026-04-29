@@ -41,20 +41,12 @@ const form = ref({
 
 onMounted(() => {
   employeeStore.fetchList()
-  document.addEventListener('visibilitychange', refreshEmployeesWhenVisible)
   document.addEventListener('click', closeActionMenu)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('visibilitychange', refreshEmployeesWhenVisible)
   document.removeEventListener('click', closeActionMenu)
 })
-
-function refreshEmployeesWhenVisible() {
-  if (document.visibilityState === 'visible') {
-    employeeStore.fetchList()
-  }
-}
 
 const filteredEmployees = computed(() => {
   let rows = employeeStore.list
