@@ -632,11 +632,8 @@ function leaveCreditsByTenure(dateValue, asOf = new Date()) {
   return 0
 }
 
-async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
-  const id = Number(employeeId)
-  if (!id) return
-  const year = currentCreditYear()
-  const entitlementExpression = `CASE
+function leaveCreditEntitlementExpression() {
+  return `CASE
            WHEN date_hired IS NULL THEN 0
            WHEN (
              DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
@@ -648,6 +645,18 @@ async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
            ) >= 6 THEN 3
            ELSE 0
          END`
+}
+
+async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
+  const id = Number(employeeId)
+  if (!id) return
+  const year = currentCreditYear()
+  const entitlementExpression = leaveCreditEntitlementExpression()
+  const usedCreditsExpression = `(SELECT COALESCE(SUM(COALESCE(lr.credits_deducted, 0)), 0)
+    FROM leave_requests lr
+    WHERE lr.employee_id = employees.id
+      AND lr.status = 'approved'
+      AND EXTRACT(YEAR FROM lr.start_date) = ${year})`
   await db.query(
     `UPDATE employees
      SET leave_credits = ${entitlementExpression},
@@ -660,30 +669,26 @@ async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
   )
   await db.query(
     `UPDATE employees
-     SET leave_credits = leave_credits + (${entitlementExpression} - COALESCE(leave_credits_entitlement, 0)),
+     SET leave_credits = GREATEST(
+           leave_credits,
+           GREATEST(0, ${entitlementExpression} - ${usedCreditsExpression})
+         ),
          leave_credits_entitlement = ${entitlementExpression},
          updated_at = NOW()
      WHERE id = $1
-       AND COALESCE(leave_credits_reset_year, $2) = $2
-       AND ${entitlementExpression} > COALESCE(leave_credits_entitlement, 0)`,
+       AND COALESCE(leave_credits_reset_year, $2) = $2`,
     [id, year]
   )
 }
 
 async function resetAllEmployeeLeaveCreditsIfNeeded() {
   const year = currentCreditYear()
-  const entitlementExpression = `CASE
-           WHEN date_hired IS NULL THEN 0
-           WHEN (
-             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
-             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
-           ) >= 12 THEN 15
-           WHEN (
-             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
-             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
-           ) >= 6 THEN 3
-           ELSE 0
-         END`
+  const entitlementExpression = leaveCreditEntitlementExpression()
+  const usedCreditsExpression = `(SELECT COALESCE(SUM(COALESCE(lr.credits_deducted, 0)), 0)
+    FROM leave_requests lr
+    WHERE lr.employee_id = employees.id
+      AND lr.status = 'approved'
+      AND EXTRACT(YEAR FROM lr.start_date) = ${year})`
   await db.query(
     `UPDATE employees
      SET leave_credits = ${entitlementExpression},
@@ -695,11 +700,13 @@ async function resetAllEmployeeLeaveCreditsIfNeeded() {
   )
   await db.query(
     `UPDATE employees
-     SET leave_credits = leave_credits + (${entitlementExpression} - COALESCE(leave_credits_entitlement, 0)),
+     SET leave_credits = GREATEST(
+           leave_credits,
+           GREATEST(0, ${entitlementExpression} - ${usedCreditsExpression})
+         ),
          leave_credits_entitlement = ${entitlementExpression},
          updated_at = NOW()
-     WHERE COALESCE(leave_credits_reset_year, $1) = $1
-       AND ${entitlementExpression} > COALESCE(leave_credits_entitlement, 0)`,
+     WHERE COALESCE(leave_credits_reset_year, $1) = $1`,
     [year]
   )
 }

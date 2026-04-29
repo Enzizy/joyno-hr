@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useToastStore } from '@/stores/toastStore'
 import { setEmployeeAwol as setEmployeeAwolApi } from '@/services/backendService'
@@ -38,7 +38,20 @@ const form = ref({
   status: 'active',
 })
 
-onMounted(() => employeeStore.fetchList())
+onMounted(() => {
+  employeeStore.fetchList()
+  document.addEventListener('visibilitychange', refreshEmployeesWhenVisible)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', refreshEmployeesWhenVisible)
+})
+
+function refreshEmployeesWhenVisible() {
+  if (document.visibilityState === 'visible') {
+    employeeStore.fetchList()
+  }
+}
 
 const filteredEmployees = computed(() => {
   let rows = employeeStore.list
@@ -99,17 +112,23 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(row) {
+async function openEdit(row) {
   editingId.value = row.id
+  let source = row
+  try {
+    source = await employeeStore.fetchOne(row.id)
+  } catch (err) {
+    toast.warning('Using cached employee data. Refresh if leave credits look outdated.')
+  }
   form.value = {
-    employee_code: row.employee_code,
-    first_name: row.first_name,
-    last_name: row.last_name,
-    department: row.department,
-    position: row.position,
-    shift: row.shift || 'day',
-    date_hired: row.date_hired?.slice(0, 10) ?? '',
-    status: row.status,
+    employee_code: source.employee_code,
+    first_name: source.first_name,
+    last_name: source.last_name,
+    department: source.department,
+    position: source.position,
+    shift: source.shift || 'day',
+    date_hired: source.date_hired?.slice(0, 10) ?? '',
+    status: source.status,
   }
   showModal.value = true
 }

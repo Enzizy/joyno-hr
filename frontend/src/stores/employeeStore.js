@@ -31,6 +31,10 @@ export const useEmployeeStore = defineStore('employee', () => {
     loading.value = true
     try {
       current.value = await getEmployee(id)
+      const idx = list.value.findIndex((employee) => employee.id === id)
+      if (idx !== -1) {
+        list.value[idx] = { ...list.value[idx], ...current.value }
+      }
       return current.value
     } finally {
       loading.value = false
