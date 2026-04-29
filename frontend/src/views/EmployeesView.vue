@@ -17,6 +17,7 @@ const showDeleteModal = ref(false)
 const deletingEmployee = ref(null)
 const deletingEmployeeLoading = ref(false)
 const editingId = ref(null)
+const openActionMenuId = ref(null)
 const awolModal = ref(false)
 const awolSubmitting = ref(false)
 const awolTarget = ref(null)
@@ -41,10 +42,12 @@ const form = ref({
 onMounted(() => {
   employeeStore.fetchList()
   document.addEventListener('visibilitychange', refreshEmployeesWhenVisible)
+  document.addEventListener('click', closeActionMenu)
 })
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', refreshEmployeesWhenVisible)
+  document.removeEventListener('click', closeActionMenu)
 })
 
 function refreshEmployeesWhenVisible() {
@@ -98,6 +101,7 @@ function creditsByTenure(dateValue) {
 const computedFormCredits = computed(() => creditsByTenure(form.value.date_hired))
 
 function openCreate() {
+  openActionMenuId.value = null
   editingId.value = null
   form.value = {
     employee_code: '',
@@ -113,6 +117,7 @@ function openCreate() {
 }
 
 async function openEdit(row) {
+  openActionMenuId.value = null
   editingId.value = row.id
   let source = row
   try {
@@ -149,6 +154,7 @@ async function save() {
 }
 
 function requestRemove(row) {
+  openActionMenuId.value = null
   deletingEmployee.value = row
   showDeleteModal.value = true
 }
@@ -169,9 +175,18 @@ async function confirmRemove() {
 }
 
 function openAwol(row) {
+  openActionMenuId.value = null
   awolTarget.value = row
   awolForm.value = { start_date: '', end_date: '', reason: '' }
   awolModal.value = true
+}
+
+function toggleActionMenu(rowId) {
+  openActionMenuId.value = openActionMenuId.value === rowId ? null : rowId
+}
+
+function closeActionMenu() {
+  openActionMenuId.value = null
 }
 
 function closeAwol() {
@@ -282,7 +297,12 @@ async function submitAwol() {
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
-        <tr v-for="row in filteredEmployees" :key="row.id" class="hover:bg-gray-950">
+        <tr
+          v-for="row in filteredEmployees"
+          :key="row.id"
+          class="cursor-pointer transition hover:bg-gray-950"
+          @click="openEdit(row)"
+        >
           <td class="px-4 py-3 text-sm font-medium text-primary-200">{{ row.employee_code }}</td>
           <td class="px-4 py-3 text-sm text-primary-200">{{ row.first_name }} {{ row.last_name }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.department }}</td>
@@ -292,10 +312,43 @@ async function submitAwol() {
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
           </td>
-          <td class="px-4 py-3 text-right">
-            <AppButton variant="secondary" size="sm" @click="openAwol(row)">Set AWOL</AppButton>
-            <AppButton variant="ghost" size="sm" class="ml-1" @click="openEdit(row)">Edit</AppButton>
-            <AppButton variant="danger" size="sm" class="ml-1" @click="requestRemove(row)">Delete</AppButton>
+          <td class="px-4 py-3 text-right" @click.stop>
+            <div class="relative inline-flex justify-end">
+              <button
+                type="button"
+                class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-xl leading-none text-gray-200 transition hover:border-primary-500 hover:text-primary-200"
+                aria-label="Open employee actions"
+                @click.stop="toggleActionMenu(row.id)"
+              >
+                ⋮
+              </button>
+              <div
+                v-if="openActionMenuId === row.id"
+                class="absolute right-0 top-11 z-20 min-w-[10rem] rounded-xl border border-gray-700 bg-gray-900 p-2 shadow-2xl"
+              >
+                <button
+                  type="button"
+                  class="flex w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 transition hover:bg-gray-800"
+                  @click.stop="openEdit(row)"
+                >
+                  Edit employee
+                </button>
+                <button
+                  type="button"
+                  class="flex w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 transition hover:bg-gray-800"
+                  @click.stop="openAwol(row)"
+                >
+                  Set AWOL
+                </button>
+                <button
+                  type="button"
+                  class="flex w-full rounded-lg px-3 py-2 text-left text-sm text-red-400 transition hover:bg-red-500/10"
+                  @click.stop="requestRemove(row)"
+                >
+                  Delete employee
+                </button>
+              </div>
+            </div>
           </td>
         </tr>
         <tr v-if="!filteredEmployees.length && !employeeStore.loading">
