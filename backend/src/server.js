@@ -97,6 +97,7 @@ const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim()
 const BREVO_FROM_NAME = (process.env.BREVO_FROM_NAME || '').trim()
 const MAIL_APP_NAME = (process.env.MAIL_APP_NAME || BREVO_FROM_NAME || 'Joyno Admin').trim()
 const RESET_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.RESET_TOKEN_TTL_MINUTES || 30))
+const LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES = Math.max(1, Number(process.env.LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES || 30))
 const RESET_PASSWORD_PATH = (process.env.RESET_PASSWORD_PATH || '/reset-password').trim()
 const PRIMARY_FRONTEND_ORIGIN = FRONTEND_ORIGIN.split(',')
   .map((origin) => origin.trim())
@@ -322,6 +323,41 @@ async function getUserContactsByRole(role) {
     email: user.email,
     name: `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email,
   }))
+}
+
+function isEmailConfigured() {
+  return Boolean((BREVO_API_KEY && BREVO_FROM_EMAIL) || (SMTP_USER && SMTP_PASS && SMTP_FROM))
+}
+
+async function sendLeaveCommentEmail({ leaveRequestId, recipient, isEmployeeRecipient }) {
+  if (!recipient?.id || !recipient?.email || !isEmailConfigured()) return false
+  const { rows } = await db.query(
+    `INSERT INTO leave_comment_email_deliveries (leave_request_id, recipient_user_id, last_emailed_at)
+     VALUES ($1,$2,NOW())
+     ON CONFLICT (leave_request_id, recipient_user_id) DO UPDATE
+       SET last_emailed_at = NOW()
+       WHERE leave_comment_email_deliveries.last_emailed_at <= NOW() - ($3::text || ' minutes')::interval
+     RETURNING last_emailed_at`,
+    [leaveRequestId, recipient.id, LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES]
+  )
+  if (!rows.length) return false
+
+  const leaveUrl = PRIMARY_FRONTEND_ORIGIN
+    ? `${PRIMARY_FRONTEND_ORIGIN}${isEmployeeRecipient ? '/leave-request' : '/leave-approvals'}`
+    : ''
+  sendEmailNotification({
+    to: recipient.email,
+    subject: 'New update on a leave request',
+    text: [
+      `Hi ${recipient.name || 'there'},`,
+      '',
+      'There is a new update in a leave-request conversation.',
+      leaveUrl ? `Open the leave request: ${leaveUrl}` : 'Open Joyno HR to view the update.',
+      '',
+      `- ${MAIL_APP_NAME}`,
+    ].join('\n'),
+  })
+  return true
 }
 
 const upload = multer({
@@ -2598,8 +2634,13 @@ app.post('/api/leave-requests/:id/comments', authRequired, async (req, res) => {
   if (isManagement) {
     const owner = await db.query('SELECT id FROM users WHERE employee_id = $1 ORDER BY id LIMIT 1', [leaveRequest.employee_id])
     await createNotification({ userId: owner.rows[0]?.id, type: 'leave_comment', title: 'New Leave Comment', message: 'Management added a comment to your leave request.', targetTable: 'leave_requests', targetId: id })
+    const ownerContact = await getUserContactById(owner.rows[0]?.id)
+    await sendLeaveCommentEmail({ leaveRequestId: id, recipient: ownerContact, isEmployeeRecipient: true })
   } else {
     await notifyRoles(['admin', 'hr', 'ceo'], { type: 'leave_comment', title: 'Employee Leave Reply', message: 'An employee replied to a leave request comment.', targetTable: 'leave_requests', targetId: id })
+    const contactsByRole = await Promise.all(['admin', 'hr', 'ceo'].map((role) => getUserContactsByRole(role)))
+    const recipients = [...new Map(contactsByRole.flat().map((contact) => [contact.id, contact])).values()]
+    await Promise.all(recipients.map((recipient) => sendLeaveCommentEmail({ leaveRequestId: id, recipient, isEmployeeRecipient: false })))
   }
   await addAuditLog(req.user.id, 'add_leave_comment', 'leave_requests', id)
   res.status(201).json(rows[0])
