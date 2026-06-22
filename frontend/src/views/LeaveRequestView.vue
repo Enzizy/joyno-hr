@@ -515,7 +515,7 @@ async function sendReply() {
           </li>
         </ul>
         <p class="mt-2">Leave of Absence and Emergency Leave are unpaid by default.</p>
-        <p>Filing notice: Most leave types require at least 7 days advance filing. Sick Leave, Bereavement Leave, and employees below six months of service are exempt.</p>
+        <p>Filing notice: Most leave types require at least 7 days advance filing. Sick Leave, Bereavement Leave, Leave of Absence, and employees below six months of service are exempt.</p>
         <p>AWOL is admin/HR only and cannot be requested by employees.</p>
       </div>
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">

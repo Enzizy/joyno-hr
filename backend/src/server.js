@@ -540,7 +540,7 @@ const LEAVE_TYPES = [
     name: 'Leave of Absence',
     paid_days_per_year: 0,
     min_months_employed: 0,
-    filing_notice_days: 7,
+    filing_notice_days: 0,
     aliases: [],
   },
   {
