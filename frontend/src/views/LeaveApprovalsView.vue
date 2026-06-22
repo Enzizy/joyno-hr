@@ -348,7 +348,6 @@ async function confirmDelete() {
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Reason</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Rejection reason</th>
           <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Actions</th>
         </tr>
       </thead>
@@ -395,7 +394,6 @@ async function confirmDelete() {
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
           </td>
-          <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
           <td class="px-4 py-3 text-right">
             <template v-if="row.status === 'pending'">
               <div class="flex justify-end gap-1">
@@ -418,7 +416,7 @@ async function confirmDelete() {
           </td>
         </tr>
         <tr v-if="!pagedRequests.length && !leaveStore.loading">
-          <td colspan="9" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
+          <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-400">No leave requests.</td>
         </tr>
       </tbody>
     </AppTable>
@@ -447,6 +445,10 @@ async function confirmDelete() {
           <p><span class="text-gray-500">Leave type:</span> {{ detailsRow.leave_type_name }}</p>
           <p><span class="text-gray-500">Dates:</span> {{ formatRange(detailsRow.start_date, detailsRow.end_date) }}</p>
           <p><span class="text-gray-500">Status:</span> {{ detailsRow.status }}</p>
+        </div>
+        <div v-if="detailsRow.status === 'rejected'">
+          <p class="mb-1 text-gray-500">Rejection reason</p>
+          <p class="whitespace-pre-wrap">{{ detailsRow.rejection_comment || '-' }}</p>
         </div>
         <div><p class="mb-1 text-gray-500">Reason</p><p class="whitespace-pre-wrap">{{ detailsRow.reason || '-' }}</p></div>
         <AppButton v-if="detailsRow.attachment_data" size="sm" variant="secondary" @click="openAttachment(detailsRow)">View attachment</AppButton>
