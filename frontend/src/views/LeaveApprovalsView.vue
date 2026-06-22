@@ -212,6 +212,13 @@ function payBreakdown(row) {
   return `${paid.toFixed(0)} paid / ${unpaid.toFixed(0)} unpaid`
 }
 
+function statusTextClass(status) {
+  if (status === 'approved') return 'text-emerald-400'
+  if (status === 'rejected') return 'text-red-400'
+  if (status === 'pending') return 'text-amber-300'
+  return 'text-gray-300'
+}
+
 async function openAttachment(row) {
   if (!row?.id) return
   attachmentLoading.value = true
@@ -444,13 +451,13 @@ async function confirmDelete() {
           <p><span class="text-gray-500">Employee:</span> {{ detailsRow.employee_name }}</p>
           <p><span class="text-gray-500">Leave type:</span> {{ detailsRow.leave_type_name }}</p>
           <p><span class="text-gray-500">Dates:</span> {{ formatRange(detailsRow.start_date, detailsRow.end_date) }}</p>
-          <p><span class="text-gray-500">Status:</span> {{ detailsRow.status }}</p>
-        </div>
-        <div v-if="detailsRow.status === 'rejected'">
-          <p class="mb-1 text-gray-500">Rejection reason</p>
-          <p class="whitespace-pre-wrap">{{ detailsRow.rejection_comment || '-' }}</p>
+          <p><span class="text-gray-500">Status:</span> <span class="font-medium capitalize" :class="statusTextClass(detailsRow.status)">{{ detailsRow.status }}</span></p>
         </div>
         <div><p class="mb-1 text-gray-500">Reason</p><p class="whitespace-pre-wrap">{{ detailsRow.reason || '-' }}</p></div>
+        <div v-if="detailsRow.status === 'rejected'" class="border-t border-red-900/40 pt-3">
+          <p class="mb-1 font-medium text-red-400">Rejection reason</p>
+          <p class="whitespace-pre-wrap text-red-300">{{ detailsRow.rejection_comment || '-' }}</p>
+        </div>
         <AppButton v-if="detailsRow.attachment_data" size="sm" variant="secondary" @click="openAttachment(detailsRow)">View attachment</AppButton>
         <div class="border-t border-gray-800 pt-3">
           <p class="mb-2 font-medium text-primary-200">Conversation</p>
