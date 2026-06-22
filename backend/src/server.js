@@ -573,6 +573,18 @@ function resolveLeaveType(value) {
   return found || null
 }
 
+async function cleanupExpiredRejectedLeaveRequests(days = 45) {
+  const safeDays = Math.max(1, Number(days) || 45)
+  const { rows } = await db.query(
+    `DELETE FROM leave_requests
+     WHERE status = 'rejected'
+       AND rejected_at < NOW() - ($1::text || ' days')::interval
+     RETURNING id`,
+    [safeDays]
+  )
+  return rows.length
+}
+
 function parseDateOnly(value) {
   if (!value) return null
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/)
@@ -2894,7 +2906,7 @@ app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', '
   const id = req.params.id
   const { comment = '' } = req.body || {}
   await db.query(
-    `UPDATE leave_requests SET status='rejected', approved_by=$1, approved_by_name=$2, approved_by_role=$3, rejection_comment=$4 WHERE id=$5`,
+    `UPDATE leave_requests SET status='rejected', rejected_at=NOW(), approved_by=$1, approved_by_name=$2, approved_by_role=$3, rejection_comment=$4 WHERE id=$5`,
     [req.user.id, req.user.email, req.user.role, comment, id]
   )
   const employeeRows = await db.query('SELECT employee_id FROM leave_requests WHERE id = $1', [id])
@@ -3022,7 +3034,7 @@ function buildLeaveReportQuery(from, to) {
       e.department
     FROM leave_requests lr
     LEFT JOIN employees e ON lr.employee_id = e.id
-    WHERE 1=1
+    WHERE lr.status = 'approved'
   `
   const params = []
   if (from) {
@@ -3121,13 +3133,12 @@ app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', '
       COALESCE(MAX(e.department), '') AS department,
       COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.paid_days, 0) ELSE 0 END), 0)::numeric AS approved_paid_days,
       COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.unpaid_days, 0) ELSE 0 END), 0)::numeric AS approved_unpaid_days,
-      COALESCE(SUM(CASE WHEN lr.status = 'pending' THEN COALESCE(lr.leave_days, 0) ELSE 0 END), 0)::numeric AS pending_days,
       COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.unpaid_days, 0) ELSE 0 END), 0)::numeric AS deduct_salary_days,
       COUNT(*)::int AS request_count,
       COUNT(CASE WHEN COALESCE(BTRIM(lr.reason), '') <> '' THEN 1 END)::int AS reasons_count
     FROM leave_requests lr
     LEFT JOIN employees e ON lr.employee_id = e.id
-    WHERE 1=1
+    WHERE lr.status = 'approved'
   `
   const params = []
   if (from) {
@@ -3148,7 +3159,6 @@ app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', '
     { header: 'Department', key: 'department', width: 18 },
     { header: 'Approved paid days', key: 'approved_paid_days', width: 16 },
     { header: 'Approved unpaid days', key: 'approved_unpaid_days', width: 18 },
-    { header: 'Pending days', key: 'pending_days', width: 12 },
     { header: 'Deduct salary days', key: 'deduct_salary_days', width: 16 },
     { header: 'Request count', key: 'request_count', width: 12 },
     { header: 'Reasons count', key: 'reasons_count', width: 12 },
@@ -3166,7 +3176,6 @@ app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', '
       department: r.department || '-',
       approved_paid_days: Number(r.approved_paid_days || 0),
       approved_unpaid_days: Number(r.approved_unpaid_days || 0),
-      pending_days: Number(r.pending_days || 0),
       deduct_salary_days: Number(r.deduct_salary_days || 0),
       request_count: Number(r.request_count || 0),
       reasons_count: Number(r.reasons_count || 0),
@@ -3227,6 +3236,10 @@ async function ensureDatabaseReadyWithRetry() {
         cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
         setInterval(() => {
           cleanupOldNotifications().catch((err) => console.error('Notification cleanup failed', err))
+        }, 24 * 60 * 60 * 1000)
+        cleanupExpiredRejectedLeaveRequests().catch((err) => console.error('Rejected leave cleanup failed', err))
+        setInterval(() => {
+          cleanupExpiredRejectedLeaveRequests().catch((err) => console.error('Rejected leave cleanup failed', err))
         }, 24 * 60 * 60 * 1000)
       }
       return

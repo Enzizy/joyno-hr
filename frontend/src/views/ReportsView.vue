@@ -105,7 +105,6 @@ async function loadLeave() {
           employee_name: row.employee_name ?? row.employee_id,
           approved_paid_days: 0,
           approved_unpaid_days: 0,
-          pending_days: 0,
           deductible_salary_days: 0,
         })
       }
@@ -114,8 +113,6 @@ async function loadLeave() {
         item.approved_paid_days += Number(row.paid_days || 0)
         item.approved_unpaid_days += Number(row.unpaid_days || 0)
         item.deductible_salary_days += Number(row.unpaid_days || 0)
-      } else if (row.status === 'pending') {
-        item.pending_days += Number(row.days || 0)
       }
     })
     summaryData.value = Array.from(byEmployee.values()).sort((a, b) =>
@@ -128,21 +125,6 @@ async function loadLeave() {
     loading.value = false
   }
 }
-
-const leaveAging = computed(() => {
-  const now = Date.now()
-  const pendingRows = leaveData.value.filter((row) => row.status === 'pending')
-  const counts = { '1_2': 0, '3_5': 0, over_5: 0 }
-  pendingRows.forEach((row) => {
-    const created = new Date(row.created_at || row.start_date).getTime()
-    if (!Number.isFinite(created)) return
-    const ageDays = Math.floor((now - created) / (24 * 60 * 60 * 1000))
-    if (ageDays >= 1 && ageDays <= 2) counts['1_2'] += 1
-    else if (ageDays >= 3 && ageDays <= 5) counts['3_5'] += 1
-    else if (ageDays > 5) counts.over_5 += 1
-  })
-  return counts
-})
 
 const departmentImpact = computed(() => {
   const map = new Map()
@@ -262,7 +244,6 @@ const awolSummary = computed(() => {
               <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Employee</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Approved paid days</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Approved unpaid days</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Pending days</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Deduct salary days</th>
             </tr>
           </thead>
@@ -271,11 +252,10 @@ const awolSummary = computed(() => {
               <td class="px-4 py-3 text-sm text-primary-200">{{ row.employee_name }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.approved_paid_days }}</td>
               <td class="px-4 py-3 text-sm text-gray-300">{{ row.approved_unpaid_days }}</td>
-              <td class="px-4 py-3 text-sm text-gray-300">{{ row.pending_days }}</td>
               <td class="px-4 py-3 text-sm font-semibold text-amber-300">{{ row.deductible_salary_days }}</td>
             </tr>
             <tr v-if="!summaryData.length && !loading">
-              <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see summary.</td>
+              <td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">Run report to see summary.</td>
             </tr>
           </tbody>
         </table>
@@ -307,23 +287,6 @@ const awolSummary = computed(() => {
             </tr>
           </tbody>
         </table>
-      </div>
-    </div>
-    <div class="rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm">
-      <h2 class="text-sm font-semibold text-primary-200">Leave Aging (Pending Approvals)</h2>
-      <div class="mt-3 grid gap-3 sm:grid-cols-3">
-        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-          <p class="text-xs text-gray-400">1-2 days pending</p>
-          <p class="mt-1 text-lg font-semibold text-primary-200">{{ leaveAging['1_2'] }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-          <p class="text-xs text-gray-400">3-5 days pending</p>
-          <p class="mt-1 text-lg font-semibold text-primary-200">{{ leaveAging['3_5'] }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 px-4 py-3">
-          <p class="text-xs text-gray-400">&gt;5 days pending</p>
-          <p class="mt-1 text-lg font-semibold text-amber-300">{{ leaveAging.over_5 }}</p>
-        </div>
       </div>
     </div>
     <div class="rounded-xl border border-gray-800 bg-gray-900 shadow-sm">
