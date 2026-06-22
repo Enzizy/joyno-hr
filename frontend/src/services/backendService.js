@@ -85,6 +85,14 @@ export async function deleteLeaveRequest(id) {
   return api.deleteLeaveRequest(id)
 }
 
+export async function getLeaveComments(id) {
+  return api.getLeaveComments(id)
+}
+
+export async function createLeaveComment(id, message) {
+  return api.createLeaveComment(id, message)
+}
+
 export async function getLeaveReport(from, to) {
   return api.getLeaveReport(from, to)
 }

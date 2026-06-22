@@ -3,6 +3,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
+import { getLeaveComments, createLeaveComment } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
@@ -33,6 +34,12 @@ const editSubmitting = ref(false)
 const editAttachment = ref(null)
 const editForm = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
 const reasonMax = 24
+const conversationModal = ref(false)
+const conversationRow = ref(null)
+const comments = ref([])
+const commentsLoading = ref(false)
+const reply = ref('')
+const sendingReply = ref(false)
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -429,6 +436,34 @@ function onEditAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   editAttachment.value = file || null
 }
+
+async function openConversation(row) {
+  conversationRow.value = row
+  conversationModal.value = true
+  commentsLoading.value = true
+  try {
+    comments.value = await getLeaveComments(row.id)
+    row.unread_comment_count = 0
+  } catch (err) {
+    toast.error(err.message || 'Failed to load leave conversation.')
+  } finally {
+    commentsLoading.value = false
+  }
+}
+
+async function sendReply() {
+  if (!conversationRow.value || !reply.value.trim()) return
+  sendingReply.value = true
+  try {
+    const created = await createLeaveComment(conversationRow.value.id, reply.value.trim())
+    comments.value.push(created)
+    reply.value = ''
+  } catch (err) {
+    toast.error(err.message || 'Failed to send reply.')
+  } finally {
+    sendingReply.value = false
+  }
+}
 </script>
 
 <template>
@@ -599,7 +634,11 @@ function onEditAttachmentChange(event) {
             </td>
             <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
             <td class="px-4 py-3 text-right">
-              <div v-if="row.status === 'pending'" class="flex justify-end gap-2">
+              <div class="flex justify-end gap-2">
+                <AppButton variant="secondary" size="sm" @click="openConversation(row)">
+                  <span class="relative">Notes<span v-if="row.unread_comment_count" class="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500" /></span>
+                </AppButton>
+                <template v-if="row.status === 'pending'">
                 <AppButton
                   variant="secondary"
                   size="sm"
@@ -614,8 +653,8 @@ function onEditAttachmentChange(event) {
                 >
                   Cancel
                 </AppButton>
+                </template>
               </div>
-              <span v-else class="text-sm text-gray-500">-</span>
             </td>
           </tr>
           <tr v-if="!myRequests.length && !leaveStore.loading">
@@ -634,6 +673,21 @@ function onEditAttachmentChange(event) {
     <template #footer>
       <AppButton variant="secondary" @click="closeCancelModal">Close</AppButton>
       <AppButton variant="danger" :loading="cancelling" @click="confirmCancel">Cancel request</AppButton>
+    </template>
+  </AppModal>
+  <AppModal :show="conversationModal" title="Leave conversation" @close="conversationModal = false">
+    <div v-if="commentsLoading" class="text-sm text-gray-400">Loading comments…</div>
+    <div v-else class="space-y-3">
+      <p v-if="!comments.length" class="text-sm text-gray-400">No notes yet.</p>
+      <div v-for="comment in comments" :key="comment.id" class="rounded-lg bg-gray-950 p-3 text-sm text-gray-300">
+        <p class="text-xs font-medium text-primary-300">{{ comment.author_name || comment.author_role }} · {{ formatDateTime(comment.created_at) }}</p>
+        <p class="mt-1 whitespace-pre-wrap">{{ comment.message }}</p>
+      </div>
+      <textarea v-model="reply" rows="3" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-gray-100" placeholder="Reply to management..." />
+    </div>
+    <template #footer>
+      <AppButton variant="secondary" @click="conversationModal = false">Close</AppButton>
+      <AppButton :loading="sendingReply" :disabled="!reply.trim()" @click="sendReply">Send reply</AppButton>
     </template>
   </AppModal>
   <AppModal :show="editModal" title="Edit leave request" @close="closeEditModal">

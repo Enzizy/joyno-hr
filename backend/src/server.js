@@ -837,6 +837,23 @@ async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, exclude
   return Number(rows[0]?.used_days || 0)
 }
 
+async function addLeaveCommentIndicators(requests, user) {
+  if (!requests.length) return requests
+  const ids = requests.map((request) => request.id)
+  const isEmployee = user.role === 'employee'
+  const { rows } = await db.query(
+    `SELECT leave_request_id, COUNT(*)::int AS count
+     FROM leave_request_comments
+     WHERE leave_request_id = ANY($1::int[])
+       AND user_id <> $2
+       AND ${isEmployee ? 'read_by_employee_at IS NULL' : "author_role = 'employee' AND read_by_management_at IS NULL"}
+     GROUP BY leave_request_id`,
+    [ids, user.id]
+  )
+  const counts = new Map(rows.map((row) => [Number(row.leave_request_id), Number(row.count)]))
+  return requests.map((request) => ({ ...request, unread_comment_count: counts.get(Number(request.id)) || 0 }))
+}
+
 function signToken(user) {
   return jwt.sign(
     {
@@ -2510,17 +2527,70 @@ app.get('/api/leave-requests', authRequired, async (req, res) => {
       `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,
       [user.employee_id]
     )
-    return res.json(rows)
+    return res.json(await addLeaveCommentIndicators(rows, user))
   }
   if (user.role === 'employee') {
     const { rows } = await db.query(
       `SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE employee_id = $1 ORDER BY created_at DESC`,
       [user.employee_id]
     )
-    return res.json(rows)
+    return res.json(await addLeaveCommentIndicators(rows, user))
   }
   const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests ORDER BY created_at DESC`)
-  res.json(rows)
+  res.json(await addLeaveCommentIndicators(rows, user))
+})
+
+app.get('/api/leave-requests/:id/comments', authRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  const requestResult = await db.query('SELECT employee_id FROM leave_requests WHERE id = $1', [id])
+  const leaveRequest = requestResult.rows[0]
+  if (!leaveRequest) return res.status(404).json({ message: 'Leave request not found' })
+  const isOwner = Number(leaveRequest.employee_id) === Number(req.user.employee_id)
+  const isManagement = ['admin', 'hr', 'ceo'].includes(req.user.role)
+  if (!isOwner && !isManagement) return res.status(403).json({ message: 'Forbidden' })
+  const { rows } = await db.query(
+    `SELECT c.id, c.message, c.author_role, c.created_at, u.email,
+            e.first_name, e.last_name
+     FROM leave_request_comments c
+     JOIN users u ON u.id = c.user_id
+     LEFT JOIN employees e ON e.id = u.employee_id
+     WHERE c.leave_request_id = $1
+     ORDER BY c.created_at ASC`,
+    [id]
+  )
+  if (isOwner) {
+    await db.query('UPDATE leave_request_comments SET read_by_employee_at = NOW() WHERE leave_request_id = $1 AND user_id <> $2 AND read_by_employee_at IS NULL', [id, req.user.id])
+  } else {
+    await db.query("UPDATE leave_request_comments SET read_by_management_at = NOW() WHERE leave_request_id = $1 AND author_role = 'employee' AND read_by_management_at IS NULL", [id])
+  }
+  res.json(rows.map((row) => ({ ...row, author_name: `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email })))
+})
+
+app.post('/api/leave-requests/:id/comments', authRequired, async (req, res) => {
+  const id = Number(req.params.id)
+  const message = String(req.body?.message || '').trim()
+  if (!message || message.length > 2000) return res.status(400).json({ message: 'Comment must be between 1 and 2000 characters' })
+  const requestResult = await db.query('SELECT employee_id FROM leave_requests WHERE id = $1', [id])
+  const leaveRequest = requestResult.rows[0]
+  if (!leaveRequest) return res.status(404).json({ message: 'Leave request not found' })
+  const isOwner = Number(leaveRequest.employee_id) === Number(req.user.employee_id)
+  const isManagement = ['admin', 'hr', 'ceo'].includes(req.user.role)
+  if (!isOwner && !isManagement) return res.status(403).json({ message: 'Forbidden' })
+  const authorRole = isManagement ? req.user.role : 'employee'
+  const { rows } = await db.query(
+    `INSERT INTO leave_request_comments (leave_request_id, user_id, author_role, message, read_by_employee_at, read_by_management_at)
+     VALUES ($1,$2,$3,$4,${isManagement ? 'NULL' : 'NOW()'},${isManagement ? 'NOW()' : 'NULL'})
+     RETURNING id, message, author_role, created_at`,
+    [id, req.user.id, authorRole, message]
+  )
+  if (isManagement) {
+    const owner = await db.query('SELECT id FROM users WHERE employee_id = $1 ORDER BY id LIMIT 1', [leaveRequest.employee_id])
+    await createNotification({ userId: owner.rows[0]?.id, type: 'leave_comment', title: 'New Leave Comment', message: 'Management added a comment to your leave request.', targetTable: 'leave_requests', targetId: id })
+  } else {
+    await notifyRoles(['admin', 'hr', 'ceo'], { type: 'leave_comment', title: 'Employee Leave Reply', message: 'An employee replied to a leave request comment.', targetTable: 'leave_requests', targetId: id })
+  }
+  await addAuditLog(req.user.id, 'add_leave_comment', 'leave_requests', id)
+  res.status(201).json(rows[0])
 })
 
 app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res) => {

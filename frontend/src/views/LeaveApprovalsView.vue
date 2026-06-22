@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useToastStore } from '@/stores/toastStore'
+import { getLeaveComments, createLeaveComment } from '@/services/backendService'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -29,6 +30,13 @@ const nameQuery = ref('')
 const page = ref(1)
 const pageSize = ref(10)
 const reasonMax = 24
+const detailsModal = ref(false)
+const detailsRow = ref(null)
+const comments = ref([])
+const commentsLoading = ref(false)
+const noteModal = ref(false)
+const note = ref('')
+const savingNote = ref(false)
 const entitlementRows = computed(() =>
   leaveStore.leaveTypes.map((type) => ({
     id: type.id,
@@ -53,6 +61,42 @@ function formatRange(start, end) {
 }
 
 onMounted(() => leaveStore.fetchRequests())
+
+async function openDetails(row) {
+  detailsRow.value = row
+  detailsModal.value = true
+  commentsLoading.value = true
+  try {
+    comments.value = await getLeaveComments(row.id)
+    row.unread_comment_count = 0
+  } catch (err) {
+    toast.error(err.message || 'Failed to load leave conversation.')
+  } finally {
+    commentsLoading.value = false
+  }
+}
+
+function closeDetails() {
+  detailsModal.value = false
+  detailsRow.value = null
+  comments.value = []
+}
+
+async function saveNote() {
+  if (!detailsRow.value || !note.value.trim()) return
+  savingNote.value = true
+  try {
+    const created = await createLeaveComment(detailsRow.value.id, note.value.trim())
+    comments.value.push(created)
+    note.value = ''
+    noteModal.value = false
+    toast.success('Note added.')
+  } catch (err) {
+    toast.error(err.message || 'Failed to add note.')
+  } finally {
+    savingNote.value = false
+  }
+}
 
 const typeOptions = computed(() => {
   const set = new Set()
@@ -309,9 +353,12 @@ async function confirmDelete() {
         </tr>
       </thead>
       <tbody class="divide-y divide-gray-800 bg-gray-900">
-        <tr v-for="row in pagedRequests" :key="row.id" class="hover:bg-gray-950">
+        <tr v-for="row in pagedRequests" :key="row.id" class="cursor-pointer hover:bg-gray-950" @click="openDetails(row)">
           <td class="px-4 py-3 text-sm font-medium text-primary-200">
-            {{ row.employee_name ?? `${row.employee?.first_name || ''} ${row.employee?.last_name || ''}`.trim() }}
+            <span class="relative inline-block">
+              {{ row.employee_name ?? `${row.employee?.first_name || ''} ${row.employee?.last_name || ''}`.trim() }}
+              <span v-if="row.unread_comment_count" class="absolute -right-2 -top-1 h-2.5 w-2.5 rounded-full bg-red-500" title="Unread leave reply" />
+            </span>
           </td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ formatRange(row.start_date, row.end_date) }}</td>
           <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
@@ -329,7 +376,7 @@ async function confirmDelete() {
               v-if="row.reason"
               class="text-left text-gray-300 hover:text-primary-200"
               :title="row.reason"
-              @click="openReasonModal(row)"
+              @click.stop="openReasonModal(row)"
             >
               {{ truncateReason(row.reason) }}
             </button>
@@ -339,7 +386,7 @@ async function confirmDelete() {
             <button
               v-if="row.attachment_data"
               class="text-primary-300 hover:text-primary-200"
-              @click="openAttachment(row)"
+              @click.stop="openAttachment(row)"
             >
               View
             </button>
@@ -352,8 +399,8 @@ async function confirmDelete() {
           <td class="px-4 py-3 text-right">
             <template v-if="row.status === 'pending'">
               <div class="flex justify-end gap-1">
-                <AppButton variant="success" size="sm" @click="approve(row)">Approve</AppButton>
-                <AppButton variant="danger" size="sm" @click="openRejectModal(row)">Reject</AppButton>
+                <AppButton variant="success" size="sm" @click.stop="approve(row)">Approve</AppButton>
+                <AppButton variant="danger" size="sm" @click.stop="openRejectModal(row)">Reject</AppButton>
               </div>
             </template>
             <template v-else>
@@ -362,7 +409,7 @@ async function confirmDelete() {
                   type="button"
                   class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-700 bg-transparent text-red-400 transition hover:border-red-500/50 hover:text-red-300"
                   title="Delete leave request"
-                  @click="openDeleteModal(row)"
+                  @click.stop="openDeleteModal(row)"
                 >
                   <span class="trash-icon" aria-hidden="true" v-html="trashIcon" />
                 </button>
@@ -392,6 +439,46 @@ async function confirmDelete() {
         &rarr;
       </button>
     </div>
+
+    <AppModal :show="detailsModal" title="Leave request details" @close="closeDetails">
+      <div v-if="detailsRow" class="space-y-4 text-sm text-gray-300">
+        <div class="grid gap-2 sm:grid-cols-2">
+          <p><span class="text-gray-500">Employee:</span> {{ detailsRow.employee_name }}</p>
+          <p><span class="text-gray-500">Leave type:</span> {{ detailsRow.leave_type_name }}</p>
+          <p><span class="text-gray-500">Dates:</span> {{ formatRange(detailsRow.start_date, detailsRow.end_date) }}</p>
+          <p><span class="text-gray-500">Status:</span> {{ detailsRow.status }}</p>
+        </div>
+        <div><p class="mb-1 text-gray-500">Reason</p><p class="whitespace-pre-wrap">{{ detailsRow.reason || '-' }}</p></div>
+        <AppButton v-if="detailsRow.attachment_data" size="sm" variant="secondary" @click="openAttachment(detailsRow)">View attachment</AppButton>
+        <div class="border-t border-gray-800 pt-3">
+          <p class="mb-2 font-medium text-primary-200">Conversation</p>
+          <div v-if="commentsLoading" class="text-gray-400">Loading comments…</div>
+          <div v-else-if="!comments.length" class="text-gray-400">No notes yet.</div>
+          <div v-else class="space-y-3">
+            <div v-for="comment in comments" :key="comment.id" class="rounded-lg bg-gray-950 p-3">
+              <p class="text-xs font-medium text-primary-300">{{ comment.author_name || comment.author_role }} · {{ formatDate(comment.created_at) }}</p>
+              <p class="mt-1 whitespace-pre-wrap">{{ comment.message }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <AppButton variant="secondary" @click="closeDetails">Close</AppButton>
+        <AppButton variant="secondary" @click="noteModal = true">Add note</AppButton>
+        <template v-if="detailsRow?.status === 'pending'">
+          <AppButton variant="success" @click="approve(detailsRow); closeDetails()">Approve</AppButton>
+          <AppButton variant="danger" @click="openRejectModal(detailsRow)">Reject</AppButton>
+        </template>
+      </template>
+    </AppModal>
+
+    <AppModal :show="noteModal" title="Add leave note" @close="noteModal = false">
+      <textarea v-model="note" rows="4" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-gray-100" placeholder="Write a note for the employee..." />
+      <template #footer>
+        <AppButton variant="secondary" @click="noteModal = false">Cancel</AppButton>
+        <AppButton :loading="savingNote" :disabled="!note.trim()" @click="saveNote">Send note</AppButton>
+      </template>
+    </AppModal>
 
     <AppModal :show="rejectModal" title="Reject leave request" @close="closeRejectModal">
       <p v-if="rejectingRow" class="mb-3 text-sm text-gray-300">

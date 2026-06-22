@@ -167,6 +167,14 @@ export async function deleteLeaveRequest(id) {
   return request(`/api/leave-requests/${id}`, { method: 'DELETE' })
 }
 
+export async function getLeaveComments(id) {
+  return request(`/api/leave-requests/${id}/comments`)
+}
+
+export async function createLeaveComment(id, message) {
+  return request(`/api/leave-requests/${id}/comments`, { method: 'POST', body: JSON.stringify({ message }) })
+}
+
 export async function getLeaveReport(from, to) {
   const params = new URLSearchParams()
   if (from) params.set('from', from)
