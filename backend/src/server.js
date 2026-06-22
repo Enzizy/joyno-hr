@@ -97,7 +97,7 @@ const BREVO_FROM_EMAIL = (process.env.BREVO_FROM_EMAIL || '').trim()
 const BREVO_FROM_NAME = (process.env.BREVO_FROM_NAME || '').trim()
 const MAIL_APP_NAME = (process.env.MAIL_APP_NAME || BREVO_FROM_NAME || 'Joyno Admin').trim()
 const RESET_TOKEN_TTL_MINUTES = Math.max(5, Number(process.env.RESET_TOKEN_TTL_MINUTES || 30))
-const LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES = Math.max(1, Number(process.env.LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES || 30))
+const LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES = Math.max(0, Number(process.env.LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES || 0))
 const RESET_PASSWORD_PATH = (process.env.RESET_PASSWORD_PATH || '/reset-password').trim()
 const PRIMARY_FRONTEND_ORIGIN = FRONTEND_ORIGIN.split(',')
   .map((origin) => origin.trim())
@@ -331,16 +331,18 @@ function isEmailConfigured() {
 
 async function sendLeaveCommentEmail({ leaveRequestId, recipient, isEmployeeRecipient }) {
   if (!recipient?.id || !recipient?.email || !isEmailConfigured()) return false
-  const { rows } = await db.query(
-    `INSERT INTO leave_comment_email_deliveries (leave_request_id, recipient_user_id, last_emailed_at)
-     VALUES ($1,$2,NOW())
-     ON CONFLICT (leave_request_id, recipient_user_id) DO UPDATE
-       SET last_emailed_at = NOW()
-       WHERE leave_comment_email_deliveries.last_emailed_at <= NOW() - ($3::text || ' minutes')::interval
-     RETURNING last_emailed_at`,
-    [leaveRequestId, recipient.id, LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES]
-  )
-  if (!rows.length) return false
+  if (LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES > 0) {
+    const { rows } = await db.query(
+      `INSERT INTO leave_comment_email_deliveries (leave_request_id, recipient_user_id, last_emailed_at)
+       VALUES ($1,$2,NOW())
+       ON CONFLICT (leave_request_id, recipient_user_id) DO UPDATE
+         SET last_emailed_at = NOW()
+         WHERE leave_comment_email_deliveries.last_emailed_at <= NOW() - ($3::text || ' minutes')::interval
+       RETURNING last_emailed_at`,
+      [leaveRequestId, recipient.id, LEAVE_COMMENT_EMAIL_COOLDOWN_MINUTES]
+    )
+    if (!rows.length) return false
+  }
 
   const leaveUrl = PRIMARY_FRONTEND_ORIGIN
     ? `${PRIMARY_FRONTEND_ORIGIN}${isEmployeeRecipient ? '/leave-request' : '/leave-approvals'}`
