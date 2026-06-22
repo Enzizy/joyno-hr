@@ -625,6 +625,10 @@ function calculateTenureMonths(dateValue, asOf = new Date()) {
   return Math.max(0, months)
 }
 
+function isBelowSixMonthsOfService(dateValue, asOf = new Date()) {
+  return calculateTenureMonths(dateValue, asOf) < 6
+}
+
 function leaveCreditsByTenure(dateValue, asOf = new Date()) {
   const months = calculateTenureMonths(dateValue, asOf)
   if (months >= 12) return DEFAULT_LEAVE_CREDITS
@@ -2542,13 +2546,16 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const leaveType = resolveLeaveType(leave_type_id)
-  if (!leaveType) {
+  const selectedLeaveType = resolveLeaveType(leave_type_id)
+  if (!selectedLeaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
-  if (leaveType.id === 'awol') {
+  if (selectedLeaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
   }
+  const leaveType = isBelowSixMonthsOfService(emp.date_hired)
+    ? resolveLeaveType('leave_of_absence')
+    : selectedLeaveType
   const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
   if (advanceNoticeError) {
     return res.status(400).json(advanceNoticeError)
@@ -2662,21 +2669,24 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const leaveType = resolveLeaveType(leave_type_id)
-  if (!leaveType) {
+  const selectedLeaveType = resolveLeaveType(leave_type_id)
+  if (!selectedLeaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
-  if (leaveType.id === 'awol') {
+  if (selectedLeaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
-  }
-  const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
-  if (advanceNoticeError) {
-    return res.status(400).json(advanceNoticeError)
   }
   await resetEmployeeLeaveCreditsIfNeeded(req.user.employee_id)
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
+  const leaveType = isBelowSixMonthsOfService(emp.date_hired)
+    ? resolveLeaveType('leave_of_absence')
+    : selectedLeaveType
+  const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
+  if (advanceNoticeError) {
+    return res.status(400).json(advanceNoticeError)
+  }
 
   let attachmentName = request.attachment_name
   let attachmentType = request.attachment_type

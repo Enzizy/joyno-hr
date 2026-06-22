@@ -59,6 +59,15 @@ function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
   minDate.setMonth(minDate.getMonth() + Number(minMonths || 0))
   return leaveStart >= minDate
 }
+function isBelowSixMonthsOfService(dateHired) {
+  if (!dateHired) return true
+  const hired = new Date(dateHired)
+  const today = new Date()
+  if (Number.isNaN(hired.getTime())) return true
+  let months = (today.getFullYear() - hired.getFullYear()) * 12 + (today.getMonth() - hired.getMonth())
+  if (today.getDate() < hired.getDate()) months -= 1
+  return months < 6
+}
 const leaveTypeMap = computed(() =>
   leaveStore.leaveTypes.reduce((acc, type) => {
     acc[type.id] = type
@@ -67,6 +76,7 @@ const leaveTypeMap = computed(() =>
 )
 const selectedLeaveType = computed(() => leaveTypeMap.value[form.value.leave_type_id] || null)
 const selectedEditLeaveType = computed(() => leaveTypeMap.value[editForm.value.leave_type_id] || null)
+const isBelowSixMonths = computed(() => isBelowSixMonthsOfService(authStore.user?.date_hired))
 const missingRequiredDocumentForPaid = computed(
   () => Boolean(selectedLeaveType.value?.requires_attachment_for_paid) && !attachment.value
 )
@@ -113,6 +123,7 @@ function remainingPaidDays(typeId, date) {
 const payTypePreview = computed(() => {
   const type = selectedLeaveType.value
   if (!requestedDays.value || !type) return '-'
+  if (isBelowSixMonths.value) return 'unpaid'
   const cap = paidDaysCap(type.id)
   if (!cap) return 'unpaid'
   if (!isPaidLeaveEligible(authStore.user?.date_hired, form.value.start_date, type.min_months_employed || 0)) {
@@ -160,12 +171,20 @@ const todayISO = computed(() => {
   return `${year}-${month}-${day}`
 })
 const leaveCreditsAvailable = computed(() => Number(authStore.user?.leave_credits || 0))
-const startMinDate = computed(() => addDaysToISO(todayISO.value, filingNoticeDays(selectedLeaveType.value)))
-const editStartMinDate = computed(() => addDaysToISO(todayISO.value, filingNoticeDays(selectedEditLeaveType.value)))
+const startMinDate = computed(() =>
+  addDaysToISO(todayISO.value, isBelowSixMonths.value ? 0 : filingNoticeDays(selectedLeaveType.value))
+)
+const editStartMinDate = computed(() =>
+  addDaysToISO(todayISO.value, isBelowSixMonths.value ? 0 : filingNoticeDays(selectedEditLeaveType.value))
+)
 const endMinDate = computed(() => form.value.start_date || startMinDate.value)
 const editEndMinDate = computed(() => editForm.value.start_date || editStartMinDate.value)
-const selectedLeaveFilingNoticeDays = computed(() => filingNoticeDays(selectedLeaveType.value))
-const selectedEditLeaveFilingNoticeDays = computed(() => filingNoticeDays(selectedEditLeaveType.value))
+const selectedLeaveFilingNoticeDays = computed(() =>
+  isBelowSixMonths.value ? 0 : filingNoticeDays(selectedLeaveType.value)
+)
+const selectedEditLeaveFilingNoticeDays = computed(() =>
+  isBelowSixMonths.value ? 0 : filingNoticeDays(selectedEditLeaveType.value)
+)
 
 watch(
   () => form.value.leave_type_id,
@@ -443,6 +462,9 @@ function onEditAttachmentChange(event) {
         <p v-if="missingRequiredDocumentForPaid" class="text-amber-300">
           {{ selectedLeaveType?.name }} paid leave requires supporting documents. Without attachment, this request is unpaid.
         </p>
+        <p v-if="isBelowSixMonths" class="text-amber-300">
+          Employees below six months of service may file without advance notice. This request will be recorded as unpaid Leave of Absence.
+        </p>
         <p class="text-xs text-gray-400">
           Credits reset yearly based on tenure: below 6 months = 0, 6-11 months = 3, 12+ months = 15.
         </p>
@@ -458,7 +480,7 @@ function onEditAttachmentChange(event) {
           </li>
         </ul>
         <p class="mt-2">Leave of Absence and Emergency Leave are unpaid by default.</p>
-        <p>Filing notice: Most leave types require at least 7 days advance filing. Sick Leave and Bereavement Leave are exempt.</p>
+        <p>Filing notice: Most leave types require at least 7 days advance filing. Sick Leave, Bereavement Leave, and employees below six months of service are exempt.</p>
         <p>AWOL is admin/HR only and cannot be requested by employees.</p>
       </div>
       <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">
@@ -473,6 +495,9 @@ function onEditAttachmentChange(event) {
             <option value="" class="bg-gray-900 text-primary-200">Select type</option>
             <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
           </select>
+          <p v-if="isBelowSixMonths" class="mt-2 text-xs text-amber-300">
+            Your selected type will be filed as unpaid Leave of Absence because you have not completed six months of service.
+          </p>
           <p
             v-if="selectedLeaveFilingNoticeDays > 0"
             class="mt-2 inline-flex rounded-full border border-amber-700/40 bg-amber-900/20 px-3 py-1 text-xs font-medium text-amber-200"
@@ -623,6 +648,9 @@ function onEditAttachmentChange(event) {
           <option value="" class="bg-gray-900 text-primary-200">Select type</option>
           <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
         </select>
+        <p v-if="isBelowSixMonths" class="mt-2 text-xs text-amber-300">
+          This request will be recorded as unpaid Leave of Absence because you have not completed six months of service.
+        </p>
         <p
           v-if="selectedEditLeaveFilingNoticeDays > 0"
           class="mt-2 inline-flex rounded-full border border-amber-700/40 bg-amber-900/20 px-3 py-1 text-xs font-medium text-amber-200"
