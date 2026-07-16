@@ -480,7 +480,25 @@ async function cleanupOldNotifications(days = 90) {
   )
 }
 
+function taskTypeSql(alias = 't') {
+  return `COALESCE(NULLIF(${alias}.task_type, ''), CASE WHEN ${alias}.client_id IS NULL AND ${alias}.service_id IS NULL THEN 'meeting' ELSE 'task' END)`
+}
+
+async function completePastDueMeetings() {
+  await db.query(
+    `UPDATE tasks t
+     SET status = 'completed',
+         completed_date = COALESCE(completed_date, NOW()),
+         completion_notes = COALESCE(completion_notes, 'Automatically completed after meeting date passed.'),
+         updated_at = NOW()
+     WHERE t.status IN ('pending','in_progress')
+       AND t.due_date < CURRENT_DATE
+       AND ${taskTypeSql('t')} = 'meeting'`
+  )
+}
+
 async function runApprovalSlaEscalations() {
+  await completePastDueMeetings()
   const pendingLeaveResult = await db.query(
     `SELECT id, employee_name, created_at
      FROM leave_requests
@@ -513,8 +531,9 @@ async function runApprovalSlaEscalations() {
 
   const pendingTaskResult = await db.query(
     `SELECT id, title, due_date, assigned_to
-     FROM tasks
-     WHERE status = 'pending'`
+     FROM tasks t
+     WHERE t.status IN ('pending','in_progress')
+       AND ${taskTypeSql('t')} = 'task'`
   )
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -1352,6 +1371,7 @@ app.post('/api/employees/:id/awol', authRequired, requireRole(['admin', 'hr', 'c
 })
 
 app.get('/api/dashboard/overview', authRequired, async (req, res) => {
+  await completePastDueMeetings()
   const today = new Date()
   const yyyy = today.getFullYear()
   const mm = String(today.getMonth() + 1).padStart(2, '0')
@@ -1370,8 +1390,11 @@ app.get('/api/dashboard/overview', authRequired, async (req, res) => {
     )
     const overdue = await db.query(
       `SELECT COUNT(*)::int AS count
-       FROM tasks
-       WHERE assigned_to = $1 AND due_date < $2 AND status IN ('pending','in_progress')`,
+       FROM tasks t
+       WHERE t.assigned_to = $1
+         AND t.due_date < $2
+         AND t.status IN ('pending','in_progress')
+         AND ${taskTypeSql('t')} = 'task'`,
       [req.user.id, todayISO]
     )
     const upcoming = await db.query(
@@ -1403,8 +1426,10 @@ app.get('/api/dashboard/overview', authRequired, async (req, res) => {
   const pendingApprovals = await db.query("SELECT COUNT(*)::int AS count FROM leave_requests WHERE status = 'pending'")
   const overdueTasks = await db.query(
     `SELECT COUNT(*)::int AS count
-     FROM tasks
-     WHERE due_date < $1 AND status IN ('pending','in_progress')`,
+     FROM tasks t
+     WHERE t.due_date < $1
+       AND t.status IN ('pending','in_progress')
+       AND ${taskTypeSql('t')} = 'task'`,
     [todayISO]
   )
   const pendingLeadFollowUps = await db.query(
@@ -1427,7 +1452,9 @@ app.get('/api/dashboard/overview', authRequired, async (req, res) => {
      FROM tasks t
      LEFT JOIN users u ON t.assigned_to = u.id
      LEFT JOIN clients c ON t.client_id = c.id
-     WHERE t.due_date < $1 AND t.status IN ('pending','in_progress')
+     WHERE t.due_date < $1
+       AND t.status IN ('pending','in_progress')
+       AND ${taskTypeSql('t')} = 'task'
      ORDER BY t.due_date ASC
      LIMIT 6`,
     [todayISO]
@@ -1918,6 +1945,7 @@ app.put('/api/services/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), 
 
 // Tasks (CRM)
 app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo', 'employee']), async (req, res) => {
+  await completePastDueMeetings()
   const statusTab = String(req.query.tab || 'active').trim().toLowerCase()
   const search = String(req.query.search || '').trim()
   const clientId = Number.parseInt(req.query.client_id, 10) || null
@@ -1927,7 +1955,7 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo', 'employee
   if (rawTaskType && rawTaskType !== 'all' && !taskType) return res.status(400).json({ message: 'Invalid task type' })
   const { limit, offset } = parsePagination(req.query, 10, 50)
   const today = new Date().toISOString().slice(0, 10)
-  const taskTypeExpr = `COALESCE(NULLIF(t.task_type, ''), CASE WHEN t.client_id IS NULL AND t.service_id IS NULL THEN 'meeting' ELSE 'task' END)`
+  const taskTypeExpr = taskTypeSql('t')
 
   let sql = `SELECT t.*, c.company_name, s.service_type, u.email AS assigned_email, ${taskTypeExpr} AS task_type_resolved
              FROM tasks t
@@ -1947,11 +1975,14 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo', 'employee
       )
     )`
   }
-  if (statusTab === 'active') sql += ` AND t.status IN ('pending','in_progress')`
+  if (statusTab === 'active') {
+    params.push(today)
+    sql += ` AND t.status IN ('pending','in_progress') AND t.due_date >= $${params.length}`
+  }
   if (statusTab === 'completed') sql += ` AND t.status = 'completed'`
   if (statusTab === 'overdue') {
     params.push(today)
-    sql += ` AND t.status IN ('pending','in_progress') AND t.due_date < $${params.length}`
+    sql += ` AND t.status IN ('pending','in_progress') AND t.due_date < $${params.length} AND ${taskTypeExpr} = 'task'`
   }
   if (search) {
     params.push(`%${search}%`)
