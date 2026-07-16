@@ -13,6 +13,7 @@ const db = require('./db')
 const { runMigrations } = require('./migrate')
 const { addAuditLog, updateEmployeeStatus, syncAllEmployeeStatuses } = require('./helpers')
 const { cleanupCompletedTasks } = require('./services/taskCleanupService')
+const { escapeHtml, renderEmailBodyHtml } = require('./services/emailTemplateService')
 const {
   LEAD_STATUSES,
   LEAD_SOURCES,
@@ -109,39 +110,9 @@ const EMAIL_LOGO_URL = (
 ).trim()
 let mailTransport = null
 
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function formatEmailLineHtml(line) {
-  const urlPattern = /(https?:\/\/[^\s]+)/g
-  let result = ''
-  let lastIndex = 0
-  const text = String(line || '')
-  for (const match of text.matchAll(urlPattern)) {
-    const url = match[0]
-    result += escapeHtml(text.slice(lastIndex, match.index))
-    result += `<a href="${escapeHtml(url)}" style="color:#2563eb;text-decoration:underline;">${escapeHtml(url)}</a>`
-    lastIndex = Number(match.index) + url.length
-  }
-  result += escapeHtml(text.slice(lastIndex))
-  return result
-}
-
-function buildBrandedEmailHtml({ subject, text }) {
+function buildBrandedEmailHtml({ subject, text, linkLabels = {} }) {
   const appName = MAIL_APP_NAME
-  const lines = String(text || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-  const body = lines
-    .map((line) => `<p style="margin:0 0 10px;color:#1f2937;font-size:14px;line-height:1.55;">${formatEmailLineHtml(line)}</p>`)
-    .join('')
+  const body = renderEmailBodyHtml(text, linkLabels)
 
   return `<!doctype html>
 <html>
@@ -160,7 +131,7 @@ function buildBrandedEmailHtml({ subject, text }) {
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                   <tr>
                     <td style="vertical-align:top;">
-                      <div style="font-size:18px;font-weight:700;color:#fbbf24;letter-spacing:0.2px;">${appName}</div>
+                      <div style="font-size:18px;font-weight:700;color:#fbbf24;letter-spacing:0.2px;">${escapeHtml(appName)}</div>
                       <div style="margin-top:4px;font-size:12px;color:#9ca3af;">Employee & Operations Notification</div>
                     </td>
                     <td align="right" style="vertical-align:top;">
@@ -183,7 +154,7 @@ function buildBrandedEmailHtml({ subject, text }) {
             <tr>
               <td style="padding:16px 22px;border-top:1px solid #e5e7eb;background:#f9fafb;">
                 <p style="margin:0;color:#6b7280;font-size:12px;line-height:1.5;">
-                  This is an automated message from ${appName}. Please do not reply directly.
+                  This is an automated message from ${escapeHtml(appName)}. Please do not reply directly.
                 </p>
               </td>
             </tr>
@@ -259,9 +230,9 @@ function getMailTransport() {
   return mailTransport
 }
 
-function sendEmailNotification({ to, subject, text, html = null }) {
+function sendEmailNotification({ to, subject, text, html = null, linkLabels = {} }) {
   if (!to || !subject || !text) return
-  const finalHtml = html || buildBrandedEmailHtml({ subject, text })
+  const finalHtml = html || buildBrandedEmailHtml({ subject, text, linkLabels })
   setImmediate(async () => {
     try {
       if (BREVO_API_KEY && BREVO_FROM_EMAIL) {
@@ -2100,6 +2071,7 @@ app.post('/api/tasks', authRequired, uploadTaskAttachment, requireRole(['admin',
     await sendEmailNotification({
       to: assignee?.email,
       subject: `Task Assigned: ${payload.title}`,
+      linkLabels: attachmentUrl ? { [attachmentUrl]: attachmentName || 'View attachment' } : {},
       text: [
         `Hi ${assignee?.name || 'Employee'},`,
         '',
@@ -2125,6 +2097,7 @@ app.post('/api/tasks', authRequired, uploadTaskAttachment, requireRole(['admin',
       await sendEmailNotification({
         to: ceo.email,
         subject: `Team Task Notice: ${payload.title}`,
+        linkLabels: attachmentUrl ? { [attachmentUrl]: attachmentName || 'View attachment' } : {},
         text: [
           `Hi ${ceo.name || 'CEO'},`,
           '',
