@@ -220,6 +220,10 @@ export function getTaskProofUrl(id) {
   return api.getTaskProofUrl(id)
 }
 
+export function getTaskAttachmentUrl(id) {
+  return api.getTaskAttachmentUrl(id)
+}
+
 export async function getAutomationRules(options = {}) {
   return api.getAutomationRules(options)
 }

@@ -117,6 +117,21 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;')
 }
 
+function formatEmailLineHtml(line) {
+  const urlPattern = /(https?:\/\/[^\s]+)/g
+  let result = ''
+  let lastIndex = 0
+  const text = String(line || '')
+  for (const match of text.matchAll(urlPattern)) {
+    const url = match[0]
+    result += escapeHtml(text.slice(lastIndex, match.index))
+    result += `<a href="${escapeHtml(url)}" style="color:#2563eb;text-decoration:underline;">${escapeHtml(url)}</a>`
+    lastIndex = Number(match.index) + url.length
+  }
+  result += escapeHtml(text.slice(lastIndex))
+  return result
+}
+
 function buildBrandedEmailHtml({ subject, text }) {
   const appName = MAIL_APP_NAME
   const lines = String(text || '')
@@ -124,7 +139,7 @@ function buildBrandedEmailHtml({ subject, text }) {
     .map((line) => line.trim())
     .filter(Boolean)
   const body = lines
-    .map((line) => `<p style="margin:0 0 10px;color:#1f2937;font-size:14px;line-height:1.55;">${escapeHtml(line)}</p>`)
+    .map((line) => `<p style="margin:0 0 10px;color:#1f2937;font-size:14px;line-height:1.55;">${formatEmailLineHtml(line)}</p>`)
     .join('')
 
   return `<!doctype html>
@@ -376,6 +391,16 @@ const proofUpload = multer({
   limits: { fileSize: 3 * 1024 * 1024 },
 })
 
+const taskAttachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') return cb(null, true)
+    if (file.mimetype && file.mimetype.startsWith('image/')) return cb(null, true)
+    return cb(new Error('Only PDF or image attachments are allowed'))
+  },
+})
+
 function uploadAttachment(req, res, next) {
   const contentType = req.headers['content-type'] || ''
   if (!contentType.includes('multipart/form-data')) return next()
@@ -383,6 +408,18 @@ function uploadAttachment(req, res, next) {
     if (!err) return next()
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ message: 'Attachment too large (max 1MB)' })
+    }
+    return res.status(400).json({ message: err.message || 'Invalid attachment' })
+  })
+}
+
+function uploadTaskAttachment(req, res, next) {
+  const contentType = req.headers['content-type'] || ''
+  if (!contentType.includes('multipart/form-data')) return next()
+  return taskAttachmentUpload.single('attachment')(req, res, (err) => {
+    if (!err) return next()
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ message: 'Attachment too large (max 5MB)' })
     }
     return res.status(400).json({ message: err.message || 'Invalid attachment' })
   })
@@ -916,6 +953,15 @@ function signToken(user) {
     JWT_SECRET,
     { expiresIn: '7d' }
   )
+}
+
+function getRequestBaseUrl(req) {
+  return `${req.protocol}://${req.get('host')}`
+}
+
+function buildTaskAttachmentUrl(req, taskId) {
+  if (!taskId) return ''
+  return `${getRequestBaseUrl(req)}/api/tasks/${taskId}/attachment`
 }
 
 async function authRequired(req, res, next) {
@@ -1939,14 +1985,22 @@ app.get('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo', 'employee
   res.json({ items: rows, total: Number(countResult.rows[0]?.total || 0), limit, offset })
 })
 
-app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
+app.post('/api/tasks', authRequired, uploadTaskAttachment, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const payload = req.body || {}
-  const notifyCeo = Boolean(payload.notify_ceo)
+  const notifyCeo = String(payload.notify_ceo || '').toLowerCase() === 'true'
   const department = String(payload.assign_department || '').trim()
   const requestedTaskType = normalizeEnum(payload.task_type, TASK_TYPES, { defaultValue: null, allowNull: true })
   if ((payload.task_type || '').trim() && !requestedTaskType) return res.status(400).json({ message: 'Invalid task type' })
-  const assignedIds = Array.isArray(payload.assigned_to_ids)
-    ? payload.assigned_to_ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+  let rawAssignedIds = payload.assigned_to_ids
+  if (typeof rawAssignedIds === 'string') {
+    try {
+      rawAssignedIds = JSON.parse(rawAssignedIds)
+    } catch {
+      rawAssignedIds = []
+    }
+  }
+  const assignedIds = Array.isArray(rawAssignedIds)
+    ? rawAssignedIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
     : payload.assigned_to
     ? [Number(payload.assigned_to)].filter((id) => Number.isInteger(id) && id > 0)
     : []
@@ -1973,10 +2027,13 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
   const status = 'in_progress'
   const priority = normalizeEnum(payload.priority, TASK_PRIORITIES, { defaultValue: 'medium' })
   if ((payload.priority || '') && !priority) return res.status(400).json({ message: 'Invalid task priority' })
+  const attachmentName = req.file?.originalname || null
+  const attachmentType = req.file?.mimetype || null
+  const attachmentData = req.file ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : null
   const { rows } = await db.query(
     `INSERT INTO tasks
-     (title, description, client_id, service_id, task_type, assigned_to, assigned_to_ids, status, priority, due_date, is_automated, automation_rule_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12)
+     (title, description, client_id, service_id, task_type, assigned_to, assigned_to_ids, status, priority, due_date, is_automated, automation_rule_id, attachment_name, attachment_type, attachment_data)
+     VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13,$14,$15)
      RETURNING *`,
     [
       payload.title,
@@ -1989,11 +2046,15 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
       status,
       priority,
       payload.due_date,
-      Boolean(payload.is_automated),
+      String(payload.is_automated || '').toLowerCase() === 'true',
       payload.automation_rule_id || null,
+      attachmentName,
+      attachmentType,
+      attachmentData,
     ]
   )
   const created = rows[0]
+  const attachmentUrl = attachmentData ? buildTaskAttachmentUrl(req, created.id) : ''
   for (const assignedToId of uniqueAssignedIds) {
     await createNotification({
       userId: assignedToId,
@@ -2015,6 +2076,7 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
         `Due date: ${payload.due_date}`,
         `Priority: ${priority}`,
         payload.description ? `Details: ${payload.description}` : null,
+        attachmentUrl ? `Attachment: ${attachmentUrl}` : null,
       ]
         .filter(Boolean)
         .join('\n'),
@@ -2040,6 +2102,7 @@ app.post('/api/tasks', authRequired, requireRole(['admin', 'hr', 'ceo']), async 
           `Priority: ${priority}`,
           finalAssignees ? `Assigned employees: ${finalAssignees}` : null,
           payload.description ? `Details: ${payload.description}` : null,
+          attachmentUrl ? `Attachment: ${attachmentUrl}` : null,
         ]
           .filter(Boolean)
           .join('\n'),
@@ -2247,6 +2310,25 @@ app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'emplo
   if (!match) return res.status(400).json({ message: 'Invalid proof data' })
   res.setHeader('Content-Type', task.proof_of_work_type || match[1] || 'application/octet-stream')
   res.setHeader('Content-Disposition', 'inline')
+  res.send(Buffer.from(match[2], 'base64'))
+})
+
+app.get('/api/tasks/:id/attachment', async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid task id' })
+  const { rows } = await db.query(
+    'SELECT attachment_name, attachment_type, attachment_data FROM tasks WHERE id = $1',
+    [id]
+  )
+  const task = rows[0]
+  if (!task) return res.status(404).json({ message: 'Task not found' })
+  if (!task.attachment_data) return res.status(404).json({ message: 'No attachment uploaded' })
+  const match = String(task.attachment_data).match(/^data:(.+);base64,(.*)$/)
+  if (!match) return res.status(400).json({ message: 'Invalid attachment data' })
+  const mime = task.attachment_type || match[1] || 'application/octet-stream'
+  const filename = String(task.attachment_name || 'attachment').replace(/["\r\n]/g, '')
+  res.setHeader('Content-Type', mime)
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`)
   res.send(Buffer.from(match[2], 'base64'))
 })
 

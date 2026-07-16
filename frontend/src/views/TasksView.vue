@@ -10,6 +10,7 @@ import {
   completeTask,
   cancelTask,
   getTaskProofUrl,
+  getTaskAttachmentUrl,
   getClients,
   getServices,
   getUsers,
@@ -54,6 +55,7 @@ const completingTask = ref(null)
 const completing = ref(false)
 const completeNotes = ref('')
 const proofFile = ref(null)
+const taskAttachmentFile = ref(null)
 
 const actionLoadingId = ref(null)
 
@@ -411,6 +413,7 @@ function openCreate(mode = 'task') {
     priority: 'medium',
     due_date: new Date().toISOString().slice(0, 10),
   }
+  taskAttachmentFile.value = null
   showTaskModal.value = true
 }
 
@@ -432,7 +435,12 @@ function openEdit(row) {
     priority: row.priority || 'medium',
     due_date: row.due_date ? String(row.due_date).slice(0, 10) : '',
   }
+  taskAttachmentFile.value = null
   showTaskModal.value = true
+}
+
+function onTaskAttachmentSelected(event) {
+  taskAttachmentFile.value = event.target.files?.[0] || null
 }
 
 async function saveTask() {
@@ -461,7 +469,16 @@ async function saveTask() {
       await updateTask(editingTask.value.id, payload)
       toast.success('Task updated.')
     } else {
-      await createTask(payload)
+      const formData = new FormData()
+      for (const [key, value] of Object.entries(payload)) {
+        if (Array.isArray(value)) {
+          formData.append(key, JSON.stringify(value))
+        } else if (value !== undefined && value !== null) {
+          formData.append(key, value)
+        }
+      }
+      if (taskAttachmentFile.value) formData.append('attachment', taskAttachmentFile.value)
+      await createTask(formData)
       toast.success('Task created.')
     }
     showTaskModal.value = false
@@ -520,6 +537,10 @@ async function cancelTaskAction(row) {
 
 function proofUrl(taskId) {
   return getTaskProofUrl(taskId)
+}
+
+function attachmentUrl(taskId) {
+  return getTaskAttachmentUrl(taskId)
 }
 </script>
 
@@ -614,6 +635,7 @@ function proofUrl(taskId) {
                 {{ assigneeSummary(row).text }}
                 <span v-if="assigneeSummary(row).remaining > 0">+{{ assigneeSummary(row).remaining }} more</span>
               </span>
+              <a v-if="row.attachment_data" :href="attachmentUrl(row.id)" target="_blank" rel="noopener" class="text-primary-300 hover:text-primary-200">View attachment</a>
               <a v-if="row.proof_of_work_data" :href="proofUrl(row.id)" target="_blank" rel="noopener" class="text-primary-300 hover:text-primary-200">View proof</a>
             </div>
           </div>
@@ -685,104 +707,147 @@ function proofUrl(taskId) {
   </div>
 
   <AppModal :show="showTaskModal" :title="editingTask ? 'Edit Task' : (createMode === 'meeting' ? 'Create Meeting' : 'Create Task')" @close="showTaskModal = false">
-    <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="saveTask">
-      <div class="sm:col-span-2">
-        <AppInput v-model="taskForm.title" :label="!editingTask && createMode === 'meeting' ? 'Meeting Title' : 'Task Title'" required />
-      </div>
-      <div class="sm:col-span-2">
-        <label class="mb-1 block text-sm font-medium text-gray-200">Description</label>
-        <textarea v-model="taskForm.description" rows="3" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" />
-      </div>
-      <div v-if="editingTask || createMode === 'task'">
-        <label class="mb-1 block text-sm font-medium text-gray-200">Client</label>
-        <select v-model="taskForm.client_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option value="">No client</option>
-          <option v-for="client in clients" :key="client.id" :value="String(client.id)">{{ client.company_name }}</option>
-        </select>
-      </div>
-      <div v-if="(editingTask || createMode === 'task') && taskForm.client_id">
-        <label class="mb-1 block text-sm font-medium text-gray-200">Service</label>
-        <select v-model="taskForm.service_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option value="">No service</option>
-          <option v-for="service in formServices" :key="service.id" :value="String(service.id)">{{ typeLabel(service.service_type) }}</option>
-        </select>
-      </div>
-      <div>
-        <label class="mb-1 block text-sm font-medium text-gray-200">{{ !editingTask && createMode === 'meeting' ? 'Attendees' : 'Assign To' }}</label>
-        <template v-if="editingTask">
-          <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-            <option value="" disabled>Select employee</option>
-            <option v-for="user in assignableUsers" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
-          </select>
-        </template>
-        <template v-else>
-          <div class="rounded-lg border border-gray-700 bg-gray-900 p-2">
-            <input
-              v-model="assigneeSearch"
-              type="text"
-              placeholder="Search employee"
-              class="mb-2 block w-full rounded-lg border border-gray-700 bg-gray-900 px-2 py-1.5 text-sm text-gray-100"
-            />
-            <div class="max-h-36 space-y-1 overflow-y-auto pr-1">
-              <label v-for="user in filteredAssignableUsers" :key="user.id" class="flex items-center gap-2 rounded px-2 py-1 text-sm text-gray-200 hover:bg-gray-800">
-                <input v-model="taskForm.assigned_to_ids" type="checkbox" :value="String(user.id)" class="rounded border-gray-700 bg-gray-900" />
-                <span>{{ userLabel(user.id) }}</span>
-              </label>
-              <p v-if="!filteredAssignableUsers.length" class="px-2 py-1 text-xs text-gray-400">No employee found.</p>
+    <form class="space-y-5" @submit.prevent="saveTask">
+      <section class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
+        <div class="mb-4">
+          <p class="text-sm font-semibold text-primary-200">Details</p>
+          <p class="mt-1 text-xs text-gray-400">Basic information shown to assigned employees.</p>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <AppInput v-model="taskForm.title" :label="!editingTask && createMode === 'meeting' ? 'Meeting Title' : 'Task Title'" required />
+          </div>
+          <div class="sm:col-span-2">
+            <label class="mb-1 block text-sm font-medium text-gray-200">Description</label>
+            <textarea v-model="taskForm.description" rows="4" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" placeholder="Add instructions, agenda, or important context." />
+          </div>
+          <div v-if="editingTask || createMode === 'task'">
+            <label class="mb-1 block text-sm font-medium text-gray-200">Client</label>
+            <select v-model="taskForm.client_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+              <option value="">No client</option>
+              <option v-for="client in clients" :key="client.id" :value="String(client.id)">{{ client.company_name }}</option>
+            </select>
+          </div>
+          <div v-if="(editingTask || createMode === 'task') && taskForm.client_id">
+            <label class="mb-1 block text-sm font-medium text-gray-200">Service</label>
+            <select v-model="taskForm.service_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+              <option value="">No service</option>
+              <option v-for="service in formServices" :key="service.id" :value="String(service.id)">{{ typeLabel(service.service_type) }}</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
+        <div class="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p class="text-sm font-semibold text-primary-200">{{ !editingTask && createMode === 'meeting' ? 'Attendees' : 'Assignment' }}</p>
+            <p class="mt-1 text-xs text-gray-400">Choose individual employees or add a whole department.</p>
+          </div>
+          <span v-if="!editingTask" class="text-xs text-gray-400">Selected: {{ taskForm.assigned_to_ids.length }}</span>
+        </div>
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.75fr)]">
+          <div>
+            <label class="mb-1 block text-sm font-medium text-gray-200">{{ !editingTask && createMode === 'meeting' ? 'Attendees' : 'Assign To' }}</label>
+            <template v-if="editingTask">
+              <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+                <option value="" disabled>Select employee</option>
+                <option v-for="user in assignableUsers" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
+              </select>
+            </template>
+            <template v-else>
+              <div class="rounded-xl border border-gray-700 bg-gray-900 p-3">
+                <input
+                  v-model="assigneeSearch"
+                  type="text"
+                  placeholder="Search employee"
+                  class="mb-3 block w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-100"
+                />
+                <div class="max-h-44 space-y-1 overflow-y-auto pr-1">
+                  <label v-for="user in filteredAssignableUsers" :key="user.id" class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-200 hover:bg-gray-800">
+                    <input v-model="taskForm.assigned_to_ids" type="checkbox" :value="String(user.id)" class="rounded border-gray-700 bg-gray-900" />
+                    <span>{{ userLabel(user.id) }}</span>
+                  </label>
+                  <p v-if="!filteredAssignableUsers.length" class="px-2 py-3 text-center text-xs text-gray-400">No employee found.</p>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div v-if="!editingTask" class="space-y-4">
+            <div>
+              <label class="mb-1 block text-sm font-medium text-gray-200">Assign Department</label>
+              <div class="flex gap-2">
+                <select v-model="taskForm.assign_department" class="block min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+                  <option value="">No department</option>
+                  <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
+                </select>
+                <AppButton type="button" variant="secondary" size="sm" @click="addDepartmentAssignees">Add</AppButton>
+              </div>
+              <p class="mt-1 text-xs text-gray-400">Add all linked users from a department.</p>
             </div>
-            <p class="mt-2 text-xs text-gray-400">Selected: {{ taskForm.assigned_to_ids.length }}</p>
-            <div v-if="selectedAssigneeUsers.length" class="mt-2 flex flex-wrap gap-2">
-              <button
-                v-for="user in selectedAssigneeUsers"
-                :key="`selected-${user.id}`"
-                type="button"
-                class="inline-flex items-center gap-1 rounded-full border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
-                @click="removeSelectedAssignee(user.id)"
-              >
-                {{ userLabel(user.id) }}
-                <span aria-hidden="true">x</span>
-              </button>
-              <button
-                type="button"
-                class="inline-flex items-center rounded-full border border-red-700/60 bg-red-900/20 px-2 py-1 text-xs text-red-200 hover:bg-red-900/30"
-                @click="clearSelectedAssignees"
-              >
-                Clear
-              </button>
+
+            <div v-if="selectedAssigneeUsers.length" class="rounded-xl border border-gray-800 bg-gray-900/80 p-3">
+              <div class="mb-2 flex items-center justify-between gap-3">
+                <p class="text-xs font-medium uppercase tracking-wide text-gray-400">Selected employees</p>
+                <button type="button" class="text-xs text-red-300 hover:text-red-200" @click="clearSelectedAssignees">Clear all</button>
+              </div>
+              <div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1">
+                <button
+                  v-for="user in selectedAssigneeUsers"
+                  :key="`selected-${user.id}`"
+                  type="button"
+                  class="inline-flex items-center gap-1 rounded-full border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
+                  @click="removeSelectedAssignee(user.id)"
+                >
+                  {{ userLabel(user.id) }}
+                  <span aria-hidden="true">x</span>
+                </button>
+              </div>
             </div>
           </div>
-        </template>
-      </div>
-      <div v-if="!editingTask">
-        <label class="mb-1 block text-sm font-medium text-gray-200">Assign Department (optional)</label>
-        <div class="flex gap-2">
-          <select v-model="taskForm.assign_department" class="block flex-1 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-            <option value="">No department</option>
-            <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
-          </select>
-          <AppButton type="button" variant="secondary" size="sm" @click="addDepartmentAssignees">Select All</AppButton>
         </div>
-        <p class="mt-1 text-xs text-gray-400">One-click add all linked users from a department to assignees.</p>
-      </div>
-      <div v-if="!editingTask" class="sm:col-span-2">
-        <label class="inline-flex items-center gap-2 text-sm text-gray-200">
-          <input v-model="taskForm.notify_ceo" type="checkbox" class="rounded border-gray-700 bg-gray-900" />
-          <span>Notify CEO by email about this employee meeting/task</span>
-        </label>
-      </div>
-      <div>
-        <label class="mb-1 block text-sm font-medium text-gray-200">Priority</label>
-        <select v-model="taskForm.priority" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option v-for="priority in priorityOptions" :key="priority.value" :value="priority.value">{{ priority.label }}</option>
-        </select>
-      </div>
-      <div v-if="editingTask">
-        <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
-        <select v-model="taskForm.status" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-          <option v-for="status in statusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
-        </select>
-      </div>
-      <AppInput v-model="taskForm.due_date" type="date" label="Due Date" required />
+      </section>
+
+      <section class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
+        <div class="mb-4">
+          <p class="text-sm font-semibold text-primary-200">Schedule & Options</p>
+          <p class="mt-1 text-xs text-gray-400">Set timing, priority, status, and optional notifications.</p>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="mb-1 block text-sm font-medium text-gray-200">Priority</label>
+            <select v-model="taskForm.priority" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+              <option v-for="priority in priorityOptions" :key="priority.value" :value="priority.value">{{ priority.label }}</option>
+            </select>
+          </div>
+          <div v-if="editingTask">
+            <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
+            <select v-model="taskForm.status" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
+              <option v-for="status in statusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
+            </select>
+          </div>
+          <AppInput v-model="taskForm.due_date" type="date" label="Due Date" required />
+          <div v-if="!editingTask" class="sm:col-span-2">
+            <label class="inline-flex items-start gap-3 rounded-xl border border-gray-800 bg-gray-900/80 p-3 text-sm text-gray-200">
+              <input v-model="taskForm.notify_ceo" type="checkbox" class="mt-0.5 rounded border-gray-700 bg-gray-900" />
+              <span>
+                <span class="block font-medium">Notify CEO by email</span>
+                <span class="mt-1 block text-xs text-gray-400">Send the CEO a copy of this employee meeting/task assignment.</span>
+              </span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="!editingTask" class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
+        <div class="mb-3">
+          <p class="text-sm font-semibold text-primary-200">Attachment</p>
+          <p class="mt-1 text-xs text-gray-400">Optional PDF or image. The email will include a direct view link.</p>
+        </div>
+        <input type="file" accept="image/*,.pdf,application/pdf" class="block w-full rounded-lg border border-dashed border-gray-700 bg-gray-900 px-3 py-3 text-sm text-gray-300" @change="onTaskAttachmentSelected" />
+        <p class="mt-2 text-xs text-gray-500">Maximum file size: 5MB.</p>
+      </section>
     </form>
 
     <template #footer>
@@ -842,6 +907,12 @@ function proofUrl(taskId) {
         <div class="rounded-lg border border-gray-800 bg-gray-950 p-3 sm:col-span-2">
           <p class="text-xs text-gray-400">Client</p>
           <p class="mt-1 text-sm text-gray-200">{{ selectedTask.company_name || '-' }}</p>
+        </div>
+        <div v-if="selectedTask.attachment_data" class="rounded-lg border border-gray-800 bg-gray-950 p-3 sm:col-span-2">
+          <p class="text-xs text-gray-400">Attachment</p>
+          <a :href="attachmentUrl(selectedTask.id)" target="_blank" rel="noopener" class="mt-1 inline-flex text-sm text-primary-300 hover:text-primary-200">
+            {{ selectedTask.attachment_name || 'View attachment' }}
+          </a>
         </div>
       </div>
 

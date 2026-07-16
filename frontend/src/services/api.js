@@ -279,7 +279,8 @@ export async function getTasks(options = {}) {
 }
 
 export async function createTask(data) {
-  return request('/api/tasks', { method: 'POST', body: JSON.stringify(data) })
+  const isFormData = typeof FormData !== 'undefined' && data instanceof FormData
+  return request('/api/tasks', { method: 'POST', body: isFormData ? data : JSON.stringify(data) })
 }
 
 export async function updateTask(id, data) {
@@ -301,6 +302,10 @@ export async function completeTask(id, data) {
 
 export function getTaskProofUrl(id) {
   return `${API_BASE}/api/tasks/${id}/proof`
+}
+
+export function getTaskAttachmentUrl(id) {
+  return `${API_BASE}/api/tasks/${id}/attachment`
 }
 
 export async function getAutomationRules(options = {}) {
