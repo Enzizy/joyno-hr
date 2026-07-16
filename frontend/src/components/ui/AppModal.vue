@@ -1,10 +1,20 @@
 <script setup>
-defineProps({
+import { computed } from 'vue'
+
+const props = defineProps({
   show: Boolean,
   title: { type: String, default: '' },
+  size: { type: String, default: 'md' },
 })
 
 const emit = defineEmits(['close'])
+
+const widthClass = computed(() => ({
+  sm: 'max-w-md',
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+  xl: 'max-w-5xl',
+}[props.size] || 'max-w-lg'))
 </script>
 
 <template>
@@ -12,7 +22,8 @@ const emit = defineEmits(['close'])
     <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div class="fixed inset-0 bg-black/50" @click="emit('close')" />
       <div
-        class="relative z-10 w-full max-w-lg rounded-xl bg-gray-900 shadow-xl"
+        class="relative z-10 flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-2xl border border-gray-800 bg-gray-900 shadow-2xl"
+        :class="widthClass"
         role="dialog"
         aria-modal="true"
         @click.stop
@@ -30,10 +41,10 @@ const emit = defineEmits(['close'])
             </svg>
           </button>
         </div>
-        <div class="max-h-[70vh] overflow-y-auto px-6 py-4">
+        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           <slot />
         </div>
-        <div v-if="$slots.footer" class="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
+        <div v-if="$slots.footer" class="flex shrink-0 justify-end gap-2 border-t border-gray-800 bg-gray-900 px-5 py-4 sm:px-6">
           <slot name="footer" />
         </div>
       </div>

@@ -16,8 +16,13 @@ import {
   getUsers,
 } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
-import AppModal from '@/components/ui/AppModal.vue'
-import AppInput from '@/components/ui/AppInput.vue'
+import TaskCompletionModal from '@/components/tasks/TaskCompletionModal.vue'
+import TaskDetailsModal from '@/components/tasks/TaskDetailsModal.vue'
+import TaskEditorModal from '@/components/tasks/TaskEditorModal.vue'
+import {
+  formatPriority, formatStatus, priorityTone, resolveTaskType, serviceBadgeClass,
+  serviceBadgeLabel, serviceCardClass, statusTone, taskTypeBadgeClass, taskTypeLabel,
+} from '@/components/tasks/taskPresentation'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -47,7 +52,6 @@ const createMode = ref('task')
 const showCreateMenu = ref(false)
 const showDetailsModal = ref(false)
 const selectedTask = ref(null)
-const assigneeSearch = ref('')
 const openActionsTaskId = ref(null)
 
 const showCompleteModal = ref(false)
@@ -55,7 +59,6 @@ const completingTask = ref(null)
 const completing = ref(false)
 const completeNotes = ref('')
 const proofFile = ref(null)
-const taskAttachmentFile = ref(null)
 
 const actionLoadingId = ref(null)
 
@@ -66,20 +69,6 @@ const tabOptions = [
   { value: 'all', label: 'All' },
 ]
 
-const statusOptions = [
-  { value: 'pending', label: 'Pending' },
-  { value: 'in_progress', label: 'In Progress' },
-  { value: 'completed', label: 'Completed' },
-  { value: 'cancelled', label: 'Cancelled' },
-]
-
-const priorityOptions = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'urgent', label: 'Urgent' },
-]
-
 const pageSizeOptions = [10, 20, 50]
 const taskTypeOptions = [
   { value: 'all', label: 'All Types' },
@@ -87,70 +76,8 @@ const taskTypeOptions = [
   { value: 'meeting', label: 'Meeting' },
 ]
 
-const taskForm = ref({
-  title: '',
-  description: '',
-  client_id: '',
-  service_id: '',
-  assigned_to: '',
-  assigned_to_ids: [],
-  assign_department: '',
-  notify_ceo: false,
-  status: 'in_progress',
-  priority: 'medium',
-  due_date: '',
-})
-
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const offset = computed(() => (page.value - 1) * pageSize.value)
-const departmentOptions = computed(() => {
-  const values = new Set()
-  for (const user of users.value) {
-    const dept = String(user.department || '').trim()
-    if (dept) values.add(dept)
-  }
-  return Array.from(values).sort((a, b) => a.localeCompare(b))
-})
-const formServices = computed(() => {
-  if (!taskForm.value.client_id) return []
-  return services.value.filter((s) => Number(s.client_id) === Number(taskForm.value.client_id))
-})
-const assignableUsers = computed(() => users.value.filter((u) => String(u.role || '').toLowerCase() !== 'ceo'))
-const filteredAssignableUsers = computed(() => {
-  const q = String(assigneeSearch.value || '').trim().toLowerCase()
-  if (!q) return assignableUsers.value
-  return assignableUsers.value.filter((user) => {
-    const label = userLabel(user.id).toLowerCase()
-    const email = String(user.email || '').toLowerCase()
-    return label.includes(q) || email.includes(q)
-  })
-})
-const selectedAssigneeUsers = computed(() => {
-  const selected = new Set((taskForm.value.assigned_to_ids || []).map((id) => String(id)))
-  return assignableUsers.value.filter((user) => selected.has(String(user.id)))
-})
-
-function formatStatus(value) {
-  return statusOptions.find((v) => v.value === value)?.label || value
-}
-
-function formatPriority(value) {
-  return priorityOptions.find((v) => v.value === value)?.label || value
-}
-
-function statusTone(value) {
-  if (value === 'completed') return 'bg-emerald-900/60 text-emerald-200'
-  if (value === 'in_progress') return 'bg-amber-900/60 text-amber-200'
-  if (value === 'cancelled') return 'bg-gray-800 text-gray-300'
-  return 'bg-sky-900/60 text-sky-200'
-}
-
-function priorityTone(value) {
-  if (value === 'urgent') return 'bg-red-900/70 text-red-200'
-  if (value === 'high') return 'bg-orange-900/70 text-orange-200'
-  if (value === 'medium') return 'bg-amber-900/70 text-amber-200'
-  return 'bg-gray-800 text-gray-300'
-}
 
 function userLabel(id) {
   const user = users.value.find((u) => Number(u.id) === Number(id))
@@ -176,13 +103,6 @@ function assigneeSummary(row, limit = 4) {
   }
 }
 
-function assigneeNames(row) {
-  const ids = Array.isArray(row?.assigned_to_ids) ? row.assigned_to_ids : []
-  const normalized = ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
-  const names = (normalized.length ? normalized : [row?.assigned_to]).map((id) => userLabel(id)).filter(Boolean)
-  return names.join(', ') || '-'
-}
-
 function openDetails(row) {
   openActionsTaskId.value = null
   selectedTask.value = row
@@ -206,85 +126,6 @@ function formatDate(value) {
   const date = new Date(`${iso}T00:00:00`)
   if (Number.isNaN(date.getTime())) return iso
   return date.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' })
-}
-
-function dueState(row) {
-  if (row.status === 'completed' || row.status === 'cancelled') return 'normal'
-  const today = new Date().toISOString().slice(0, 10)
-  const due = dateOnly(row.due_date)
-  if (due < today) return 'overdue'
-  if (due === today) return 'today'
-  return 'normal'
-}
-
-function cardClass(row) {
-  // Keep service-type border colors visually consistent across all tabs.
-  // Due state is shown by filters/status badges, not by border/ring overrides.
-  const state = dueState(row)
-  if (state === 'overdue') return ''
-  if (state === 'today') return ''
-  return ''
-}
-
-function serviceCardClass(row) {
-  if (row.service_type === 'website_development') return 'border-cyan-700/70 bg-cyan-950/10'
-  if (row.service_type === 'social_media_management') return 'border-violet-700/70 bg-violet-950/10'
-  return 'border-gray-800 bg-gray-900'
-}
-
-function serviceBadgeClass(serviceType) {
-  if (serviceType === 'website_development') return 'border-cyan-600/60 bg-cyan-900/30 text-cyan-200'
-  if (serviceType === 'social_media_management') return 'border-violet-600/60 bg-violet-900/30 text-violet-200'
-  return 'border-gray-700 text-gray-300'
-}
-
-function serviceBadgeLabel(serviceType) {
-  if (serviceType === 'website_development') return 'Web Dev'
-  if (serviceType === 'social_media_management') return 'SocMed'
-  return 'General'
-}
-
-function resolveTaskType(row) {
-  const direct = String(row?.task_type || row?.task_type_resolved || '').trim().toLowerCase()
-  if (direct === 'meeting' || direct === 'task') return direct
-  if (row?.client_id || row?.service_id) return 'task'
-  return 'meeting'
-}
-
-function taskTypeLabel(value) {
-  return value === 'meeting' ? 'Meeting' : 'Task'
-}
-
-function taskTypeBadgeClass(value) {
-  if (value === 'meeting') return 'border-indigo-600/60 bg-indigo-900/30 text-indigo-200'
-  return 'border-emerald-600/60 bg-emerald-900/30 text-emerald-200'
-}
-
-function addDepartmentAssignees() {
-  const department = String(taskForm.value.assign_department || '').trim()
-  if (!department) {
-    toast.warning('Select a department first.')
-    return
-  }
-  const matches = assignableUsers.value
-    .filter((user) => String(user.department || '').trim() === department)
-    .map((user) => String(user.id))
-  if (!matches.length) {
-    toast.warning('No employees found in selected department.')
-    return
-  }
-  const merged = new Set([...(taskForm.value.assigned_to_ids || []).map((id) => String(id)), ...matches])
-  taskForm.value.assigned_to_ids = Array.from(merged)
-  toast.success(`Added ${matches.length} employee(s) from ${department}.`)
-}
-
-function removeSelectedAssignee(userId) {
-  const id = String(userId)
-  taskForm.value.assigned_to_ids = (taskForm.value.assigned_to_ids || []).filter((value) => String(value) !== id)
-}
-
-function clearSelectedAssignees() {
-  taskForm.value.assigned_to_ids = []
 }
 
 async function loadLookups() {
@@ -399,21 +240,6 @@ function openCreate(mode = 'task') {
   closeActionsMenu()
   showCreateMenu.value = false
   createMode.value = mode === 'meeting' ? 'meeting' : 'task'
-  assigneeSearch.value = ''
-  taskForm.value = {
-    title: '',
-    description: '',
-    client_id: '',
-    service_id: '',
-    assigned_to: '',
-    assigned_to_ids: [],
-    assign_department: '',
-    notify_ceo: false,
-    status: 'in_progress',
-    priority: 'medium',
-    due_date: new Date().toISOString().slice(0, 10),
-  }
-  taskAttachmentFile.value = null
   showTaskModal.value = true
 }
 
@@ -421,49 +247,23 @@ function openEdit(row) {
   closeActionsMenu()
   createMode.value = resolveTaskType(row)
   editingTask.value = row
-  assigneeSearch.value = ''
-  taskForm.value = {
-    title: row.title || '',
-    description: row.description || '',
-    client_id: row.client_id ? String(row.client_id) : '',
-    service_id: row.service_id ? String(row.service_id) : '',
-    assigned_to: row.assigned_to ? String(row.assigned_to) : '',
-    assigned_to_ids: [],
-    assign_department: '',
-    notify_ceo: false,
-    status: row.status || 'pending',
-    priority: row.priority || 'medium',
-    due_date: row.due_date ? String(row.due_date).slice(0, 10) : '',
-  }
-  taskAttachmentFile.value = null
   showTaskModal.value = true
 }
 
-function onTaskAttachmentSelected(event) {
-  taskAttachmentFile.value = event.target.files?.[0] || null
-}
-
-async function saveTask() {
+async function saveTask({ form, attachment }) {
   const isMeetingCreate = !editingTask.value && createMode.value === 'meeting'
-  const hasAssignee = editingTask.value
-    ? Boolean(taskForm.value.assigned_to)
-    : (Array.isArray(taskForm.value.assigned_to_ids) && taskForm.value.assigned_to_ids.length > 0) || Boolean(taskForm.value.assign_department)
-  if (!taskForm.value.title || !hasAssignee || !taskForm.value.due_date) {
-    toast.warning('Task title, assigned user(s), and due date are required.')
-    return
-  }
   savingTask.value = true
   try {
     const payload = {
-      ...taskForm.value,
-      client_id: isMeetingCreate ? null : taskForm.value.client_id || null,
-      service_id: isMeetingCreate ? null : taskForm.value.service_id || null,
+      ...form,
+      client_id: isMeetingCreate ? null : form.client_id || null,
+      service_id: isMeetingCreate ? null : form.service_id || null,
       task_type: editingTask.value ? resolveTaskType(editingTask.value) : createMode.value,
-      assigned_to: Number(taskForm.value.assigned_to),
-      assigned_to_ids: (taskForm.value.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
-      assign_department: taskForm.value.assign_department || null,
-      notify_ceo: Boolean(taskForm.value.notify_ceo),
-      status: editingTask.value ? taskForm.value.status : 'in_progress',
+      assigned_to: Number(form.assigned_to),
+      assigned_to_ids: (form.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
+      assign_department: form.assign_department || null,
+      notify_ceo: Boolean(form.notify_ceo),
+      status: editingTask.value ? form.status : 'in_progress',
     }
     if (editingTask.value) {
       await updateTask(editingTask.value.id, payload)
@@ -477,7 +277,7 @@ async function saveTask() {
           formData.append(key, value)
         }
       }
-      if (taskAttachmentFile.value) formData.append('attachment', taskAttachmentFile.value)
+      if (attachment) formData.append('attachment', attachment)
       await createTask(formData)
       toast.success('Task created.')
     }
@@ -606,7 +406,7 @@ function attachmentUrl(taskId) {
     </div>
 
     <div class="space-y-3">
-      <div v-for="row in tasks" :key="row.id" class="rounded-xl border p-4 shadow-sm" :class="[serviceCardClass(row), cardClass(row)]">
+      <div v-for="row in tasks" :key="row.id" class="rounded-xl border p-4 shadow-sm" :class="serviceCardClass(row)">
         <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div class="min-w-0 space-y-2 md:pr-4">
             <div class="flex items-center gap-2">
@@ -706,223 +506,31 @@ function attachmentUrl(taskId) {
     </div>
   </div>
 
-  <AppModal :show="showTaskModal" :title="editingTask ? 'Edit Task' : (createMode === 'meeting' ? 'Create Meeting' : 'Create Task')" @close="showTaskModal = false">
-    <form class="space-y-5" @submit.prevent="saveTask">
-      <section class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
-        <div class="mb-4">
-          <p class="text-sm font-semibold text-primary-200">Details</p>
-          <p class="mt-1 text-xs text-gray-400">Basic information shown to assigned employees.</p>
-        </div>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div class="sm:col-span-2">
-            <AppInput v-model="taskForm.title" :label="!editingTask && createMode === 'meeting' ? 'Meeting Title' : 'Task Title'" required />
-          </div>
-          <div class="sm:col-span-2">
-            <label class="mb-1 block text-sm font-medium text-gray-200">Description</label>
-            <textarea v-model="taskForm.description" rows="4" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" placeholder="Add instructions, agenda, or important context." />
-          </div>
-          <div v-if="editingTask || createMode === 'task'">
-            <label class="mb-1 block text-sm font-medium text-gray-200">Client</label>
-            <select v-model="taskForm.client_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-              <option value="">No client</option>
-              <option v-for="client in clients" :key="client.id" :value="String(client.id)">{{ client.company_name }}</option>
-            </select>
-          </div>
-          <div v-if="(editingTask || createMode === 'task') && taskForm.client_id">
-            <label class="mb-1 block text-sm font-medium text-gray-200">Service</label>
-            <select v-model="taskForm.service_id" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-              <option value="">No service</option>
-              <option v-for="service in formServices" :key="service.id" :value="String(service.id)">{{ typeLabel(service.service_type) }}</option>
-            </select>
-          </div>
-        </div>
-      </section>
+  <TaskEditorModal
+    :show="showTaskModal"
+    :mode="createMode"
+    :task="editingTask"
+    :clients="clients"
+    :services="services"
+    :users="users"
+    :saving="savingTask"
+    @close="showTaskModal = false"
+    @submit="saveTask"
+  />
 
-      <section class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
-        <div class="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p class="text-sm font-semibold text-primary-200">{{ !editingTask && createMode === 'meeting' ? 'Attendees' : 'Assignment' }}</p>
-            <p class="mt-1 text-xs text-gray-400">Choose individual employees or add a whole department.</p>
-          </div>
-          <span v-if="!editingTask" class="text-xs text-gray-400">Selected: {{ taskForm.assigned_to_ids.length }}</span>
-        </div>
-        <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(240px,0.75fr)]">
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-200">{{ !editingTask && createMode === 'meeting' ? 'Attendees' : 'Assign To' }}</label>
-            <template v-if="editingTask">
-              <select v-model="taskForm.assigned_to" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-                <option value="" disabled>Select employee</option>
-                <option v-for="user in assignableUsers" :key="user.id" :value="String(user.id)">{{ userLabel(user.id) }}</option>
-              </select>
-            </template>
-            <template v-else>
-              <div class="rounded-xl border border-gray-700 bg-gray-900 p-3">
-                <input
-                  v-model="assigneeSearch"
-                  type="text"
-                  placeholder="Search employee"
-                  class="mb-3 block w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-100"
-                />
-                <div class="max-h-44 space-y-1 overflow-y-auto pr-1">
-                  <label v-for="user in filteredAssignableUsers" :key="user.id" class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-gray-200 hover:bg-gray-800">
-                    <input v-model="taskForm.assigned_to_ids" type="checkbox" :value="String(user.id)" class="rounded border-gray-700 bg-gray-900" />
-                    <span>{{ userLabel(user.id) }}</span>
-                  </label>
-                  <p v-if="!filteredAssignableUsers.length" class="px-2 py-3 text-center text-xs text-gray-400">No employee found.</p>
-                </div>
-              </div>
-            </template>
-          </div>
+  <TaskCompletionModal
+    v-model:notes="completeNotes"
+    :show="showCompleteModal"
+    :loading="completing"
+    @close="showCompleteModal = false"
+    @proof-selected="onProofSelected"
+    @submit="completeTaskAction"
+  />
 
-          <div v-if="!editingTask" class="space-y-4">
-            <div>
-              <label class="mb-1 block text-sm font-medium text-gray-200">Assign Department</label>
-              <div class="flex gap-2">
-                <select v-model="taskForm.assign_department" class="block min-w-0 flex-1 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-                  <option value="">No department</option>
-                  <option v-for="dept in departmentOptions" :key="dept" :value="dept">{{ dept }}</option>
-                </select>
-                <AppButton type="button" variant="secondary" size="sm" @click="addDepartmentAssignees">Add</AppButton>
-              </div>
-              <p class="mt-1 text-xs text-gray-400">Add all linked users from a department.</p>
-            </div>
-
-            <div v-if="selectedAssigneeUsers.length" class="rounded-xl border border-gray-800 bg-gray-900/80 p-3">
-              <div class="mb-2 flex items-center justify-between gap-3">
-                <p class="text-xs font-medium uppercase tracking-wide text-gray-400">Selected employees</p>
-                <button type="button" class="text-xs text-red-300 hover:text-red-200" @click="clearSelectedAssignees">Clear all</button>
-              </div>
-              <div class="flex max-h-28 flex-wrap gap-2 overflow-y-auto pr-1">
-                <button
-                  v-for="user in selectedAssigneeUsers"
-                  :key="`selected-${user.id}`"
-                  type="button"
-                  class="inline-flex items-center gap-1 rounded-full border border-gray-700 bg-gray-800 px-2 py-1 text-xs text-gray-200 hover:bg-gray-700"
-                  @click="removeSelectedAssignee(user.id)"
-                >
-                  {{ userLabel(user.id) }}
-                  <span aria-hidden="true">x</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
-        <div class="mb-4">
-          <p class="text-sm font-semibold text-primary-200">Schedule & Options</p>
-          <p class="mt-1 text-xs text-gray-400">Set timing, priority, status, and optional notifications.</p>
-        </div>
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-200">Priority</label>
-            <select v-model="taskForm.priority" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-              <option v-for="priority in priorityOptions" :key="priority.value" :value="priority.value">{{ priority.label }}</option>
-            </select>
-          </div>
-          <div v-if="editingTask">
-            <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>
-            <select v-model="taskForm.status" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100">
-              <option v-for="status in statusOptions" :key="status.value" :value="status.value">{{ status.label }}</option>
-            </select>
-          </div>
-          <AppInput v-model="taskForm.due_date" type="date" label="Due Date" required />
-          <div v-if="!editingTask" class="sm:col-span-2">
-            <label class="inline-flex items-start gap-3 rounded-xl border border-gray-800 bg-gray-900/80 p-3 text-sm text-gray-200">
-              <input v-model="taskForm.notify_ceo" type="checkbox" class="mt-0.5 rounded border-gray-700 bg-gray-900" />
-              <span>
-                <span class="block font-medium">Notify CEO by email</span>
-                <span class="mt-1 block text-xs text-gray-400">Send the CEO a copy of this employee meeting/task assignment.</span>
-              </span>
-            </label>
-          </div>
-        </div>
-      </section>
-
-      <section v-if="!editingTask" class="rounded-xl border border-gray-800 bg-gray-950/60 p-4">
-        <div class="mb-3">
-          <p class="text-sm font-semibold text-primary-200">Attachment</p>
-          <p class="mt-1 text-xs text-gray-400">Optional PDF or image. The email will include a direct view link.</p>
-        </div>
-        <input type="file" accept="image/*,.pdf,application/pdf" class="block w-full rounded-lg border border-dashed border-gray-700 bg-gray-900 px-3 py-3 text-sm text-gray-300" @change="onTaskAttachmentSelected" />
-        <p class="mt-2 text-xs text-gray-500">Maximum file size: 5MB.</p>
-      </section>
-    </form>
-
-    <template #footer>
-      <AppButton variant="secondary" @click="showTaskModal = false">Cancel</AppButton>
-      <AppButton :loading="savingTask" @click="saveTask">{{ editingTask ? 'Update Task' : (createMode === 'meeting' ? 'Create Meeting' : 'Create Task') }}</AppButton>
-    </template>
-  </AppModal>
-
-  <AppModal :show="showCompleteModal" title="Complete Task" @close="showCompleteModal = false">
-    <div class="space-y-4">
-      <div>
-        <label class="mb-1 block text-sm font-medium text-gray-200">Completion Notes</label>
-        <textarea v-model="completeNotes" rows="3" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" />
-      </div>
-      <div>
-        <label class="mb-1 block text-sm font-medium text-gray-200">Proof of Work</label>
-        <input type="file" class="block w-full text-sm text-gray-300" @change="onProofSelected" />
-      </div>
-    </div>
-
-    <template #footer>
-      <AppButton variant="secondary" @click="showCompleteModal = false">Cancel</AppButton>
-      <AppButton :loading="completing" @click="completeTaskAction">Mark Complete</AppButton>
-    </template>
-  </AppModal>
-
-  <AppModal :show="showDetailsModal" title="Task Details" @close="showDetailsModal = false">
-    <div v-if="selectedTask" class="space-y-4">
-      <div>
-        <h3 class="text-lg font-semibold text-primary-200">{{ selectedTask.title }}</h3>
-        <p class="mt-1 text-sm text-gray-300 whitespace-pre-wrap break-words">
-          {{ selectedTask.description || 'No description.' }}
-        </p>
-      </div>
-
-      <div class="grid gap-3 sm:grid-cols-2">
-        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
-          <p class="text-xs text-gray-400">Status</p>
-          <p class="mt-1 text-sm text-gray-200">{{ formatStatus(selectedTask.status) }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
-          <p class="text-xs text-gray-400">Priority</p>
-          <p class="mt-1 text-sm text-gray-200">{{ formatPriority(selectedTask.priority) }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
-          <p class="text-xs text-gray-400">Type</p>
-          <p class="mt-1 text-sm text-gray-200">{{ taskTypeLabel(resolveTaskType(selectedTask)) }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
-          <p class="text-xs text-gray-400">Due Date</p>
-          <p class="mt-1 text-sm text-gray-200">{{ formatDate(selectedTask.due_date) }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
-          <p class="text-xs text-gray-400">Service</p>
-          <p class="mt-1 text-sm text-gray-200">{{ typeLabel(selectedTask.service_type) }}</p>
-        </div>
-        <div class="rounded-lg border border-gray-800 bg-gray-950 p-3 sm:col-span-2">
-          <p class="text-xs text-gray-400">Client</p>
-          <p class="mt-1 text-sm text-gray-200">{{ selectedTask.company_name || '-' }}</p>
-        </div>
-        <div v-if="selectedTask.attachment_data" class="rounded-lg border border-gray-800 bg-gray-950 p-3 sm:col-span-2">
-          <p class="text-xs text-gray-400">Attachment</p>
-          <a :href="attachmentUrl(selectedTask.id)" target="_blank" rel="noopener" class="mt-1 inline-flex text-sm text-primary-300 hover:text-primary-200">
-            {{ selectedTask.attachment_name || 'View attachment' }}
-          </a>
-        </div>
-      </div>
-
-      <div class="rounded-lg border border-gray-800 bg-gray-950 p-3">
-        <p class="text-xs text-gray-400">Assigned Employees</p>
-        <p class="mt-1 text-sm text-gray-200 break-words">{{ assigneeNames(selectedTask) }}</p>
-      </div>
-    </div>
-    <template #footer>
-      <AppButton variant="secondary" @click="showDetailsModal = false">Close</AppButton>
-    </template>
-  </AppModal>
+  <TaskDetailsModal
+    :show="showDetailsModal"
+    :task="selectedTask"
+    :users="users"
+    @close="showDetailsModal = false"
+  />
 </template>
