@@ -17,6 +17,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'submit'])
 
 const assigneeSearch = ref('')
+const departmentFilter = ref('')
 const attachmentFile = ref(null)
 const formMessage = ref('')
 const taskForm = ref(emptyForm())
@@ -30,14 +31,24 @@ const departmentOptions = computed(() => {
   const values = new Set(assignableUsers.value.map((user) => String(user.department || '').trim()).filter(Boolean))
   return Array.from(values).sort((a, b) => a.localeCompare(b))
 })
+const departmentUsers = computed(() => {
+  if (!departmentFilter.value) return []
+  return assignableUsers.value.filter((user) => String(user.department || '').trim() === departmentFilter.value)
+})
+const allDepartmentUsersSelected = computed(() => {
+  if (!departmentUsers.value.length) return false
+  const selected = new Set(taskForm.value.assigned_to_ids.map(String))
+  return departmentUsers.value.every((user) => selected.has(String(user.id)))
+})
 const formServices = computed(() => {
   if (!taskForm.value.client_id) return []
   return props.services.filter((service) => Number(service.client_id) === Number(taskForm.value.client_id))
 })
 const filteredUsers = computed(() => {
   const query = assigneeSearch.value.trim().toLowerCase()
-  if (!query) return assignableUsers.value
-  return assignableUsers.value.filter((user) => {
+  const users = departmentFilter.value ? departmentUsers.value : assignableUsers.value
+  if (!query) return users
+  return users.filter((user) => {
     return userLabel(user).toLowerCase().includes(query) || String(user.email || '').toLowerCase().includes(query)
   })
 })
@@ -59,7 +70,7 @@ watch(() => taskForm.value.client_id, () => {
 function emptyForm() {
   return {
     title: '', description: '', client_id: '', service_id: '', assigned_to: '', assigned_to_ids: [],
-    assign_department: '', notify_ceo: false, status: 'in_progress', priority: 'medium',
+    notify_ceo: false, status: 'in_progress', priority: 'medium',
     due_date: new Date().toISOString().slice(0, 10),
   }
 }
@@ -73,13 +84,13 @@ function resetForm() {
     service_id: row.service_id ? String(row.service_id) : '',
     assigned_to: row.assigned_to ? String(row.assigned_to) : '',
     assigned_to_ids: [],
-    assign_department: '',
     notify_ceo: false,
     status: row.status || 'pending',
     priority: row.priority || 'medium',
     due_date: row.due_date ? String(row.due_date).slice(0, 10) : '',
   } : emptyForm()
   assigneeSearch.value = ''
+  departmentFilter.value = ''
   attachmentFile.value = null
   formMessage.value = ''
 }
@@ -95,17 +106,16 @@ function serviceLabel(value) {
   return value || '-'
 }
 
-function addDepartment() {
-  const department = taskForm.value.assign_department
-  if (!department) {
-    formMessage.value = 'Select a department first.'
+function toggleDepartmentSelection() {
+  if (!departmentFilter.value || !departmentUsers.value.length) return
+  const departmentIds = new Set(departmentUsers.value.map((user) => String(user.id)))
+  if (allDepartmentUsersSelected.value) {
+    taskForm.value.assigned_to_ids = taskForm.value.assigned_to_ids.filter((id) => !departmentIds.has(String(id)))
+    formMessage.value = `Removed employees from ${departmentFilter.value}.`
     return
   }
-  const matches = assignableUsers.value
-    .filter((user) => String(user.department || '').trim() === department)
-    .map((user) => String(user.id))
-  taskForm.value.assigned_to_ids = [...new Set([...taskForm.value.assigned_to_ids.map(String), ...matches])]
-  formMessage.value = matches.length ? `Added ${matches.length} employee${matches.length === 1 ? '' : 's'} from ${department}.` : 'No employees found in that department.'
+  taskForm.value.assigned_to_ids = [...new Set([...taskForm.value.assigned_to_ids.map(String), ...departmentIds])]
+  formMessage.value = `Selected ${departmentUsers.value.length} employee${departmentUsers.value.length === 1 ? '' : 's'} from ${departmentFilter.value}.`
 }
 
 function removeAssignee(userId) {
@@ -209,12 +219,15 @@ function submitForm() {
 
         <template v-else>
           <div class="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-            <select v-model="taskForm.assign_department" class="form-control">
-              <option value="">Add by department</option>
+            <select v-model="departmentFilter" class="form-control">
+              <option value="">All departments</option>
               <option v-for="department in departmentOptions" :key="department" :value="department">{{ department }}</option>
             </select>
-            <AppButton type="button" variant="secondary" @click="addDepartment">Add department</AppButton>
+            <AppButton type="button" variant="secondary" :disabled="!departmentFilter || !departmentUsers.length" @click="toggleDepartmentSelection">
+              {{ !departmentFilter ? 'Select a department' : allDepartmentUsersSelected ? `Deselect all (${departmentUsers.length})` : `Select all (${departmentUsers.length})` }}
+            </AppButton>
           </div>
+          <p class="mt-2 text-xs text-gray-400">The department menu filters the employee list. It does not select anyone automatically.</p>
 
           <div class="mt-4 rounded-xl border border-gray-800 bg-gray-900/70 p-3">
             <div class="relative">

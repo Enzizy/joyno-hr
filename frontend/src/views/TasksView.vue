@@ -261,7 +261,6 @@ async function saveTask({ form, attachment }) {
       task_type: editingTask.value ? resolveTaskType(editingTask.value) : createMode.value,
       assigned_to: Number(form.assigned_to),
       assigned_to_ids: (form.assigned_to_ids || []).map((id) => Number(id)).filter(Boolean),
-      assign_department: form.assign_department || null,
       notify_ceo: Boolean(form.notify_ceo),
       status: editingTask.value ? form.status : 'in_progress',
     }
