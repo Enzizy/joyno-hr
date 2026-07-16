@@ -12,6 +12,7 @@ const crypto = require('crypto')
 const db = require('./db')
 const { runMigrations } = require('./migrate')
 const { addAuditLog, updateEmployeeStatus, syncAllEmployeeStatuses } = require('./helpers')
+const { cleanupCompletedTasks } = require('./services/taskCleanupService')
 const {
   LEAD_STATUSES,
   LEAD_SOURCES,
@@ -3396,6 +3397,10 @@ async function ensureDatabaseReadyWithRetry() {
         cleanupExpiredRejectedLeaveRequests().catch((err) => console.error('Rejected leave cleanup failed', err))
         setInterval(() => {
           cleanupExpiredRejectedLeaveRequests().catch((err) => console.error('Rejected leave cleanup failed', err))
+        }, 24 * 60 * 60 * 1000)
+        cleanupCompletedTasks().catch((err) => console.error('Completed task cleanup failed', err))
+        setInterval(() => {
+          cleanupCompletedTasks().catch((err) => console.error('Completed task cleanup failed', err))
         }, 24 * 60 * 60 * 1000)
       }
       return

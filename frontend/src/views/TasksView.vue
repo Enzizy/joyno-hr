@@ -78,6 +78,7 @@ const taskTypeOptions = [
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const offset = computed(() => (page.value - 1) * pageSize.value)
+const assignableUsers = computed(() => users.value.filter((user) => String(user.role || '').toLowerCase() !== 'ceo'))
 
 function userLabel(id) {
   const user = users.value.find((u) => Number(u.id) === Number(id))
@@ -345,24 +346,28 @@ function attachmentUrl(taskId) {
 
 <template>
   <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-primary-200">Tasks</h1>
-        <p class="mt-1 text-sm text-gray-400">Central task management for all CRM work.</p>
-      </div>
-      <div class="relative" data-create-menu="tasks-create">
-        <AppButton @click.stop="toggleCreateMenu">Create <span class="ml-1 text-xs">v</span></AppButton>
-        <div v-if="showCreateMenu" class="absolute right-0 z-20 mt-2 w-40 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-lg">
-          <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('task')">Create Task</button>
-          <button type="button" class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('meeting')">Create Meeting</button>
-        </div>
-      </div>
+    <div>
+      <h1 class="text-2xl font-bold text-primary-200">Tasks</h1>
+      <p class="mt-1 text-sm text-gray-400">Central task management for all CRM work.</p>
     </div>
 
-    <div class="flex flex-wrap gap-2">
-      <button v-for="item in tabOptions" :key="item.value" type="button" class="rounded-lg px-3 py-2 text-sm font-medium" :class="tab === item.value ? 'bg-primary-500 text-gray-900' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'" @click="tab = item.value; applyFilters()">
-        {{ item.label }}
-      </button>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap gap-2">
+        <button v-for="item in tabOptions" :key="item.value" type="button" class="rounded-lg px-3 py-2 text-sm font-medium" :class="tab === item.value ? 'bg-primary-500 text-gray-900' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'" @click="tab = item.value; applyFilters()">
+          {{ item.label }}
+        </button>
+      </div>
+      <div class="relative" data-create-menu="tasks-create">
+        <AppButton @click.stop="toggleCreateMenu">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12h14" /></svg>
+          Create New
+          <svg class="h-4 w-4 transition-transform" :class="showCreateMenu ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" /></svg>
+        </AppButton>
+        <div v-if="showCreateMenu" class="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-xl border border-gray-700 bg-gray-900 p-1.5 shadow-xl">
+          <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('task')">Create Task</button>
+          <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('meeting')">Create Meeting</button>
+        </div>
+      </div>
     </div>
 
     <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-6">
