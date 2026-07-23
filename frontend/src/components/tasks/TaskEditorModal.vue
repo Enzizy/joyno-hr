@@ -197,7 +197,7 @@ function submitForm() {
         <section v-if="!isEditing" class="rounded-xl border border-gray-800 bg-gray-950/50 p-4 sm:p-5">
           <h4 class="font-semibold text-primary-200">Attachment <span class="font-normal text-gray-500">(optional)</span></h4>
           <p class="mt-1 text-xs text-gray-400">PDF or image, up to 5MB. Emails include a direct view link.</p>
-          <input type="file" accept="image/*,.pdf,application/pdf" class="mt-3 block w-full rounded-lg border border-dashed border-gray-700 bg-gray-900 px-3 py-3 text-sm text-gray-300 file:mr-3 file:rounded-md file:border-0 file:bg-gray-800 file:px-3 file:py-1.5 file:text-xs file:text-gray-200" @change="onAttachmentSelected" />
+          <label class="mt-3 flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-dashed border-gray-700 bg-gray-900/70 p-4 transition hover:border-primary-500/50"><span class="min-w-0"><span class="block truncate text-sm font-medium text-gray-200">{{ attachmentFile?.name || 'Choose a PDF or image' }}</span><span class="mt-1 block text-xs text-gray-500">Click to browse from your device</span></span><span class="shrink-0 rounded-lg bg-gray-800 px-3 py-2 text-xs font-medium text-primary-300">Browse</span><input type="file" accept="image/*,.pdf,application/pdf" class="sr-only" @change="onAttachmentSelected" /></label>
         </section>
       </div>
 

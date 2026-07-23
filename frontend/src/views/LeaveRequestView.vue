@@ -3,14 +3,19 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
-import { getLeaveComments, createLeaveComment } from '@/services/backendService'
+import { createLeaveComment, getLeaveComments, getLeavePolicySettings, getLeaveTimeline } from '@/services/backendService'
+import { usePhilippineWorkingDays } from '@/composables/usePhilippineWorkingDays'
 import AppButton from '@/components/ui/AppButton.vue'
-import AppInput from '@/components/ui/AppInput.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
-import AppTable from '@/components/ui/AppTable.vue'
 import AppModal from '@/components/ui/AppModal.vue'
-import StatusBadge from '@/components/ui/StatusBadge.vue'
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+import PageHeader from '@/components/ui/PageHeader.vue'
+import EmployeeLeaveRequestForm from '@/components/leave/EmployeeLeaveRequestForm.vue'
+import EmployeeLeaveRequestsList from '@/components/leave/EmployeeLeaveRequestsList.vue'
+import LeaveBalanceCards from '@/components/leave/LeaveBalanceCards.vue'
+import LeaveCalendarPanel from '@/components/leave/LeaveCalendarPanel.vue'
+import LeaveDetailsModal from '@/components/leave/LeaveDetailsModal.vue'
+import LeavePolicyDetails from '@/components/leave/LeavePolicyDetails.vue'
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 const leaveStore = useLeaveStore()
 const authStore = useAuthStore()
@@ -26,20 +31,21 @@ const cancelling = ref(false)
 const attachmentModal = ref(false)
 const attachmentUrl = ref('')
 const attachmentLoading = ref(false)
-const reasonModal = ref(false)
-const reasonRow = ref(null)
 const editModal = ref(false)
 const editingRow = ref(null)
 const editSubmitting = ref(false)
 const editAttachment = ref(null)
 const editForm = ref({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
-const reasonMax = 24
 const conversationModal = ref(false)
 const conversationRow = ref(null)
 const comments = ref([])
 const commentsLoading = ref(false)
 const reply = ref('')
 const sendingReply = ref(false)
+const replyModal = ref(false)
+const timeline = ref([])
+const timelineLoading = ref(false)
+const policySettings = ref({ probationary_months: 6, probationary_leave_type_id: 'leave_of_absence' })
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -49,14 +55,10 @@ const myRequests = computed(() => {
   if (!employeeId) return []
   return leaveStore.requests.filter((r) => r.employee_id === employeeId)
 })
-const requestedDays = computed(() => {
-  if (!form.value.start_date || !form.value.end_date) return 0
-  const start = new Date(form.value.start_date)
-  const end = new Date(form.value.end_date)
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return 0
-  const msPerDay = 24 * 60 * 60 * 1000
-  return Math.floor((end - start) / msPerDay) + 1
-})
+const { workingDays: requestedDays } = usePhilippineWorkingDays(
+  computed(() => form.value.start_date),
+  computed(() => form.value.end_date)
+)
 function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
   if (!dateHired || !leaveStartDate) return false
   const hired = new Date(dateHired)
@@ -66,14 +68,14 @@ function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
   minDate.setMonth(minDate.getMonth() + Number(minMonths || 0))
   return leaveStart >= minDate
 }
-function isBelowSixMonthsOfService(dateHired) {
+function isBelowProbationaryService(dateHired) {
   if (!dateHired) return true
   const hired = new Date(dateHired)
   const today = new Date()
   if (Number.isNaN(hired.getTime())) return true
   let months = (today.getFullYear() - hired.getFullYear()) * 12 + (today.getMonth() - hired.getMonth())
   if (today.getDate() < hired.getDate()) months -= 1
-  return months < 6
+  return months < Number(policySettings.value.probationary_months ?? 6)
 }
 const leaveTypeMap = computed(() =>
   leaveStore.leaveTypes.reduce((acc, type) => {
@@ -83,7 +85,7 @@ const leaveTypeMap = computed(() =>
 )
 const selectedLeaveType = computed(() => leaveTypeMap.value[form.value.leave_type_id] || null)
 const selectedEditLeaveType = computed(() => leaveTypeMap.value[editForm.value.leave_type_id] || null)
-const isBelowSixMonths = computed(() => isBelowSixMonthsOfService(authStore.user?.date_hired))
+const isBelowSixMonths = computed(() => isBelowProbationaryService(authStore.user?.date_hired))
 const missingRequiredDocumentForPaid = computed(
   () => Boolean(selectedLeaveType.value?.requires_attachment_for_paid) && !attachment.value
 )
@@ -145,31 +147,25 @@ const payTypePreview = computed(() => {
 })
 
 const leaveEntitlements = computed(() => {
-  const year = new Date(form.value.start_date || Date.now()).getFullYear()
+  const balanceDate = form.value.start_date || new Date().toISOString().slice(0, 10)
+  const year = new Date(balanceDate).getFullYear()
   return leaveStore.leaveTypes
-    .filter((type) => paidDaysCap(type.id) > 0)
     .map((type) => ({
       id: type.id,
       name: type.name,
       total: paidDaysCap(type.id),
       remaining: remainingPaidDays(type.id, form.value.start_date),
       minMonths: Number(type.min_months_employed || 0),
+      eligible: isPaidLeaveEligible(authStore.user?.date_hired, balanceDate, type.min_months_employed || 0),
+      noticeDays: Number(type.filing_notice_days || 0),
       requiresAttachment: Boolean(type.requires_attachment_for_paid),
       remarks: type.remarks || '',
       year,
     }))
 })
-function formatPayType(value) {
-  const normalized = String(value || 'unpaid').toLowerCase()
-  if (normalized === 'partial_paid') return 'PARTIAL PAID'
-  return normalized.toUpperCase()
-}
-function formatPayBreakdown(row) {
-  const paid = Number(row?.paid_days || 0)
-  const unpaid = Number(row?.unpaid_days || 0)
-  if (paid <= 0 && unpaid <= 0) return ''
-  return `${paid.toFixed(0)} paid / ${unpaid.toFixed(0)} unpaid`
-}
+const probationaryLeaveName = computed(() =>
+  leaveTypeMap.value[policySettings.value.probationary_leave_type_id]?.name || 'Leave of Absence'
+)
 const todayISO = computed(() => {
   const now = new Date()
   const year = now.getFullYear()
@@ -225,26 +221,6 @@ function formatRange(start, end) {
   return `${formatDate(start)} - ${formatDate(end)}`
 }
 
-function formatDateTime(value) {
-  if (!value) return '-'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value)
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
-}
-
-function truncateReason(value) {
-  const text = String(value || '').trim()
-  if (!text) return '-'
-  if (text.length <= reasonMax) return text
-  return `${text.slice(0, reasonMax)}…`
-}
-
 function hasOverlap(startDate, endDate, excludeId = null) {
   if (!startDate || !endDate) return false
   return myRequests.value.some((r) => {
@@ -257,8 +233,11 @@ function hasOverlap(startDate, endDate, excludeId = null) {
 
 onMounted(async () => {
   await authStore.fetchMe()
-  await leaveStore.fetchTypes()
-  await leaveStore.fetchRequests({ scope: 'mine' })
+  await Promise.all([
+    leaveStore.fetchTypes(),
+    leaveStore.fetchRequests({ scope: 'mine' }),
+    getLeavePolicySettings().then((data) => { policySettings.value = data }).catch(() => {}),
+  ])
 })
 
 async function submit() {
@@ -316,16 +295,6 @@ function openCancelModal(row) {
 function closeCancelModal() {
   cancelModal.value = false
   cancellingRow.value = null
-}
-
-function openReasonModal(row) {
-  reasonRow.value = row
-  reasonModal.value = true
-}
-
-function closeReasonModal() {
-  reasonModal.value = false
-  reasonRow.value = null
 }
 
 function resolveLeaveTypeId(row) {
@@ -441,6 +410,8 @@ async function openConversation(row) {
   conversationRow.value = row
   conversationModal.value = true
   commentsLoading.value = true
+  timelineLoading.value = true
+  const timelinePromise = getLeaveTimeline(row.id).catch(() => [])
   try {
     comments.value = await getLeaveComments(row.id)
     row.unread_comment_count = 0
@@ -449,6 +420,8 @@ async function openConversation(row) {
   } finally {
     commentsLoading.value = false
   }
+  timeline.value = await timelinePromise
+  timelineLoading.value = false
 }
 
 async function sendReply() {
@@ -457,7 +430,10 @@ async function sendReply() {
   try {
     const created = await createLeaveComment(conversationRow.value.id, reply.value.trim())
     comments.value.push(created)
+    timeline.value.push({ id: `comment-${created.id}`, type: 'comment', title: 'Comment added', actor: created.author_name || 'You', actor_role: 'employee', message: created.message, created_at: created.created_at })
     reply.value = ''
+    replyModal.value = false
+    toast.success('Reply sent.')
   } catch (err) {
     toast.error(err.message || 'Failed to send reply.')
   } finally {
@@ -468,201 +444,47 @@ async function sendReply() {
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h1 class="text-2xl font-bold text-primary-200">Leave Request</h1>
-      <p class="mt-1 text-sm text-gray-400">Submit a new leave request.</p>
-    </div>
-    <div class="rounded-xl border border-gray-800 bg-gray-900 p-6 shadow-sm">
-      <p v-if="isOnLeave" class="mb-3 rounded-lg border border-amber-900/40 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
-        You are currently on leave and cannot submit another request.
-      </p>
-      <div class="mb-4 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-gray-300">
-        <p>
-          Leave credits available:
-          <span class="font-semibold text-primary-200">{{ leaveCreditsAvailable.toFixed(2) }}</span>
-        </p>
-        <p v-for="ent in leaveEntitlements" :key="ent.id">
-          {{ ent.name }} ({{ ent.year }}):
-          <span class="font-semibold text-primary-200">{{ ent.remaining }}</span> / {{ ent.total }} paid day(s) remaining
-        </p>
-        <p v-if="requestedDays">
-          Requested days:
-          <span class="font-semibold text-primary-200">{{ requestedDays }}</span>
-          - This request will be
-          <span class="font-semibold uppercase text-primary-200">{{ formatPayType(payTypePreview) }}</span>.
-        </p>
-        <p v-if="payTypePreview === 'partial_paid'" class="text-amber-300">
-          This request will use remaining paid days first, then excess days become unpaid.
-        </p>
-        <p v-if="missingRequiredDocumentForPaid" class="text-amber-300">
-          {{ selectedLeaveType?.name }} paid leave requires supporting documents. Without attachment, this request is unpaid.
-        </p>
-        <p v-if="isBelowSixMonths" class="text-amber-300">
-          Employees below six months of service may file without advance notice. This request will be recorded as unpaid Leave of Absence.
-        </p>
-        <p class="text-xs text-gray-400">
-          Credits reset yearly based on tenure: below 6 months = 0, 6-11 months = 3, 12+ months = 15.
-        </p>
+    <PageHeader title="Leave" description="Plan time away, understand your balance, and track every request." eyebrow="My workspace" />
+
+    <LeaveBalanceCards :entitlements="leaveEntitlements" :leave-credits="leaveCreditsAvailable" />
+
+    <div v-if="isBelowSixMonths" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-700/40 bg-amber-500/10 px-4 py-3 text-amber-200">
+      <div class="flex min-w-0 items-center gap-3">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 font-bold text-amber-300">!</span>
+        <p class="text-sm"><strong>Probationary leave policy applies.</strong> You may file without advance notice; the request will be recorded as unpaid {{ probationaryLeaveName }}.</p>
       </div>
-      <div class="mb-4 rounded-lg border border-gray-800 bg-gray-950 px-4 py-3 text-xs text-gray-300">
-        <p class="mb-2 font-semibold text-primary-200">Leave Entitlements & Conditions</p>
-        <ul class="space-y-2">
-          <li v-for="type in leaveEntitlements" :key="`info-${type.id}`">
-            <span class="font-medium text-primary-200">{{ type.name }}</span>:
-            {{ type.total }} paid day(s)/year after {{ type.minMonths }} month(s) of service.
-            <span v-if="type.requiresAttachment"> Supporting document required for paid leave.</span>
-            <span v-if="type.remarks"> {{ type.remarks }}</span>
-          </li>
-        </ul>
-        <p class="mt-2">Leave of Absence and Emergency Leave are unpaid by default.</p>
-        <p>Filing notice: Most leave types require at least 7 days advance filing. Sick Leave, Bereavement Leave, Leave of Absence, and employees below six months of service are exempt.</p>
-        <p>AWOL is admin/HR only and cannot be requested by employees.</p>
-      </div>
-      <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submit">
-        <div class="sm:col-span-2">
-          <label class="mb-1 block text-sm font-medium text-gray-200">Leave type *</label>
-          <select
-            v-model="form.leave_type_id"
-            required
-            :disabled="isOnLeave || submitting"
-            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
-          >
-            <option value="" class="bg-gray-900 text-primary-200">Select type</option>
-            <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
-          </select>
-          <p v-if="isBelowSixMonths" class="mt-2 text-xs text-amber-300">
-            Your selected type will be filed as unpaid Leave of Absence because you have not completed six months of service.
-          </p>
-          <p
-            v-if="selectedLeaveFilingNoticeDays > 0"
-            class="mt-2 inline-flex rounded-full border border-amber-700/40 bg-amber-900/20 px-3 py-1 text-xs font-medium text-amber-200"
-          >
-            Advance filing required: at least {{ selectedLeaveFilingNoticeDays }} days before start date.
-          </p>
-        </div>
-        <AppDatePicker
-          v-model="form.start_date"
-          label="Start date"
-          required
-          :min="startMinDate"
-          :disabled="isOnLeave || submitting"
-        />
-        <AppDatePicker
-          v-model="form.end_date"
-          label="End date"
-          required
-          :min="endMinDate"
-          :disabled="isOnLeave || submitting"
-        />
-        <div class="sm:col-span-2">
-          <label class="mb-1 block text-sm font-medium text-gray-200">Reason <span class="text-red-500">*</span></label>
-          <textarea
-            v-model="form.reason"
-            rows="3"
-            required
-            :disabled="isOnLeave || submitting"
-            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-base text-gray-100 placeholder:text-gray-500 shadow-sm focus:border-primary-500 focus:ring-primary-500"
-            placeholder="Reason for leave"
-          />
-        </div>
-        <div class="sm:col-span-2">
-          <label class="mb-1 block text-sm font-medium text-gray-200">Attachment (optional)</label>
-          <input
-            type="file"
-            accept="image/*"
-            :disabled="isOnLeave || submitting"
-            class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
-            @change="onAttachmentChange"
-          />
-          <p class="mt-1 text-xs text-gray-400">Images only. Max 1MB.</p>
-        </div>
-        <div class="sm:col-span-2">
-          <AppButton type="submit" :loading="submitting" :disabled="isOnLeave">Submit request</AppButton>
-        </div>
-      </form>
+      <span class="text-xs text-amber-300">First {{ Number(policySettings.probationary_months ?? 6) }} months</span>
     </div>
-    <div>
-      <h2 class="text-lg font-semibold text-primary-200">My leave requests</h2>
-      <AppTable :loading="leaveStore.loading" class="mt-2">
-        <thead class="bg-gray-950">
-          <tr>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Dates</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Date filed</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Reason</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Pay</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Attachment</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Rejection reason</th>
-            <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Action</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-800 bg-gray-900">
-          <tr v-for="row in myRequests" :key="row.id" class="hover:bg-gray-950">
-            <td class="px-4 py-3 text-sm text-primary-200">{{ formatRange(row.start_date, row.end_date) }}</td>
-            <td class="px-4 py-3 text-sm text-gray-300 whitespace-nowrap">{{ formatDateTime(row.created_at) }}</td>
-            <td class="px-4 py-3 text-sm text-gray-300">{{ row.leave_type_name ?? row.leave_type?.name ?? row.leave_type_id }}</td>
-            <td class="px-4 py-3 text-sm text-gray-300 max-w-[140px] truncate">
-              <button
-                v-if="row.reason"
-                class="text-left text-gray-300 hover:text-primary-200"
-                :title="row.reason"
-                @click="openReasonModal(row)"
-              >
-                {{ truncateReason(row.reason) }}
-              </button>
-              <span v-else>-</span>
-            </td>
-            <td class="px-4 py-3 text-sm text-gray-300 uppercase">
-              {{ formatPayType(row.leave_pay_type) }}
-              <span v-if="formatPayBreakdown(row)" class="ml-2 text-xs normal-case text-gray-400">
-                ({{ formatPayBreakdown(row) }})
-              </span>
-            </td>
-            <td class="px-4 py-3">
-              <StatusBadge :status="row.status" />
-            </td>
-            <td class="px-4 py-3 text-sm text-gray-300">
-              <button
-                v-if="row.attachment_data"
-                class="text-primary-300 hover:text-primary-200"
-                @click="openAttachment(row)"
-              >
-                View
-              </button>
-              <span v-else>-</span>
-            </td>
-            <td class="px-4 py-3 text-sm text-gray-300 max-w-xs truncate" :title="row.rejection_comment">{{ row.status === 'rejected' ? (row.rejection_comment || '-') : '-' }}</td>
-            <td class="px-4 py-3 text-right">
-              <div class="flex justify-end gap-2">
-                <AppButton variant="secondary" size="sm" @click="openConversation(row)">
-                  <span class="relative">Notes<span v-if="row.unread_comment_count" class="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-red-500" /></span>
-                </AppButton>
-                <template v-if="row.status === 'pending'">
-                <AppButton
-                  variant="secondary"
-                  size="sm"
-                  @click="openEditModal(row)"
-                >
-                  Edit
-                </AppButton>
-                <AppButton
-                  variant="danger"
-                  size="sm"
-                  @click="openCancelModal(row)"
-                >
-                  Cancel
-                </AppButton>
-                </template>
-              </div>
-            </td>
-          </tr>
-          <tr v-if="!myRequests.length && !leaveStore.loading">
-            <td colspan="9" class="px-4 py-8 text-center text-sm text-gray-400">No requests yet.</td>
-          </tr>
-        </tbody>
-      </AppTable>
+
+    <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,46fr)_minmax(0,54fr)]">
+      <EmployeeLeaveRequestForm
+        :form="form"
+        :leave-types="leaveStore.leaveTypes"
+        :entitlements="leaveEntitlements"
+        :requested-days="requestedDays"
+        :pay-type-preview="payTypePreview"
+        :selected-type="selectedLeaveType"
+        :missing-document="missingRequiredDocumentForPaid"
+        :filing-notice-days="selectedLeaveFilingNoticeDays"
+        :start-min="startMinDate"
+        :end-min="endMinDate"
+        :disabled="isOnLeave"
+        :submitting="submitting"
+        @submit="submit"
+        @attachment-change="onAttachmentChange"
+      />
+      <LeaveCalendarPanel compact :show-filters="false" />
     </div>
+
+    <EmployeeLeaveRequestsList
+      :rows="myRequests"
+      :loading="leaveStore.loading"
+      @details="openConversation"
+      @attachment="openAttachment"
+      @edit="openEditModal"
+      @cancel="openCancelModal"
+    />
+    <LeavePolicyDetails :entitlements="leaveEntitlements" />
   </div>
 
   <AppModal :show="cancelModal" title="Cancel leave request" @close="closeCancelModal">
@@ -675,20 +497,20 @@ async function sendReply() {
       <AppButton variant="danger" :loading="cancelling" @click="confirmCancel">Cancel request</AppButton>
     </template>
   </AppModal>
-  <AppModal :show="conversationModal" title="Leave conversation" @close="conversationModal = false">
-    <div v-if="commentsLoading" class="text-sm text-gray-400">Loading comments…</div>
-    <div v-else class="space-y-3">
-      <p v-if="!comments.length" class="text-sm text-gray-400">No notes yet.</p>
-      <div v-for="comment in comments" :key="comment.id" class="rounded-lg bg-gray-950 p-3 text-sm text-gray-300">
-        <p class="text-xs font-medium text-primary-300">{{ comment.author_name || comment.author_role }} · {{ formatDateTime(comment.created_at) }}</p>
-        <p class="mt-1 whitespace-pre-wrap">{{ comment.message }}</p>
-      </div>
-      <textarea v-model="reply" rows="3" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-gray-100" placeholder="Reply to management..." />
-    </div>
-    <template #footer>
-      <AppButton variant="secondary" @click="conversationModal = false">Close</AppButton>
-      <AppButton :loading="sendingReply" :disabled="!reply.trim()" @click="sendReply">Send reply</AppButton>
-    </template>
+  <LeaveDetailsModal
+    :show="conversationModal"
+    :row="conversationRow"
+    :comments="comments"
+    :comments-loading="commentsLoading"
+    :timeline="timeline"
+    :timeline-loading="timelineLoading"
+    @close="conversationModal = false"
+    @add-note="replyModal = true"
+    @view-attachment="openAttachment"
+  />
+  <AppModal :show="replyModal" title="Reply to management" @close="replyModal = false">
+    <label class="text-sm font-medium text-gray-200">Message<textarea v-model="reply" rows="4" maxlength="2000" class="form-control mt-1.5 resize-y" placeholder="Write your reply…" /><span class="mt-1 block text-right text-xs font-normal text-gray-500">{{ reply.length }} / 2000</span></label>
+    <template #footer><AppButton variant="secondary" @click="replyModal = false">Cancel</AppButton><AppButton :loading="sendingReply" :disabled="!reply.trim()" @click="sendReply">Send reply</AppButton></template>
   </AppModal>
   <AppModal :show="editModal" title="Edit leave request" @close="closeEditModal">
     <form class="grid gap-4 sm:grid-cols-2" @submit.prevent="submitEdit">
@@ -703,7 +525,7 @@ async function sendReply() {
           <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
         </select>
         <p v-if="isBelowSixMonths" class="mt-2 text-xs text-amber-300">
-          This request will be recorded as unpaid Leave of Absence because you have not completed six months of service.
+          This request will use the configured probationary unpaid leave policy.
         </p>
         <p
           v-if="selectedEditLeaveFilingNoticeDays > 0"
@@ -760,12 +582,6 @@ async function sendReply() {
     </div>
     <template #footer>
       <AppButton variant="secondary" @click="closeAttachment">Close</AppButton>
-    </template>
-  </AppModal>
-  <AppModal :show="reasonModal" title="Leave reason" @close="closeReasonModal">
-    <p class="text-sm whitespace-pre-wrap text-gray-200">{{ reasonRow?.reason || '-' }}</p>
-    <template #footer>
-      <AppButton variant="secondary" @click="closeReasonModal">Close</AppButton>
     </template>
   </AppModal>
 </template>

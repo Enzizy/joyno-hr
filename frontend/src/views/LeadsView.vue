@@ -14,6 +14,7 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const toast = useToastStore()
 const loading = ref(false)
@@ -334,15 +335,11 @@ async function confirmConvert() {
 
 <template>
   <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-primary-200">Leads</h1>
-        <p class="mt-1 text-sm text-gray-400">Manage potential clients before they convert.</p>
-      </div>
-      <AppButton @click="openCreate">Add Lead</AppButton>
-    </div>
+    <PageHeader title="Leads" description="Track opportunities, follow-ups, and conversations before they convert." eyebrow="Work">
+      <template #actions><AppButton @click="openCreate">Add lead</AppButton></template>
+    </PageHeader>
 
-    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-4">
+    <div class="filter-panel grid gap-3 sm:grid-cols-4">
       <div class="sm:col-span-2">
         <label class="mb-1 block text-xs font-medium text-gray-400">Search</label>
         <input v-model="searchQuery" type="text" placeholder="Company, contact, email" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500" @keyup.enter="applyFilters" />

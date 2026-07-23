@@ -98,6 +98,12 @@ const routes = [
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
       {
+        path: 'leave-calendar',
+        name: 'LeaveCalendar',
+        component: () => import('@/views/LeaveCalendarView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
+      },
+      {
         path: 'reports',
         name: 'Reports',
         component: () => import('@/views/ReportsView.vue'),
@@ -134,6 +140,9 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes,
+  scrollBehavior() {
+    return { top: 0, left: 0 }
+  },
 })
 
 router.beforeEach(async (to, from, next) => {

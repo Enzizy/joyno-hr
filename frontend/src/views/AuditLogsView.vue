@@ -2,6 +2,7 @@
 import { ref, onMounted, computed } from 'vue'
 import { getAuditLogs } from '@/services/backendService'
 import AppTable from '@/components/ui/AppTable.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const list = ref([])
 const loading = ref(false)
@@ -105,11 +106,16 @@ async function prevPage() {
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h1 class="text-2xl font-bold text-primary-200">Audit Logs</h1>
-      <p class="mt-1 text-sm text-gray-400">System activity and changes.</p>
+    <PageHeader title="Audit Logs" description="Review system activity, important changes, and accountable actions." eyebrow="Administration" />
+    <div class="space-y-3 md:hidden">
+      <div v-if="loading" class="space-y-3"><div v-for="item in 4" :key="item" class="h-32 animate-pulse rounded-xl bg-gray-800" /></div>
+      <div v-else-if="!rows.length" class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-8 text-center text-sm text-gray-500">No audit logs.</div>
+      <article v-for="row in rows" v-else :key="row.id" class="rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <div class="flex items-start justify-between gap-3"><div class="min-w-0"><p class="text-sm font-semibold text-primary-200">{{ row.actionLabel }}</p><p class="mt-1 break-words text-xs text-gray-500">{{ row.timeLabel }}</p></div><span class="shrink-0 rounded-full border border-gray-700 bg-gray-950 px-2 py-1 text-[10px] text-gray-400">#{{ row.id }}</span></div>
+        <dl class="mt-4 space-y-3 text-sm"><div><dt class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">User</dt><dd class="mt-1 break-all text-gray-200">{{ row.userLabel }}</dd></div><div><dt class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Target</dt><dd class="mt-1 break-words text-gray-300">{{ row.targetLabel }}</dd></div></dl>
+      </article>
     </div>
-    <AppTable :loading="loading">
+    <AppTable :loading="loading" class="hidden md:block">
       <thead class="bg-gray-950">
         <tr>
           <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Time</th>

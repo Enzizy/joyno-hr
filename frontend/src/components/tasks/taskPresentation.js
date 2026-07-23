@@ -56,3 +56,17 @@ export function taskTypeBadgeClass(value) {
     ? 'border-indigo-600/60 bg-indigo-900/30 text-indigo-200'
     : 'border-emerald-600/60 bg-emerald-900/30 text-emerald-200'
 }
+
+export function workAccentClass(row) {
+  if (resolveTaskType(row) === 'meeting') return 'border-l-violet-500'
+  if (row?.service_type === 'website_development') return 'border-l-sky-500'
+  if (row?.service_type === 'social_media_management') return 'border-l-emerald-500'
+  return 'border-l-amber-500'
+}
+
+export function workIconClass(row) {
+  if (resolveTaskType(row) === 'meeting') return 'border-violet-800/60 bg-violet-950/40 text-violet-300'
+  if (row?.service_type === 'website_development') return 'border-sky-800/60 bg-sky-950/40 text-sky-300'
+  if (row?.service_type === 'social_media_management') return 'border-emerald-800/60 bg-emerald-950/40 text-emerald-300'
+  return 'border-amber-800/60 bg-amber-950/40 text-amber-300'
+}

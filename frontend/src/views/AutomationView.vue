@@ -16,6 +16,7 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const toast = useToastStore()
 const loading = ref(false)
@@ -309,13 +310,9 @@ async function confirmRemoveRule() {
       Automation rules create tasks automatically based on your schedule. Rules should usually end on the client's contract end date.
     </div>
 
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-primary-200">Automation</h1>
-        <p class="mt-1 text-sm text-gray-400">Create recurring rules that generate tasks.</p>
-      </div>
-      <AppButton @click="openCreate">Create Rule</AppButton>
-    </div>
+    <PageHeader title="Automation" description="Create recurring rules that generate tasks and keep routine work moving." eyebrow="Work">
+      <template #actions><AppButton @click="openCreate">Create rule</AppButton></template>
+    </PageHeader>
 
     <div class="grid gap-4 lg:grid-cols-2">
       <div

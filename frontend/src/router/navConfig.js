@@ -1,58 +1,81 @@
-/**
- * Role-based navigation config.
- * Each item can have roles: array of allowed roles, or omit for all authenticated.
- */
-export const navItems = [
-  { path: '/', name: 'Dashboard', icon: 'dashboard', roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { divider: true, roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { label: 'CRM', header: true, roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { path: '/leads', name: 'Leads', icon: 'lead', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/clients', name: 'Clients', icon: 'client', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/services', name: 'Services', icon: 'service', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/tasks', name: 'Tasks', icon: 'task', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/my-tasks', name: 'My Tasks', icon: 'task', roles: ['employee'] },
-  { path: '/automation', name: 'Automation', icon: 'automation', roles: ['admin', 'hr', 'ceo'] },
-  { divider: true, roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { label: 'Leave', header: true, roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { path: '/leave-request', name: 'Leave Request', icon: 'leave', roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { path: '/leave-approvals', name: 'Leave Approvals', icon: 'check', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/reports', name: 'Leave Reports', icon: 'chart', roles: ['admin', 'hr', 'ceo'] },
-  { divider: true, roles: ['admin', 'hr', 'ceo'] },
-  { label: 'Management', header: true, roles: ['admin', 'hr', 'ceo'] },
-  { path: '/employees', name: 'Employee Management', icon: 'users', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/users', name: 'User Management', icon: 'user-cog', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/settings', name: 'System Settings', icon: 'settings', roles: ['admin', 'hr', 'ceo'] },
-  { path: '/audit-logs', name: 'Audit Logs', icon: 'audit', roles: ['admin', 'hr', 'ceo'] },
-  { divider: true, roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { label: 'Account', header: true, roles: ['admin', 'hr', 'ceo', 'employee'] },
-  { path: '/profile', name: 'Profile', icon: 'user', roles: ['admin', 'hr', 'ceo', 'employee'] },
+const ALL_ROLES = ['admin', 'hr', 'ceo', 'employee']
+const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
+
+export const navGroups = [
+  {
+    name: 'Home',
+    icon: 'dashboard',
+    path: '/',
+    roles: ALL_ROLES,
+  },
+  {
+    name: 'People',
+    icon: 'users',
+    roles: MANAGEMENT_ROLES,
+    children: [
+      { path: '/employees', name: 'Employees', icon: 'users', roles: MANAGEMENT_ROLES },
+      { path: '/users', name: 'User accounts', icon: 'user-cog', roles: MANAGEMENT_ROLES },
+    ],
+  },
+  {
+    name: 'Work',
+    icon: 'task',
+    roles: ALL_ROLES,
+    children: [
+      { path: '/my-tasks', name: 'My tasks', icon: 'task', roles: ['employee'] },
+      { path: '/leads', name: 'Leads', icon: 'lead', roles: MANAGEMENT_ROLES, hidden: true },
+      { path: '/clients', name: 'Clients', icon: 'client', roles: MANAGEMENT_ROLES, hidden: true },
+      { path: '/services', name: 'Services', icon: 'service', roles: MANAGEMENT_ROLES, hidden: true },
+      { path: '/tasks', name: 'Tasks & meetings', icon: 'task', roles: MANAGEMENT_ROLES },
+      { path: '/automation', name: 'Automation', icon: 'automation', roles: MANAGEMENT_ROLES, hidden: true },
+    ],
+  },
+  {
+    name: 'Leave',
+    icon: 'leave',
+    roles: ALL_ROLES,
+    children: [
+      { path: '/leave-request', name: 'My leave', icon: 'leave', roles: ALL_ROLES },
+      { path: '/leave-calendar', name: 'Team calendar', icon: 'chart', roles: MANAGEMENT_ROLES },
+      { path: '/leave-approvals', name: 'Approvals', icon: 'check', roles: MANAGEMENT_ROLES },
+    ],
+  },
+  {
+    name: 'Insights',
+    icon: 'chart',
+    roles: MANAGEMENT_ROLES,
+    children: [
+      { path: '/reports', name: 'Leave reports', icon: 'chart', roles: MANAGEMENT_ROLES },
+    ],
+  },
+  {
+    name: 'Administration',
+    icon: 'settings',
+    roles: MANAGEMENT_ROLES,
+    children: [
+      { path: '/settings', name: 'System settings', icon: 'settings', roles: MANAGEMENT_ROLES },
+      { path: '/audit-logs', name: 'Audit logs', icon: 'audit', roles: MANAGEMENT_ROLES },
+    ],
+  },
 ]
 
-export function getNavForRole(role) {
-  const visible = navItems.filter((item) => {
-    if (!item.roles) return true
-    return item.roles.includes(role)
-  })
+function roleAllowed(item, role) {
+  return !item.roles || item.roles.includes(role)
+}
 
-  const cleaned = []
-  for (let i = 0; i < visible.length; i += 1) {
-    const item = visible[i]
-    if (item.divider) {
-      const prev = cleaned[cleaned.length - 1]
-      const next = visible[i + 1]
-      if (!prev || prev.divider || !next || next.divider) continue
-      cleaned.push(item)
-      continue
-    }
-    if (item.header) {
-      const nextLink = visible.slice(i + 1).find((candidate) => !candidate.header && !candidate.divider)
-      const nextHeaderOrDivider = visible.slice(i + 1).find((candidate) => candidate.header || candidate.divider)
-      if (!nextLink) continue
-      if (nextHeaderOrDivider && visible.indexOf(nextLink) > visible.indexOf(nextHeaderOrDivider)) continue
-      cleaned.push(item)
-      continue
-    }
-    cleaned.push(item)
-  }
-  return cleaned
+export function getNavForRole(role) {
+  return navGroups
+    .filter((group) => roleAllowed(group, role))
+    .map((group) => ({
+      ...group,
+      children: group.children?.filter((child) => !child.hidden && roleAllowed(child, role)) || [],
+    }))
+    .filter((group) => group.path || group.children.length)
+}
+
+export function getSearchNavForRole(role) {
+  return getNavForRole(role).flatMap((group) => {
+    if (group.path) return [{ path: group.path, name: group.name, icon: group.icon }]
+    return group.children.map((child) => ({ ...child, group: group.name }))
+  })
 }

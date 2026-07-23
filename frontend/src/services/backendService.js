@@ -1,6 +1,22 @@
 ﻿import { useAuthStore } from '@/stores/authStore'
 import * as api from '@/services/api'
 
+export async function searchWorkspace(query, limit = 6) {
+  return api.searchWorkspace(query, limit)
+}
+
+export async function getNotificationPreferences() {
+  return api.getNotificationPreferences()
+}
+
+export async function updateNotificationPreferences(data) {
+  return api.updateNotificationPreferences(data)
+}
+
+export async function getLeaveApprovalInbox() {
+  return api.getLeaveApprovalInbox()
+}
+
 export async function getAuditLogs(options = {}) {
   return api.getAuditLogs(options)
 }
@@ -49,6 +65,34 @@ export async function getLeaveTypes() {
   return api.getLeaveTypes()
 }
 
+export async function updateLeaveType(id, data) {
+  return api.updateLeaveType(id, data)
+}
+
+export async function getLeavePolicySettings() {
+  return api.getLeavePolicySettings()
+}
+
+export async function updateLeavePolicySettings(data) {
+  return api.updateLeavePolicySettings(data)
+}
+
+export async function getLeaveCalendar(options = {}) {
+  return api.getLeaveCalendar(options)
+}
+
+export async function getPhilippineHolidays(from, to) {
+  return api.getPhilippineHolidays(from, to)
+}
+
+export async function getLeaveAvailability(options = {}) {
+  return api.getLeaveAvailability(options)
+}
+
+export async function getLeaveTimeline(id) {
+  return api.getLeaveTimeline(id)
+}
+
 export async function getLeaveBalances() {
   return []
 }
@@ -79,6 +123,22 @@ export async function rejectLeaveRequest(id, comment) {
 
 export async function cancelLeaveRequest(id) {
   return api.cancelLeaveRequest(id)
+}
+
+export async function getLeaveChangeRequests(options = {}) {
+  return api.getLeaveChangeRequests(options)
+}
+
+export async function createLeaveChangeRequest(data) {
+  return api.createLeaveChangeRequest(data)
+}
+
+export async function approveLeaveChangeRequest(id, comment = '') {
+  return api.approveLeaveChangeRequest(id, comment)
+}
+
+export async function rejectLeaveChangeRequest(id, comment) {
+  return api.rejectLeaveChangeRequest(id, comment)
 }
 
 export async function deleteLeaveRequest(id) {

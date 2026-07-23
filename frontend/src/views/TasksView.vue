@@ -9,20 +9,18 @@ import {
   updateTask,
   completeTask,
   cancelTask,
-  getTaskProofUrl,
-  getTaskAttachmentUrl,
   getClients,
   getServices,
   getUsers,
 } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 import TaskCompletionModal from '@/components/tasks/TaskCompletionModal.vue'
-import TaskDetailsModal from '@/components/tasks/TaskDetailsModal.vue'
+import TaskDetailsDrawer from '@/components/tasks/TaskDetailsDrawer.vue'
 import TaskEditorModal from '@/components/tasks/TaskEditorModal.vue'
-import {
-  formatPriority, formatStatus, priorityTone, resolveTaskType, serviceBadgeClass,
-  serviceBadgeLabel, serviceCardClass, statusTone, taskTypeBadgeClass, taskTypeLabel,
-} from '@/components/tasks/taskPresentation'
+import TaskWorkList from '@/components/tasks/TaskWorkList.vue'
+import { usePersistentFilters } from '@/composables/usePersistentFilters'
+import { resolveTaskType } from '@/components/tasks/taskPresentation'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -41,6 +39,8 @@ const employeeFilter = ref('all')
 const taskTypeFilter = ref('all')
 const myRelevantOnly = ref(authStore.isEmployee)
 
+usePersistentFilters('tasks', { tab, searchQuery, clientFilter, employeeFilter, taskTypeFilter, myRelevantOnly, pageSize })
+
 const clients = ref([])
 const services = ref([])
 const users = ref([])
@@ -50,7 +50,7 @@ const editingTask = ref(null)
 const savingTask = ref(false)
 const createMode = ref('task')
 const showCreateMenu = ref(false)
-const showDetailsModal = ref(false)
+const showDetailsDrawer = ref(false)
 const selectedTask = ref(null)
 const openActionsTaskId = ref(null)
 
@@ -91,42 +91,10 @@ function userLabel(id) {
   return `User #${id}`
 }
 
-function assigneeSummary(row, limit = 4) {
-  const ids = Array.isArray(row.assigned_to_ids) ? row.assigned_to_ids : []
-  const normalized = ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
-  const names = (normalized.length ? normalized : [row.assigned_to]).map((id) => userLabel(id)).filter(Boolean)
-  const shown = names.slice(0, limit)
-  const remaining = Math.max(0, names.length - shown.length)
-  return {
-    text: shown.join(', '),
-    remaining,
-    total: names.length,
-  }
-}
-
 function openDetails(row) {
   openActionsTaskId.value = null
   selectedTask.value = row
-  showDetailsModal.value = true
-}
-
-function typeLabel(serviceType) {
-  if (serviceType === 'social_media_management') return 'Social Media'
-  if (serviceType === 'website_development') return 'Website Dev'
-  return serviceType || '-'
-}
-
-function dateOnly(value) {
-  if (!value) return ''
-  return String(value).slice(0, 10)
-}
-
-function formatDate(value) {
-  const iso = dateOnly(value)
-  if (!iso) return '-'
-  const date = new Date(`${iso}T00:00:00`)
-  if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleDateString(undefined, { month: 'short', day: '2-digit', year: 'numeric' })
+  showDetailsDrawer.value = true
 }
 
 async function loadLookups() {
@@ -246,6 +214,7 @@ function openCreate(mode = 'task') {
 
 function openEdit(row) {
   closeActionsMenu()
+  showDetailsDrawer.value = false
   createMode.value = resolveTaskType(row)
   editingTask.value = row
   showTaskModal.value = true
@@ -292,6 +261,7 @@ async function saveTask({ form, attachment }) {
 
 function openComplete(row) {
   closeActionsMenu()
+  showDetailsDrawer.value = false
   completingTask.value = row
   completeNotes.value = ''
   proofFile.value = null
@@ -335,42 +305,33 @@ async function cancelTaskAction(row) {
   }
 }
 
-function proofUrl(taskId) {
-  return getTaskProofUrl(taskId)
-}
-
-function attachmentUrl(taskId) {
-  return getTaskAttachmentUrl(taskId)
-}
 </script>
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h1 class="text-2xl font-bold text-primary-200">Tasks</h1>
-      <p class="mt-1 text-sm text-gray-400">Central task management for all CRM work.</p>
-    </div>
+    <PageHeader title="Tasks & Meetings" description="Plan work, coordinate meetings, and follow progress across the team." eyebrow="CRM workspace">
+      <template #actions>
+        <div class="relative" data-create-menu="tasks-create">
+          <AppButton @click.stop="toggleCreateMenu">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12h14" /></svg>
+            Create
+            <svg class="h-4 w-4 transition-transform" :class="showCreateMenu ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" /></svg>
+          </AppButton>
+          <div v-if="showCreateMenu" class="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-xl border border-gray-700 bg-gray-900 p-1.5 shadow-xl">
+            <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('task')">Create Task</button>
+            <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('meeting')">Create Meeting</button>
+          </div>
+        </div>
+      </template>
+    </PageHeader>
 
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <div class="flex flex-wrap gap-2">
-        <button v-for="item in tabOptions" :key="item.value" type="button" class="rounded-lg px-3 py-2 text-sm font-medium" :class="tab === item.value ? 'bg-primary-500 text-gray-900' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'" @click="tab = item.value; applyFilters()">
+    <div class="flex flex-wrap items-center gap-2 border-b border-gray-800 pb-3" role="tablist" aria-label="Task status">
+        <button v-for="item in tabOptions" :key="item.value" type="button" class="rounded-lg px-3 py-2 text-sm font-medium" :class="tab === item.value ? 'bg-primary-500 text-black' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'" @click="tab = item.value; applyFilters()">
           {{ item.label }}
         </button>
-      </div>
-      <div class="relative" data-create-menu="tasks-create">
-        <AppButton @click.stop="toggleCreateMenu">
-          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14M5 12h14" /></svg>
-          Create New
-          <svg class="h-4 w-4 transition-transform" :class="showCreateMenu ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19 9-7 7-7-7" /></svg>
-        </AppButton>
-        <div v-if="showCreateMenu" class="absolute right-0 z-20 mt-2 w-44 overflow-hidden rounded-xl border border-gray-700 bg-gray-900 p-1.5 shadow-xl">
-          <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('task')">Create Task</button>
-          <button type="button" class="block w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800" @click="openCreate('meeting')">Create Meeting</button>
-        </div>
-      </div>
     </div>
 
-    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-6">
+    <div class="filter-panel grid gap-3 sm:grid-cols-6">
       <div class="sm:col-span-2">
         <label class="mb-1 block text-xs text-gray-400">Search</label>
         <input v-model="searchQuery" type="text" placeholder="Search task title" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @keyup.enter="applyFilters" />
@@ -409,96 +370,19 @@ function attachmentUrl(taskId) {
       </div>
     </div>
 
-    <div class="space-y-3">
-      <div v-for="row in tasks" :key="row.id" class="rounded-xl border p-4 shadow-sm" :class="serviceCardClass(row)">
-        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div class="min-w-0 space-y-2 md:pr-4">
-            <div class="flex items-center gap-2">
-              <h3 class="text-lg font-semibold text-primary-200">
-                {{ row.title }}
-              </h3>
-              <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="taskTypeBadgeClass(resolveTaskType(row))">
-                {{ taskTypeLabel(resolveTaskType(row)) }}
-              </span>
-              <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="serviceBadgeClass(row.service_type)">
-                {{ serviceBadgeLabel(row.service_type) }}
-              </span>
-              <span v-if="row.is_automated" class="rounded-full border border-primary-500/50 bg-primary-500/10 px-2 py-0.5 text-xs font-semibold text-primary-300">
-                Automated
-              </span>
-              <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="priorityTone(row.priority)">{{ formatPriority(row.priority) }}</span>
-              <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="statusTone(row.status)">{{ formatStatus(row.status) }}</span>
-            </div>
-            <p class="line-clamp-2 text-sm text-gray-300">{{ row.description || 'No description.' }}</p>
-            <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
-              <span>Due: {{ formatDate(row.due_date) }}</span>
-              <span>Client: {{ row.company_name || '-' }}</span>
-              <span>Service: {{ typeLabel(row.service_type) }}</span>
-              <span class="max-w-full">
-                Assigned ({{ assigneeSummary(row).total }}):
-                {{ assigneeSummary(row).text }}
-                <span v-if="assigneeSummary(row).remaining > 0">+{{ assigneeSummary(row).remaining }} more</span>
-              </span>
-              <a v-if="row.attachment_data" :href="attachmentUrl(row.id)" target="_blank" rel="noopener" class="text-primary-300 hover:text-primary-200">View attachment</a>
-              <a v-if="row.proof_of_work_data" :href="proofUrl(row.id)" target="_blank" rel="noopener" class="text-primary-300 hover:text-primary-200">View proof</a>
-            </div>
-          </div>
-
-          <div class="mt-2 flex shrink-0 flex-wrap gap-2 md:mt-0 md:justify-end">
-            <AppButton v-if="row.status === 'pending' || row.status === 'in_progress'" variant="primary" size="sm" @click="openComplete(row)">Mark Complete</AppButton>
-            <template v-if="row.status === 'pending' || row.status === 'in_progress'">
-              <div class="relative" :data-task-actions-menu="`task-${row.id}`">
-                <button
-                  type="button"
-                  class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-lg leading-none text-gray-200 hover:bg-gray-700"
-                  aria-label="More actions"
-                  @click.stop="toggleActionsMenu(row.id)"
-                >
-                  ⋮
-                </button>
-                <div
-                  v-if="openActionsTaskId === row.id"
-                  class="absolute right-0 z-20 mt-2 w-36 overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-lg"
-                  @click.stop
-                >
-                  <button
-                    type="button"
-                    class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
-                    @click="openDetails(row)"
-                  >
-                    View
-                  </button>
-                  <button
-                    v-if="authStore.role !== 'employee'"
-                    type="button"
-                    class="block w-full px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
-                    @click="openEdit(row)"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    v-if="authStore.role !== 'employee'"
-                    type="button"
-                    class="block w-full px-3 py-2 text-left text-sm text-red-300 hover:bg-red-900/30"
-                    :disabled="actionLoadingId === row.id"
-                    @click="cancelTaskAction(row)"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </template>
-            <template v-else>
-              <AppButton variant="ghost" size="sm" @click="openDetails(row)">View</AppButton>
-            </template>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="!tasks.length && !loading" class="rounded-xl border border-gray-800 bg-gray-900 p-10 text-center text-sm text-gray-400">
-        No tasks found for current filters.
-      </div>
-    </div>
+    <TaskWorkList
+      :tasks="tasks"
+      :users="users"
+      :tab="tab"
+      :loading="loading"
+      :open-actions-task-id="openActionsTaskId"
+      :can-manage="authStore.role !== 'employee'"
+      :action-loading-id="actionLoadingId"
+      @details="openDetails"
+      @edit="openEdit"
+      @cancel="cancelTaskAction"
+      @toggle-actions="toggleActionsMenu"
+    />
 
     <div class="flex items-center justify-between rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-300">
       <span>Showing {{ tasks.length ? offset + 1 : 0 }}-{{ offset + tasks.length }} of {{ total }}</span>
@@ -531,10 +415,13 @@ function attachmentUrl(taskId) {
     @submit="completeTaskAction"
   />
 
-  <TaskDetailsModal
-    :show="showDetailsModal"
+  <TaskDetailsDrawer
+    :show="showDetailsDrawer"
     :task="selectedTask"
     :users="users"
-    @close="showDetailsModal = false"
+    :can-manage="authStore.role !== 'employee'"
+    @close="showDetailsDrawer = false"
+    @edit="openEdit"
+    @complete="openComplete"
   />
 </template>

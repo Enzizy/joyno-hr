@@ -18,4 +18,24 @@ async function query(text, params = []) {
   return { rows: result.rows, rowCount: result.rowCount }
 }
 
-module.exports = { query }
+async function transaction(callback) {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const result = await callback({
+      query: async (text, params = []) => {
+        const queryResult = await client.query(text, params)
+        return { rows: queryResult.rows, rowCount: queryResult.rowCount }
+      },
+    })
+    await client.query('COMMIT')
+    return result
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+module.exports = { query, transaction }

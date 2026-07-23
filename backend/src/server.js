@@ -14,6 +14,19 @@ const { runMigrations } = require('./migrate')
 const { addAuditLog, updateEmployeeStatus, syncAllEmployeeStatuses } = require('./helpers')
 const { cleanupCompletedTasks } = require('./services/taskCleanupService')
 const { escapeHtml, renderEmailBodyHtml } = require('./services/emailTemplateService')
+const { dispatchPreferredEmail, flushDailyEmailDigests } = require('./services/emailPreferenceService')
+const { countPhilippineWorkingDays } = require('./services/philippineHolidayService')
+const {
+  getLeavePolicies,
+  getLeavePolicySettings,
+  resolveEffectiveLeaveType,
+  resolveLeaveType,
+  updateLeavePolicy,
+  updateLeavePolicySettings,
+} = require('./services/leavePolicyService')
+const { createLeaveInsightsRouter } = require('./routes/leaveInsightsRoutes')
+const { createLeaveChangeRequestRouter } = require('./routes/leaveChangeRequestRoutes')
+const { createWorkspaceRouter } = require('./routes/workspaceRoutes')
 const {
   LEAD_STATUSES,
   LEAD_SOURCES,
@@ -48,19 +61,32 @@ const LEAD_COLUMNS =
 const CLIENT_COLUMNS =
   'id, lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status, created_at'
 const LEAVE_REQUEST_COLUMNS =
-  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, created_at'
+  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, created_at, decided_at'
 const NOTIFICATION_COLUMNS =
   'id, user_id, type, title, message, target_table, target_id, is_read, created_at'
 
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || ''
-const allowedOrigins = FRONTEND_ORIGIN.split(',')
-  .map((origin) => origin.trim())
+const PRODUCTION_FRONTEND_ORIGIN = 'https://joyno-hr.pages.dev'
+
+function normalizeOrigin(origin) {
+  const value = String(origin || '').trim()
+  if (!value) return ''
+  try {
+    return new URL(value).origin
+  } catch {
+    return value.replace(/\/+$/, '')
+  }
+}
+
+const allowedOrigins = [...new Set([...FRONTEND_ORIGIN.split(','), PRODUCTION_FRONTEND_ORIGIN]
+  .map(normalizeOrigin)
   .filter(Boolean)
+)]
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin) return callback(null, true)
     if (!allowedOrigins.length) return callback(new Error('FRONTEND_ORIGIN not set'))
-    if (allowedOrigins.includes(origin)) return callback(null, true)
+    if (allowedOrigins.includes(normalizeOrigin(origin))) return callback(null, true)
     return callback(new Error('Not allowed by CORS'))
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -230,44 +256,39 @@ function getMailTransport() {
   return mailTransport
 }
 
-function sendEmailNotification({ to, subject, text, html = null, linkLabels = {} }) {
+async function deliverEmailNotification({ to, subject, text, html = null, linkLabels = {} }) {
   if (!to || !subject || !text) return
   const finalHtml = html || buildBrandedEmailHtml({ subject, text, linkLabels })
+  if (BREVO_API_KEY && BREVO_FROM_EMAIL) {
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender: { email: BREVO_FROM_EMAIL, ...(BREVO_FROM_NAME ? { name: BREVO_FROM_NAME } : {}) },
+        to: [{ email: to }],
+        subject,
+        textContent: text,
+        htmlContent: finalHtml,
+      }),
+    })
+    if (!response.ok) throw new Error(`Brevo API error ${response.status}: ${await response.text()}`)
+    return
+  }
+
+  const transport = getMailTransport()
+  if (!transport || !SMTP_FROM) return
+  await transport.sendMail({ from: SMTP_FROM, to, subject, text, html: finalHtml })
+}
+
+function sendEmailNotification(message) {
+  if (!message?.to || !message?.subject || !message?.text) return
   setImmediate(async () => {
     try {
-      if (BREVO_API_KEY && BREVO_FROM_EMAIL) {
-        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-          method: 'POST',
-          headers: {
-            'api-key': BREVO_API_KEY,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            sender: {
-              email: BREVO_FROM_EMAIL,
-              ...(BREVO_FROM_NAME ? { name: BREVO_FROM_NAME } : {}),
-            },
-            to: [{ email: to }],
-            subject,
-            textContent: text,
-            htmlContent: finalHtml,
-          }),
-        })
-        if (!response.ok) {
-          const errText = await response.text()
-          throw new Error(`Brevo API error ${response.status}: ${errText}`)
-        }
-        return
-      }
-
-      const transport = getMailTransport()
-      if (!transport || !SMTP_FROM) return
-      await transport.sendMail({
-        from: SMTP_FROM,
-        to,
-        subject,
-        text,
-        html: finalHtml,
+      await dispatchPreferredEmail({
+        db,
+        message,
+        deliver: deliverEmailNotification,
+        bypassPreferences: Boolean(message.bypassPreferences),
       })
     } catch (error) {
       console.error('Email notification failed:', error.message || error)
@@ -561,84 +582,6 @@ async function createServicesForClient(clientId, selectedServices = []) {
   }
 }
 
-const LEAVE_TYPES = [
-  {
-    id: 'vacation_leave',
-    name: 'Vacation Leave',
-    paid_days_per_year: 3,
-    min_months_employed: 6,
-    filing_notice_days: 7,
-    remarks: 'Annual grant and usage are subject to company approval.',
-    aliases: ['vacation'],
-  },
-  {
-    id: 'sick_leave',
-    name: 'Sick Leave',
-    paid_days_per_year: 5,
-    min_months_employed: 12,
-    filing_notice_days: 0,
-    requires_attachment_for_paid: true,
-    remarks: 'Requires a valid medical certificate.',
-    aliases: ['sick'],
-  },
-  {
-    id: 'bereavement_leave',
-    name: 'Bereavement Leave',
-    paid_days_per_year: 2,
-    min_months_employed: 12,
-    filing_notice_days: 0,
-    requires_attachment_for_paid: true,
-    remarks:
-      'Granted in the event of death of an immediate family member. Supporting documents are required.',
-    aliases: ['bereavement'],
-  },
-  {
-    id: 'service_incentive_leave',
-    name: 'Service Incentive Leave',
-    paid_days_per_year: 5,
-    min_months_employed: 12,
-    filing_notice_days: 7,
-    remarks: 'Convertible to cash if unused, based on company policy and labor laws.',
-    aliases: ['sil', 'service incentive'],
-  },
-  {
-    id: 'leave_of_absence',
-    name: 'Leave of Absence',
-    paid_days_per_year: 0,
-    min_months_employed: 0,
-    filing_notice_days: 0,
-    aliases: [],
-  },
-  {
-    id: 'awol',
-    name: 'Absent Without Official Leave',
-    paid_days_per_year: 0,
-    min_months_employed: 0,
-    filing_notice_days: 0,
-    aliases: [],
-  },
-  {
-    id: 'emergency_leave',
-    name: 'Emergency Leave',
-    paid_days_per_year: 0,
-    min_months_employed: 0,
-    filing_notice_days: 7,
-    aliases: ['emergency'],
-  },
-]
-
-function resolveLeaveType(value) {
-  const raw = String(value || '').trim()
-  if (!raw) return null
-  const found = LEAVE_TYPES.find(
-    (item) =>
-      item.id.toLowerCase() === raw.toLowerCase() ||
-      item.name.toLowerCase() === raw.toLowerCase() ||
-      item.aliases.some((alias) => alias.toLowerCase() === raw.toLowerCase())
-  )
-  return found || null
-}
-
 async function cleanupExpiredRejectedLeaveRequests(days = 45) {
   const safeDays = Math.max(1, Number(days) || 45)
   const { rows } = await db.query(
@@ -701,10 +644,6 @@ function calculateTenureMonths(dateValue, asOf = new Date()) {
   let months = (date.getFullYear() - hired.getFullYear()) * 12 + (date.getMonth() - hired.getMonth())
   if (date.getDate() < hired.getDate()) months -= 1
   return Math.max(0, months)
-}
-
-function isBelowSixMonthsOfService(dateValue, asOf = new Date()) {
-  return calculateTenureMonths(dateValue, asOf) < 6
 }
 
 function leaveCreditsByTenure(dateValue, asOf = new Date()) {
@@ -793,13 +732,8 @@ async function resetAllEmployeeLeaveCreditsIfNeeded() {
   )
 }
 
-function calculateLeaveDays(startDate, endDate) {
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
-  if (end < start) return null
-  const msPerDay = 24 * 60 * 60 * 1000
-  return Math.floor((end - start) / msPerDay) + 1
+async function calculateLeaveDays(startDate, endDate) {
+  return countPhilippineWorkingDays(db, startDate, endDate)
 }
 
 function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
@@ -813,7 +747,7 @@ function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
 }
 
 async function resolveLeaveCompensation(employee, leaveType, startDate, endDate, hasMedicalAttachment = false) {
-  const leaveDays = calculateLeaveDays(startDate, endDate)
+  const leaveDays = await calculateLeaveDays(startDate, endDate)
   if (!leaveDays || leaveDays <= 0) return null
 
   const paidDaysCap = Number(leaveType?.paid_days_per_year || 0)
@@ -985,6 +919,19 @@ function requireRole(roles) {
   }
 }
 
+app.use(createLeaveInsightsRouter({ db, authRequired, requireRole }))
+app.use(createLeaveChangeRequestRouter({
+  db,
+  authRequired,
+  requireRole,
+  calculateLeaveDays,
+  createNotification,
+  notifyRoles,
+  sendEmailNotification,
+  frontendOrigin: PRIMARY_FRONTEND_ORIGIN,
+}))
+app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
+
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
     `SELECT
@@ -1101,6 +1048,7 @@ app.post('/api/auth/forgot-password', loginLimiter, async (req, res) => {
     sendEmailNotification({
       to: user.email,
       subject: 'Reset your password',
+      bypassPreferences: true,
       text:
         `Hi,\n\n` +
         `We received a request to reset your password.\n` +
@@ -1300,7 +1248,7 @@ app.post('/api/employees/:id/awol', authRequired, requireRole(['admin', 'hr', 'c
   const { start_date, end_date, reason } = req.body || {}
   if (!id) return res.status(400).json({ message: 'Invalid employee id' })
   if (!start_date || !end_date) return res.status(400).json({ message: 'Start date and end date are required' })
-  const leaveDays = calculateLeaveDays(start_date, end_date)
+  const leaveDays = await calculateLeaveDays(start_date, end_date)
   if (!leaveDays) return res.status(400).json({ message: 'Invalid date range' })
 
   const employeeResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [id])
@@ -2635,23 +2583,29 @@ app.post('/api/notifications/cleanup', authRequired, requireRole(['admin', 'hr',
 
 // Leave types
 app.get('/api/leave-types', authRequired, async (req, res) => {
-  res.json(
-    LEAVE_TYPES.filter((type) => type.id !== 'awol').map(
-      ({ id, name, paid_days_per_year, min_months_employed, filing_notice_days, requires_attachment_for_paid, remarks }) => ({
-      id,
-      name,
-      paid_days_per_year,
-      min_months_employed: Number(min_months_employed || 0),
-      filing_notice_days: Number(filing_notice_days || 0),
-      requires_attachment_for_paid: Boolean(requires_attachment_for_paid),
-      remarks: remarks || '',
-      })
-    )
-  )
+  res.json(await getLeavePolicies())
 })
 
 app.post('/api/leave-types', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   res.status(405).json({ message: 'Leave types are fixed in system configuration' })
+})
+
+app.put('/api/leave-types/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
+  const updated = await updateLeavePolicy(String(req.params.id || ''), req.body || {}, req.user.id)
+  if (!updated) return res.status(404).json({ message: 'Leave policy not found' })
+  await addAuditLog(req.user.id, 'update_leave_policy', 'leave_policies', null)
+  res.json(updated)
+})
+
+app.get('/api/leave-policy-settings', authRequired, async (req, res) => {
+  res.json(await getLeavePolicySettings())
+})
+
+app.put('/api/leave-policy-settings', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
+  const updated = await updateLeavePolicySettings(req.body || {}, req.user.id)
+  if (!updated) return res.status(400).json({ message: 'Invalid probationary leave type' })
+  await addAuditLog(req.user.id, 'update_leave_policy_settings', 'leave_policy_settings', 1)
+  res.json(updated)
 })
 
 // Leave requests
@@ -2758,16 +2712,19 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const selectedLeaveType = resolveLeaveType(leave_type_id)
+  const selectedLeaveType = await resolveLeaveType(leave_type_id)
   if (!selectedLeaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
   if (selectedLeaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
   }
-  const leaveType = isBelowSixMonthsOfService(emp.date_hired)
-    ? resolveLeaveType('leave_of_absence')
-    : selectedLeaveType
+  const leaveType = await resolveEffectiveLeaveType(
+    selectedLeaveType,
+    emp.date_hired,
+    new Date(),
+    calculateTenureMonths
+  )
   const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
   if (advanceNoticeError) {
     return res.status(400).json(advanceNoticeError)
@@ -2881,7 +2838,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     return res.status(400).json({ message: 'Overlapping leave request exists' })
   }
 
-  const selectedLeaveType = resolveLeaveType(leave_type_id)
+  const selectedLeaveType = await resolveLeaveType(leave_type_id)
   if (!selectedLeaveType) {
     return res.status(400).json({ message: 'Invalid leave type' })
   }
@@ -2892,9 +2849,12 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
   const emp = empResult.rows[0]
   if (!emp) return res.status(400).json({ message: 'No employee linked' })
-  const leaveType = isBelowSixMonthsOfService(emp.date_hired)
-    ? resolveLeaveType('leave_of_absence')
-    : selectedLeaveType
+  const leaveType = await resolveEffectiveLeaveType(
+    selectedLeaveType,
+    emp.date_hired,
+    new Date(),
+    calculateTenureMonths
+  )
   const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
   if (advanceNoticeError) {
     return res.status(400).json(advanceNoticeError)
@@ -2955,7 +2915,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
     return res.status(400).json({ message: 'Only pending requests can be approved' })
   }
 
-  const leaveType = resolveLeaveType(leaveRequest.leave_type_name)
+  const leaveType = await resolveLeaveType(leaveRequest.leave_type_name)
   if (!leaveType) return res.status(400).json({ message: 'Invalid leave type on request' })
   await resetEmployeeLeaveCreditsIfNeeded(leaveRequest.employee_id)
   const employeeResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [leaveRequest.employee_id])
@@ -2972,7 +2932,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
 
   await db.query(
     `UPDATE leave_requests
-     SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3,
+     SET status='approved', approved_by=$1, approved_by_name=$2, approved_by_role=$3, decided_at=NOW(),
          leave_pay_type=$4, leave_days=$5, paid_days=$6, unpaid_days=$7, credits_deducted=$8
      WHERE id=$9`,
     [
@@ -3036,7 +2996,7 @@ app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', '
   const id = req.params.id
   const { comment = '' } = req.body || {}
   await db.query(
-    `UPDATE leave_requests SET status='rejected', rejected_at=NOW(), approved_by=$1, approved_by_name=$2, approved_by_role=$3, rejection_comment=$4 WHERE id=$5`,
+    `UPDATE leave_requests SET status='rejected', rejected_at=NOW(), decided_at=NOW(), approved_by=$1, approved_by_name=$2, approved_by_role=$3, rejection_comment=$4 WHERE id=$5`,
     [req.user.id, req.user.email, req.user.role, comment, id]
   )
   const employeeRows = await db.query('SELECT employee_id FROM leave_requests WHERE id = $1', [id])
@@ -3375,6 +3335,14 @@ async function ensureDatabaseReadyWithRetry() {
         setInterval(() => {
           cleanupCompletedTasks().catch((err) => console.error('Completed task cleanup failed', err))
         }, 24 * 60 * 60 * 1000)
+        if (isEmailConfigured()) {
+          flushDailyEmailDigests({ db, deliver: deliverEmailNotification })
+            .catch((err) => console.error('Daily email digest failed', err))
+          setInterval(() => {
+            flushDailyEmailDigests({ db, deliver: deliverEmailNotification })
+              .catch((err) => console.error('Daily email digest failed', err))
+          }, 60 * 60 * 1000)
+        }
       }
       return
     } catch (err) {

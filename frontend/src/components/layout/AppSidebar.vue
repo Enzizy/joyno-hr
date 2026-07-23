@@ -1,20 +1,7 @@
 <script setup>
-import { computed } from 'vue'
+import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import dashboardIcon from '@/assets/icons/dashboard-panel.svg?raw'
-import profileIcon from '@/assets/icons/profile.svg?raw'
-import leaveRequestIcon from '@/assets/icons/leave-request.svg?raw'
-import employeeManageIcon from '@/assets/icons/employee-manage.svg?raw'
-import leaveApprovalIcon from '@/assets/icons/leave-approval.svg?raw'
-import analyticsIcon from '@/assets/icons/analytics.svg?raw'
-import userManagementIcon from '@/assets/icons/user-management.svg?raw'
-import settingsIcon from '@/assets/icons/settings.svg?raw'
-import auditLogsIcon from '@/assets/icons/audit-logs.svg?raw'
-import leadIcon from '@/assets/icons/lead.svg?raw'
-import clientsIcon from '@/assets/icons/clients.svg?raw'
-import servicesIcon from '@/assets/icons/services.svg?raw'
-import tasksIcon from '@/assets/icons/tasks.svg?raw'
-import automationIcon from '@/assets/icons/automation.svg?raw'
+import NavIcon from '@/components/layout/NavIcon.vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -22,147 +9,84 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close'])
-
 const route = useRoute()
-
-const filteredItems = computed(() => props.items)
-
-const iconPaths = {
-  notification: ['M12 3a5 5 0 0 0-5 5v3.3L5.3 14a1 1 0 0 0 .7 1.7h12a1 1 0 0 0 .7-1.7L17 11.3V8a5 5 0 0 0-5-5z', 'M10 18a2 2 0 0 0 4 0'],
-}
-
-const customIcons = {
-  dashboard: dashboardIcon,
-  user: profileIcon,
-  leave: leaveRequestIcon,
-  users: employeeManageIcon,
-  check: leaveApprovalIcon,
-  chart: analyticsIcon,
-  'user-cog': userManagementIcon,
-  settings: settingsIcon,
-  audit: auditLogsIcon,
-  lead: leadIcon,
-  client: clientsIcon,
-  service: servicesIcon,
-  task: tasksIcon,
-  automation: automationIcon,
-}
+const expandedGroup = ref('')
 
 function isActive(path) {
   if (path === '/') return route.path === '/'
   return route.path.startsWith(path)
 }
+
+function groupIsActive(group) {
+  return Boolean(group.children?.some((child) => isActive(child.path)))
+}
+
+function directItem(group) {
+  if (group.path) return group
+  return group.children?.length === 1 ? group.children[0] : null
+}
+
+function toggleGroup(group) {
+  expandedGroup.value = expandedGroup.value === group.name ? '' : group.name
+}
+
+watch(
+  () => route.path,
+  () => {
+    const active = props.items.find((group) => groupIsActive(group))
+    if (active) expandedGroup.value = active.name
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
-  <div
-    v-if="open"
-    class="fixed inset-0 z-30 bg-black/50 lg:hidden"
-    @click="emit('close')"
-  />
-  <aside
-    class="fixed inset-y-0 left-0 z-40 flex h-[100dvh] w-64 flex-col overflow-hidden border-r border-primary-900/40 bg-gray-900 transition-transform"
-    :class="[
-      open ? 'translate-x-0' : '-translate-x-full',
-      'lg:translate-x-0 lg:flex'
-    ]"
-  >
-    <div class="flex h-14 shrink-0 items-center border-b border-gray-800 px-4">
-      <span class="text-lg font-semibold text-primary-300">Joyno HR</span>
+  <div v-if="open" class="fixed inset-0 z-30 bg-black/80 backdrop-blur-sm lg:hidden" @click="emit('close')" />
+  <aside class="app-sidebar fixed inset-y-0 left-0 z-40 flex h-[100dvh] w-64 flex-col overflow-hidden border-r border-gray-800 bg-gray-950 transition-transform duration-200" :class="[open ? 'translate-x-0' : '-translate-x-full', 'lg:translate-x-0 lg:flex']">
+    <div class="flex h-[72px] shrink-0 items-center border-b border-gray-800 px-5">
+      <div class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-primary-500/25 bg-gray-900 p-0.5 shadow-sm">
+        <img src="/joynomedia-logo.png" alt="Joynomedia" class="h-full w-full object-contain" />
+      </div>
+      <div class="ml-3">
+        <p class="text-sm font-bold text-gray-100">Joyno <span class="text-primary-400">Workspace</span></p>
+        <p class="text-[10px] uppercase tracking-[0.18em] text-gray-600">HR &amp; Operations</p>
+      </div>
     </div>
-    <nav class="sidebar-scroll min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 py-4 pb-8">
-      <template v-for="(item, i) in filteredItems" :key="i">
-        <div v-if="item.divider" class="my-2 border-t border-primary-900/30" />
-        <div v-else-if="item.header" class="px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-primary-300/80">
-          {{ item.label }}
-        </div>
-        <a
-          v-else-if="item.external"
-          :href="item.path"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-200 transition-colors hover:bg-gray-800 hover:text-gray-100"
-          @click="emit('close')"
-        >
-          <span
-            v-if="item.icon"
-            class="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-gray-200"
-          >
-            <span
-              v-if="customIcons[item.icon]"
-              class="sidebar-icon text-primary-300"
-              aria-hidden="true"
-              v-html="customIcons[item.icon]"
-            />
-            <svg
-              v-else-if="iconPaths[item.icon]"
-              viewBox="0 0 24 24"
-              class="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.25"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path v-for="(d, idx) in iconPaths[item.icon]" :key="idx" :d="d" />
-            </svg>
-            <span v-else class="text-xs">•</span>
-          </span>
-          <span>{{ item.name }}</span>
-        </a>
-        <RouterLink
-          v-else
-          :to="item.path"
-          class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors"
-          :class="
-            isActive(item.path)
-              ? 'bg-primary-900/40 text-primary-200'
-              : 'text-gray-200 hover:bg-gray-800 hover:text-gray-100'
-          "
-          @click="emit('close')"
-        >
-          <span
-            v-if="item.icon"
-            class="flex h-8 w-8 items-center justify-center rounded-lg bg-transparent text-gray-200"
-          >
-            <span
-              v-if="customIcons[item.icon]"
-              class="sidebar-icon text-primary-300"
-              aria-hidden="true"
-              v-html="customIcons[item.icon]"
-            />
-            <svg
-              v-else-if="iconPaths[item.icon]"
-              viewBox="0 0 24 24"
-              class="h-5 w-5"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.25"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path v-for="(d, idx) in iconPaths[item.icon]" :key="idx" :d="d" />
-            </svg>
-            <span v-else class="text-xs">•</span>
-          </span>
-          <span>{{ item.name }}</span>
+
+    <nav aria-label="Primary navigation" class="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-5">
+      <template v-for="group in items" :key="group.name">
+        <RouterLink v-if="directItem(group)" :to="directItem(group).path" class="group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all" :class="isActive(directItem(group).path) ? 'bg-primary-500/12 text-primary-300 ring-1 ring-inset ring-primary-500/25' : 'text-gray-300 hover:bg-gray-900 hover:text-gray-100'" @click="emit('close')">
+          <span class="flex h-7 w-7 items-center justify-center rounded-lg transition-colors" :class="isActive(directItem(group).path) ? 'bg-primary-500/10 text-primary-300' : 'text-gray-400 group-hover:text-primary-300'"><NavIcon :name="directItem(group).icon || group.icon" /></span>
+          <span>{{ directItem(group).name }}</span>
         </RouterLink>
+
+        <div v-else>
+          <button type="button" class="group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm font-medium transition-all" :class="groupIsActive(group) ? 'text-primary-300' : 'text-gray-300 hover:bg-gray-900 hover:text-gray-100'" :aria-expanded="expandedGroup === group.name" @click="toggleGroup(group)">
+            <span class="flex h-7 w-7 items-center justify-center rounded-lg transition-colors" :class="groupIsActive(group) ? 'bg-primary-500/10 text-primary-300' : 'text-gray-400 group-hover:text-primary-300'"><NavIcon :name="group.icon" /></span>
+            <span class="flex-1">{{ group.name }}</span>
+            <svg class="h-4 w-4 text-gray-600 transition-transform" :class="expandedGroup === group.name ? 'rotate-180 text-primary-400' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="m6 9 6 6 6-6" /></svg>
+          </button>
+
+          <div v-if="expandedGroup === group.name" class="ml-5 mt-1 space-y-0.5 border-l border-gray-800 pl-3">
+            <RouterLink v-for="child in group.children" :key="child.path" :to="child.path" class="flex items-center gap-2.5 rounded-md px-3 py-2 text-[13px] transition" :class="isActive(child.path) ? 'bg-gray-900 text-primary-300' : 'text-gray-500 hover:bg-gray-900/70 hover:text-gray-200'" @click="emit('close')">
+              <NavIcon :name="child.icon" class="h-4 w-4" />
+              <span>{{ child.name }}</span>
+            </RouterLink>
+          </div>
+        </div>
       </template>
     </nav>
+
+    <div class="shrink-0 border-t border-gray-800 p-3">
+      <div class="flex items-center gap-3 rounded-lg px-3 py-2.5">
+        <span class="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-primary-500/20 bg-gray-900 p-0.5"><img src="/joynomedia-logo.png" alt="" class="h-full w-full object-contain" /></span>
+        <div class="min-w-0"><p class="truncate text-xs font-medium text-gray-300">Joyno Solutions Ltd.</p><p class="mt-0.5 text-[10px] text-gray-600">Internal workspace</p></div>
+      </div>
+    </div>
   </aside>
 </template>
 
 <style scoped>
-.sidebar-icon :deep(svg) {
-  height: 20px;
-  width: 20px;
-  display: block;
-  fill: currentColor;
-  stroke: currentColor;
-}
-
 .sidebar-scroll {
   -webkit-overflow-scrolling: touch;
 }

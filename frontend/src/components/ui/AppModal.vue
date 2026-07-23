@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, watch } from 'vue'
 
 const props = defineProps({
   show: Boolean,
@@ -15,17 +15,33 @@ const widthClass = computed(() => ({
   lg: 'max-w-2xl',
   xl: 'max-w-5xl',
 }[props.size] || 'max-w-lg'))
+
+function onKeydown(event) {
+  if (event.key === 'Escape' && props.show) emit('close')
+}
+
+watch(() => props.show, (show) => {
+  document.body.classList.toggle('overflow-hidden', show)
+  if (show) document.addEventListener('keydown', onKeydown)
+  else document.removeEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.body.classList.remove('overflow-hidden')
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
   <Teleport to="body">
     <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div class="fixed inset-0 bg-black/50" @click="emit('close')" />
+      <div class="fixed inset-0 bg-black/85 backdrop-blur-sm" @click="emit('close')" />
       <div
-        class="relative z-10 flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-2xl border border-gray-800 bg-gray-900 shadow-2xl"
+        class="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/70"
         :class="widthClass"
         role="dialog"
         aria-modal="true"
+        :aria-label="title || 'Dialog'"
         @click.stop
       >
         <div class="flex items-center justify-between border-b border-gray-800 px-6 py-4">

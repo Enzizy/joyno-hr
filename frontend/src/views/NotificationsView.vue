@@ -1,156 +1,86 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import { useNotificationStore } from '@/stores/notificationStore'
-import { useAuthStore } from '@/stores/authStore'
-import AppButton from '@/components/ui/AppButton.vue'
-import AppTable from '@/components/ui/AppTable.vue'
-import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 import { useRouter } from 'vue-router'
+import AppButton from '@/components/ui/AppButton.vue'
+import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
+import AppModal from '@/components/ui/AppModal.vue'
+import EmptyState from '@/components/ui/EmptyState.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
+import { getNotificationPreferences, updateNotificationPreferences } from '@/services/backendService'
+import { useAuthStore } from '@/stores/authStore'
+import { useNotificationStore } from '@/stores/notificationStore'
+import { useToastStore } from '@/stores/toastStore'
 
 const router = useRouter()
 const store = useNotificationStore()
 const authStore = useAuthStore()
+const toast = useToastStore()
 const page = ref(1)
-const pageSize = ref(20)
-const typeFilter = ref('')
+const pageSize = 20
+const category = ref('')
 const unreadOnly = ref(false)
+const search = ref('')
 const selectedIds = ref([])
-const showDeleteModal = ref(false)
-const deleteMode = ref('single')
-const deletingNotification = ref(null)
-const deletingLoading = ref(false)
-const TYPE_LABELS = {
-  leave_pending: 'Leave: Pending Approval',
-  leave_approved: 'Leave: Approved',
-  leave_rejected: 'Leave: Rejected',
-  task_assigned: 'Task: Assigned',
-  task_completed: 'Task: Completed',
-  task_sla_24h: 'Task: Overdue 24h',
-  task_sla_48h: 'Task: Overdue 48h',
-  leave_sla_24h: 'Leave: Pending 24h',
-  leave_sla_48h: 'Leave: Pending 48h',
-}
+const preferencesOpen = ref(false)
+const preferencesLoading = ref(false)
+const preferencesSaving = ref(false)
+const deleteOpen = ref(false)
+const deleteTarget = ref(null)
+const preferences = ref({ email_delivery: 'immediate', leave_enabled: true, task_enabled: true, system_enabled: true })
+let searchTimer
 
-const totalPages = computed(() => Math.max(1, Math.ceil((store.total || 0) / pageSize.value)))
-const canManageNotifications = computed(() => ['admin', 'hr', 'ceo'].includes(authStore.role))
-const typeOptions = computed(() => {
-  const set = new Set()
-  store.items.forEach((item) => {
-    if (item.type) set.add(item.type)
-  })
-  return Array.from(set)
-})
-const allVisibleSelected = computed(
-  () => store.items.length > 0 && store.items.every((item) => selectedIds.value.includes(item.id))
-)
-const hasSelection = computed(() => selectedIds.value.length > 0)
-
-const canPrev = computed(() => page.value > 1)
-const canNext = computed(() => page.value < totalPages.value)
+const categories = [
+  { value: '', label: 'All updates' },
+  { value: 'leave', label: 'Leave' },
+  { value: 'task', label: 'Tasks & meetings' },
+  { value: 'system', label: 'System' },
+]
+const totalPages = computed(() => Math.max(1, Math.ceil(store.total / pageSize)))
+const allSelected = computed(() => store.items.length > 0 && store.items.every((item) => selectedIds.value.includes(item.id)))
+const canManage = computed(() => ['admin', 'hr', 'ceo'].includes(authStore.role))
 
 function formatDate(value) {
-  if (!value) return '-'
-  const d = new Date(value)
-  if (Number.isNaN(d.getTime())) return String(value)
-  return d.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  if (!value) return ''
+  return new Date(value).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+function categoryLabel(item) {
+  return categories.find((entry) => entry.value === item.category)?.label || 'System'
 }
 
 function resolveLink(item) {
-  if (item.target_table === 'tasks') return '/tasks'
-  if (item.target_table === 'leave_requests') return '/leave-approvals'
-  if (item.target_table === 'clients') return '/clients'
-  if (item.target_table === 'leads') return '/leads'
-  if (item.target_table === 'automation_rules') return '/automation'
-  return null
+  if (item.target_table === 'tasks') return authStore.role === 'employee' ? '/my-tasks' : '/tasks'
+  if (item.target_table === 'leave_requests') return authStore.role === 'employee' ? '/leave-request' : '/leave-approvals'
+  return item.target_table ? `/${item.target_table.replaceAll('_', '-')}` : null
 }
 
-function formatType(type) {
-  if (!type) return '-'
-  if (TYPE_LABELS[type]) return TYPE_LABELS[type]
-  return String(type)
-    .replaceAll('_', ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
+function previewEntries(preview) {
+  if (!preview) return []
+  const labels = {
+    employee_name: 'Employee', leave_type: 'Leave type', status: 'Status', start_date: 'From',
+    end_date: 'To', title: 'Title', priority: 'Priority', due_date: 'Due', task_type: 'Type',
+  }
+  return Object.entries(preview)
+    .filter(([, value]) => value !== null && value !== '')
+    .slice(0, 4)
+    .map(([key, value]) => ({ label: labels[key] || key, value }))
 }
 
 async function load() {
   await store.fetchList({
-    limit: pageSize.value,
-    offset: (page.value - 1) * pageSize.value,
-    type: typeFilter.value || undefined,
+    limit: pageSize,
+    offset: (page.value - 1) * pageSize,
+    category: category.value || undefined,
     unreadOnly: unreadOnly.value,
+    search: search.value.trim() || undefined,
   })
   selectedIds.value = []
 }
 
-async function nextPage() {
-  if (!canNext.value) return
-  page.value += 1
-  await load()
-}
-
-async function prevPage() {
-  if (!canPrev.value) return
-  page.value -= 1
-  await load()
-}
-
-async function markAll() {
-  await store.markAllRead()
-}
-
-function toggleSelectAll() {
-  if (allVisibleSelected.value) {
-    selectedIds.value = []
-    return
-  }
-  selectedIds.value = store.items.map((item) => item.id)
-}
-
-async function markSelectedRead() {
-  if (!selectedIds.value.length) return
-  await store.markManyRead(selectedIds.value)
-  selectedIds.value = []
-}
-
-async function runCleanup() {
-  await store.runCleanup(90)
-  await load()
-}
-
-function requestDeleteItem(item) {
-  deleteMode.value = 'single'
-  deletingNotification.value = item
-  showDeleteModal.value = true
-}
-
-function requestDeleteSelected() {
-  if (!selectedIds.value.length) return
-  deleteMode.value = 'multiple'
-  deletingNotification.value = null
-  showDeleteModal.value = true
-}
-
-async function confirmDelete() {
-  deletingLoading.value = true
-  try {
-    if (deleteMode.value === 'single' && deletingNotification.value) {
-      await store.remove(deletingNotification.value.id)
-    } else if (deleteMode.value === 'multiple' && selectedIds.value.length) {
-      await store.removeMany(selectedIds.value)
-      selectedIds.value = []
-    }
-    showDeleteModal.value = false
-  } finally {
-    deletingLoading.value = false
-    deletingNotification.value = null
-    deleteMode.value = 'single'
-  }
+function applyFilters() {
+  page.value = 1
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(load, 250)
 }
 
 async function openItem(item) {
@@ -159,116 +89,126 @@ async function openItem(item) {
   if (link) await router.push(link)
 }
 
+function toggleAll() {
+  selectedIds.value = allSelected.value ? [] : store.items.map((item) => item.id)
+}
+
+async function markSelectedRead() {
+  await store.markManyRead(selectedIds.value)
+  selectedIds.value = []
+}
+
+function requestDelete(item = null) {
+  deleteTarget.value = item
+  deleteOpen.value = true
+}
+
+async function confirmDelete() {
+  if (deleteTarget.value) await store.remove(deleteTarget.value.id)
+  else await store.removeMany(selectedIds.value)
+  selectedIds.value = []
+  deleteOpen.value = false
+  deleteTarget.value = null
+}
+
+async function openPreferences() {
+  preferencesOpen.value = true
+  preferencesLoading.value = true
+  try {
+    preferences.value = await getNotificationPreferences()
+  } catch (error) {
+    toast.error(error.message || 'Unable to load email preferences.')
+  } finally {
+    preferencesLoading.value = false
+  }
+}
+
+async function savePreferences() {
+  preferencesSaving.value = true
+  try {
+    preferences.value = await updateNotificationPreferences(preferences.value)
+    preferencesOpen.value = false
+    if (preferences.value.unavailable) toast.warning('Email preferences will become active after the backend is deployed.')
+    else toast.success('Notification preferences saved.')
+  } catch (error) {
+    toast.error(error.message || 'Unable to save preferences.')
+  } finally {
+    preferencesSaving.value = false
+  }
+}
+
+async function changePage(nextPage) {
+  page.value = nextPage
+  await load()
+}
+
 onMounted(load)
 </script>
 
 <template>
   <div class="space-y-6">
-    <div class="flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-primary-200">Notifications</h1>
-        <p class="mt-1 text-sm text-gray-400">Unread alerts and activity notifications.</p>
-      </div>
-      <div class="flex gap-2">
-        <AppButton v-if="canManageNotifications" variant="secondary" @click="runCleanup">Cleanup old read</AppButton>
-        <AppButton variant="secondary" @click="markAll">Mark all read</AppButton>
-      </div>
-    </div>
+    <PageHeader title="Notification center" description="Keep track of leave, work, and system activity without losing context." eyebrow="Workspace">
+      <template #actions>
+        <AppButton variant="secondary" @click="openPreferences">Email preferences</AppButton>
+        <AppButton variant="secondary" @click="store.markAllRead">Mark all read</AppButton>
+      </template>
+    </PageHeader>
 
-    <div class="flex flex-wrap items-end gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4">
-      <div class="min-w-[180px]">
-        <label class="mb-1 block text-xs font-medium text-gray-400">Type</label>
-        <select
-          v-model="typeFilter"
-          class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
-          @change="page = 1; load()"
-        >
-          <option value="">All types</option>
-          <option v-for="type in typeOptions" :key="type" :value="type">{{ formatType(type) }}</option>
-        </select>
+    <section class="surface-card overflow-hidden">
+      <div class="border-b border-gray-800 p-4 sm:p-5">
+        <div class="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div class="flex gap-2 overflow-x-auto pb-1">
+            <button v-for="item in categories" :key="item.value || 'all'" type="button" class="whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition" :class="category === item.value ? 'bg-primary-600 text-black' : 'bg-gray-800 text-gray-300 hover:text-gray-100'" @click="category = item.value; applyFilters()">{{ item.label }}</button>
+          </div>
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <input v-model="search" class="form-control min-w-64" type="search" placeholder="Search notifications" @input="applyFilters" />
+            <label class="inline-flex items-center gap-2 whitespace-nowrap text-sm text-gray-300"><input v-model="unreadOnly" type="checkbox" class="rounded border-gray-700" @change="applyFilters" /> Unread only</label>
+          </div>
+        </div>
+        <div v-if="selectedIds.length" class="mt-4 flex flex-wrap items-center gap-2 rounded-lg bg-primary-900/20 p-3 text-sm text-gray-300">
+          <strong>{{ selectedIds.length }} selected</strong>
+          <AppButton size="sm" variant="secondary" @click="markSelectedRead">Mark read</AppButton>
+          <AppButton size="sm" variant="danger" @click="requestDelete()">Delete</AppButton>
+        </div>
       </div>
-      <label class="inline-flex items-center gap-2 text-sm text-gray-300">
-        <input v-model="unreadOnly" type="checkbox" class="rounded border-gray-700 bg-gray-900" @change="page = 1; load()" />
-        Unread only
-      </label>
-      <AppButton variant="secondary" :disabled="!hasSelection" @click="markSelectedRead">Mark selected read</AppButton>
-      <AppButton variant="danger" :disabled="!hasSelection" @click="requestDeleteSelected">Delete selected</AppButton>
-    </div>
 
-    <AppTable :loading="store.loading">
-      <thead class="bg-gray-950">
-        <tr>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">
-            <input type="checkbox" :checked="allVisibleSelected" @change="toggleSelectAll" />
-          </th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Status</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Type</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Title</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Message</th>
-          <th class="px-4 py-3 text-left text-xs font-medium text-primary-300">Date</th>
-          <th class="px-4 py-3 text-right text-xs font-medium text-primary-300">Action</th>
-        </tr>
-      </thead>
-      <tbody class="divide-y divide-gray-800 bg-gray-900">
-        <tr v-for="item in store.items" :key="item.id" class="hover:bg-gray-950">
-          <td class="px-4 py-3 text-sm">
-            <input v-model="selectedIds" type="checkbox" :value="item.id" />
-          </td>
-          <td class="px-4 py-3 text-sm">
-            <span
-              class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
-              :class="item.is_read ? 'bg-gray-800 text-gray-300' : 'bg-amber-900 text-amber-200'"
-            >
-              {{ item.is_read ? 'Read' : 'Unread' }}
-            </span>
-          </td>
-          <td class="px-4 py-3 text-sm text-gray-400">{{ formatType(item.type) }}</td>
-          <td class="px-4 py-3 text-sm text-primary-200">{{ item.title }}</td>
-          <td class="px-4 py-3 text-sm text-gray-300">{{ item.message || '-' }}</td>
-          <td class="px-4 py-3 text-sm text-gray-400">{{ formatDate(item.created_at) }}</td>
-          <td class="px-4 py-3 text-right">
-            <div class="flex justify-end gap-2">
-              <AppButton size="sm" variant="ghost" @click="openItem(item)">Open</AppButton>
-              <AppButton size="sm" variant="danger" @click="requestDeleteItem(item)">Delete</AppButton>
+      <div v-if="store.loading" class="space-y-3 p-5"><div v-for="item in 4" :key="item" class="h-28 animate-pulse rounded-xl bg-gray-800" /></div>
+      <EmptyState v-else-if="!store.items.length" title="You’re all caught up" description="No notifications match the current filters." />
+      <div v-else class="divide-y divide-gray-800">
+        <article v-for="item in store.items" :key="item.id" class="group flex gap-3 p-4 transition hover:bg-gray-800/30 sm:p-5" :class="!item.is_read && 'bg-primary-950/10'">
+          <input v-model="selectedIds" type="checkbox" :value="item.id" class="mt-1 rounded border-gray-700" :aria-label="`Select ${item.title}`" />
+          <button type="button" class="min-w-0 flex-1 text-left" @click="openItem(item)">
+            <div class="flex flex-wrap items-center gap-2">
+              <span v-if="!item.is_read" class="h-2 w-2 rounded-full bg-primary-500" />
+              <span class="rounded-full bg-gray-800 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">{{ categoryLabel(item) }}</span>
+              <time class="ml-auto text-xs text-gray-500">{{ formatDate(item.created_at) }}</time>
             </div>
-          </td>
-        </tr>
-        <tr v-if="!store.items.length && !store.loading">
-          <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-400">No notifications.</td>
-        </tr>
-      </tbody>
-    </AppTable>
+            <h2 class="mt-2 text-sm font-semibold text-gray-100">{{ item.title }}</h2>
+            <p class="mt-1 text-sm leading-6 text-gray-400">{{ item.message }}</p>
+            <dl v-if="previewEntries(item.preview).length" class="mt-3 grid gap-2 rounded-lg border border-gray-800 bg-black/20 p-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div v-for="entry in previewEntries(item.preview)" :key="entry.label"><dt class="text-[10px] uppercase tracking-wide text-gray-600">{{ entry.label }}</dt><dd class="mt-0.5 truncate text-xs font-medium text-gray-300">{{ entry.value }}</dd></div>
+            </dl>
+          </button>
+          <button type="button" class="self-start rounded-lg p-2 text-gray-600 opacity-0 transition hover:bg-red-950/30 hover:text-red-400 group-hover:opacity-100" aria-label="Delete notification" @click="requestDelete(item)">×</button>
+        </article>
+      </div>
 
-    <div class="flex items-center justify-end gap-2">
-      <button
-        class="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200 transition hover:border-primary-400 disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="!canPrev"
-        @click="prevPage"
-      >
-        &larr;
-      </button>
-      <span class="text-sm text-gray-400">Page {{ page }} / {{ totalPages }}</span>
-      <button
-        class="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200 transition hover:border-primary-400 disabled:cursor-not-allowed disabled:opacity-40"
-        :disabled="!canNext"
-        @click="nextPage"
-      >
-        &rarr;
-      </button>
-    </div>
+      <div class="flex items-center justify-between border-t border-gray-800 px-4 py-3">
+        <label class="flex items-center gap-2 text-xs text-gray-500"><input type="checkbox" :checked="allSelected" @change="toggleAll" /> Select page</label>
+        <div class="flex items-center gap-2"><AppButton size="sm" variant="secondary" :disabled="page <= 1" @click="changePage(page - 1)">Previous</AppButton><span class="text-xs text-gray-500">{{ page }} / {{ totalPages }}</span><AppButton size="sm" variant="secondary" :disabled="page >= totalPages" @click="changePage(page + 1)">Next</AppButton></div>
+      </div>
+    </section>
 
-    <AppConfirmModal
-      :show="showDeleteModal"
-      title="Delete notification"
-      :message="
-        deleteMode === 'single'
-          ? 'Delete this notification? This cannot be undone.'
-          : `Delete ${selectedIds.length} selected notification(s)? This cannot be undone.`
-      "
-      confirm-text="Delete"
-      :loading="deletingLoading"
-      @close="showDeleteModal = false"
-      @confirm="confirmDelete"
-    />
+    <AppModal :show="preferencesOpen" title="Email preferences" size="lg" @close="preferencesOpen = false">
+      <div v-if="preferencesLoading" class="h-36 animate-pulse rounded-xl bg-gray-800" />
+      <div v-else class="space-y-5">
+        <p v-if="preferences.unavailable" class="rounded-lg border border-amber-700/40 bg-amber-950/20 p-3 text-sm text-amber-300">The local UI is connected to the previous deployed API. These controls become active after the new backend is deployed.</p>
+        <div><label class="form-label">Email delivery</label><select v-model="preferences.email_delivery" class="form-control"><option value="immediate">Send important updates immediately</option><option value="daily">One daily summary</option><option value="off">No notification emails</option></select><p class="form-help">In-app notifications remain available regardless of this setting.</p></div>
+        <fieldset :disabled="preferences.email_delivery === 'off'" class="space-y-2"><legend class="form-label">Include these categories</legend><label v-for="option in [{key:'leave_enabled',label:'Leave updates'},{key:'task_enabled',label:'Tasks and meetings'},{key:'system_enabled',label:'System updates'}]" :key="option.key" class="flex items-center justify-between rounded-lg border border-gray-800 px-4 py-3 text-sm text-gray-300"><span>{{ option.label }}</span><input v-model="preferences[option.key]" type="checkbox" class="rounded border-gray-700" /></label></fieldset>
+      </div>
+      <template #footer><AppButton variant="secondary" @click="preferencesOpen = false">Cancel</AppButton><AppButton :loading="preferencesSaving" @click="savePreferences">Save preferences</AppButton></template>
+    </AppModal>
+
+    <AppConfirmModal :show="deleteOpen" title="Delete notification" :message="deleteTarget ? 'Delete this notification?' : `Delete ${selectedIds.length} selected notifications?`" confirm-text="Delete" @close="deleteOpen = false" @confirm="confirmDelete" />
   </div>
 </template>

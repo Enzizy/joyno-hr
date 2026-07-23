@@ -5,6 +5,7 @@ import { useToastStore } from '@/stores/toastStore'
 import { getServices, updateService, getClients, getUsers } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const route = useRoute()
 const toast = useToastStore()
@@ -161,12 +162,9 @@ async function saveService() {
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h1 class="text-2xl font-bold text-primary-200">Services</h1>
-      <p class="mt-1 text-sm text-gray-400">Track and manage services delivered to each client.</p>
-    </div>
+    <PageHeader title="Services" description="Track delivery status, ownership, and progress for every client service." eyebrow="Work" />
 
-    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-4">
+    <div class="filter-panel grid gap-3 sm:grid-cols-4">
       <div class="sm:col-span-2">
         <label class="mb-1 block text-xs text-gray-400">Search</label>
         <input v-model="searchQuery" type="text" placeholder="Search by client" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @keyup.enter="loadPage" />

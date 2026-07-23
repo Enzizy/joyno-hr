@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { getNavForRole } from '@/router/navConfig'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import AppTopbar from '@/components/layout/AppTopbar.vue'
-import logoBg from '@/assets/Joynomedia logo.png'
+import AppBreadcrumbs from '@/components/layout/AppBreadcrumbs.vue'
 
 const authStore = useAuthStore()
 const navItems = computed(() => getNavForRole(authStore.role))
@@ -20,22 +20,20 @@ function closeSidebar() {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-gray-950">
+  <div class="min-h-screen bg-gray-950">
     <AppSidebar :items="navItems" :open="sidebarOpen" @close="closeSidebar" />
-    <div class="flex flex-1 flex-col lg:pl-64">
+    <div class="flex min-h-screen min-w-0 flex-col lg:pl-64">
       <AppTopbar @toggle-sidebar="toggleSidebar" />
-      <main class="relative flex-1 p-4 md:p-6">
-        <div
-          class="pointer-events-none absolute inset-0 bg-center bg-no-repeat opacity-10"
-          :style="{ backgroundImage: `url(${logoBg})`, backgroundSize: '520px auto' }"
-        />
-        <div class="relative z-10">
+      <main id="main-content" class="flex-1 bg-gray-950 px-4 py-5 sm:px-6 sm:py-7 lg:px-8 xl:px-10">
+        <div class="mx-auto w-full max-w-[1600px]">
+          <AppBreadcrumbs />
           <RouterView v-slot="{ Component }">
             <Suspense>
               <component :is="Component" />
               <template #fallback>
-                <div class="flex items-center justify-center py-12">
-                  <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
+                <div class="space-y-4" aria-label="Loading page">
+                  <div class="h-8 w-48 animate-pulse rounded-lg bg-gray-800" />
+                  <div class="h-28 animate-pulse rounded-xl border border-gray-800 bg-gray-900" />
                 </div>
               </template>
             </Suspense>

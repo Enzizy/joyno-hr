@@ -6,6 +6,7 @@ import { changePassword as changePasswordApi } from '@/services/api'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const authStore = useAuthStore()
 const toast = useToastStore()
@@ -47,10 +48,7 @@ async function changePassword() {
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h1 class="text-2xl font-bold text-primary-200">Profile</h1>
-      <p class="mt-1 text-sm text-gray-400">Your account information.</p>
-    </div>
+    <PageHeader title="Profile" description="Review your account information and manage sign-in security." eyebrow="Account" />
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-6 shadow-sm">
       <dl class="grid gap-4 sm:grid-cols-2">
         <div>

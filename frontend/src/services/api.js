@@ -1,4 +1,7 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+import { getLocalPhilippineHolidays } from '@/data/philippineHolidays2026'
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const HAS_WORKSPACE_API = import.meta.env.VITE_WORKSPACE_API !== 'false'
 
 function getToken() {
   return localStorage.getItem('token')
@@ -55,8 +58,53 @@ export async function getNotifications(options = {}) {
   if (options.offset || options.offset === 0) params.set('offset', options.offset)
   if (options.unreadOnly) params.set('unread', 'true')
   if (options.type) params.set('type', options.type)
+  if (options.category) params.set('category', options.category)
+  if (options.search) params.set('search', options.search)
   const qs = params.toString()
-  return request(`/api/notifications${qs ? `?${qs}` : ''}`)
+  const endpoint = HAS_WORKSPACE_API ? '/api/notification-feed' : '/api/notifications'
+  const data = await request(`${endpoint}${qs ? `?${qs}` : ''}`)
+  if (HAS_WORKSPACE_API) return data
+  const categorized = (data.items || []).map((item) => ({
+    ...item,
+    category: String(item.type || '').startsWith('leave_') ? 'leave' : String(item.type || '').startsWith('task_') ? 'task' : 'system',
+    preview: null,
+  }))
+  const search = String(options.search || '').trim().toLowerCase()
+  const items = categorized.filter((item) => (!options.category || item.category === options.category)
+    && (!search || `${item.title || ''} ${item.message || ''}`.toLowerCase().includes(search)))
+  return { ...data, items, total: options.category || search ? items.length : data.total }
+}
+
+export async function searchWorkspace(query, limit = 6) {
+  if (!HAS_WORKSPACE_API) return { employees: [], leaves: [], tasks: [], notifications: [] }
+  const params = new URLSearchParams({ q: query, limit: String(limit) })
+  return request(`/api/workspace-search?${params.toString()}`)
+}
+
+export async function getNotificationPreferences() {
+  if (!HAS_WORKSPACE_API) return { email_delivery: 'immediate', leave_enabled: true, task_enabled: true, system_enabled: true, unavailable: true }
+  return request('/api/notification-preferences')
+}
+
+export async function updateNotificationPreferences(data) {
+  if (!HAS_WORKSPACE_API) return { ...data, unavailable: true }
+  return request('/api/notification-preferences', { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function getLeaveApprovalInbox() {
+  if (!HAS_WORKSPACE_API) {
+    const rows = await getLeaveRequests()
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    return rows.filter((row) => row.status === 'pending').map((row) => {
+      const created = new Date(row.created_at)
+      const start = new Date(`${String(row.start_date).slice(0, 10)}T00:00:00`)
+      const filingAgeHours = Math.max(0, Math.floor((Date.now() - created.getTime()) / 3600000))
+      const daysUntilStart = Math.round((start.getTime() - today.getTime()) / 86400000)
+      return { ...row, filing_age_hours: filingAgeHours, days_until_start: daysUntilStart, overlapping_count: null, leave_credits: null, urgency: daysUntilStart <= 0 || filingAgeHours >= 48 ? 'critical' : filingAgeHours >= 24 || daysUntilStart <= 2 ? 'high' : 'normal', low_risk: false }
+    })
+  }
+  return request('/api/leave-approval-inbox')
 }
 
 export async function markNotificationRead(id) {
@@ -134,6 +182,54 @@ export async function createLeaveType(data) {
   return request('/api/leave-types', { method: 'POST', body: JSON.stringify(data) })
 }
 
+export async function updateLeaveType(id, data) {
+  return request(`/api/leave-types/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function getLeavePolicySettings() {
+  return request('/api/leave-policy-settings')
+}
+
+export async function updateLeavePolicySettings(data) {
+  return request('/api/leave-policy-settings', { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export async function getLeaveCalendar(options = {}) {
+  if (!HAS_WORKSPACE_API) {
+    const rows = await getLeaveRequests()
+    return rows.filter((row) => ['pending', 'approved'].includes(row.status)
+      && (!options.from || row.end_date >= options.from)
+      && (!options.to || row.start_date <= options.to))
+  }
+  const params = new URLSearchParams()
+  if (options.from) params.set('from', options.from)
+  if (options.to) params.set('to', options.to)
+  if (options.department && options.department !== 'all') params.set('department', options.department)
+  return request(`/api/leave-calendar?${params.toString()}`)
+}
+
+export async function getPhilippineHolidays(from, to) {
+  const params = new URLSearchParams({ from, to })
+  try {
+    return await request(`/api/philippine-holidays?${params.toString()}`)
+  } catch {
+    return getLocalPhilippineHolidays(from, to)
+  }
+}
+
+export async function getLeaveAvailability(options = {}) {
+  const params = new URLSearchParams()
+  params.set('employee_id', options.employeeId)
+  params.set('from', options.from)
+  params.set('to', options.to)
+  if (options.excludeId) params.set('exclude_id', options.excludeId)
+  return request(`/api/leave-availability?${params.toString()}`)
+}
+
+export async function getLeaveTimeline(id) {
+  return request(`/api/leave-requests/${id}/timeline`)
+}
+
 export async function getLeaveRequests(options = {}) {
   const params = new URLSearchParams()
   if (options.scope) params.set('scope', options.scope)
@@ -161,6 +257,35 @@ export async function rejectLeaveRequest(id, comment) {
 
 export async function cancelLeaveRequest(id) {
   return request(`/api/leave-requests/${id}/cancel`, { method: 'POST' })
+}
+
+export async function getLeaveChangeRequests(options = {}) {
+  const params = new URLSearchParams()
+  if (options.scope) params.set('scope', options.scope)
+  if (options.status) params.set('status', options.status)
+  const query = params.toString()
+  return request(`/api/leave-change-requests${query ? `?${query}` : ''}`)
+}
+
+export async function createLeaveChangeRequest(data) {
+  return request('/api/leave-change-requests', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function approveLeaveChangeRequest(id, comment = '') {
+  return request(`/api/leave-change-requests/${id}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ comment }),
+  })
+}
+
+export async function rejectLeaveChangeRequest(id, comment) {
+  return request(`/api/leave-change-requests/${id}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ comment }),
+  })
 }
 
 export async function deleteLeaveRequest(id) {

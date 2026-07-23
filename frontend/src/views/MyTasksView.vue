@@ -4,6 +4,7 @@ import { useToastStore } from '@/stores/toastStore'
 import { getTasks, startTask, completeTask, getTaskProofUrl } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import PageHeader from '@/components/ui/PageHeader.vue'
 
 const toast = useToastStore()
 
@@ -234,18 +235,15 @@ function proofUrl(taskId) {
 
 <template>
   <div class="space-y-6">
-    <div>
-      <h1 class="text-2xl font-bold text-primary-200">My Tasks</h1>
-      <p class="mt-1 text-sm text-gray-400">Employee assigned work and completion updates.</p>
-    </div>
+    <PageHeader title="My Tasks" description="Review assigned work, upcoming deadlines, and completion requirements." eyebrow="Work" />
 
     <div class="flex flex-wrap gap-2">
-      <button v-for="item in tabOptions" :key="item.value" type="button" class="rounded-lg px-3 py-2 text-sm font-medium" :class="tab === item.value ? 'bg-primary-500 text-gray-900' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'" @click="tab = item.value; applyFilters()">
+      <button v-for="item in tabOptions" :key="item.value" type="button" class="rounded-lg px-3 py-2 text-sm font-medium" :class="tab === item.value ? 'bg-primary-500 text-black' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'" @click="tab = item.value; applyFilters()">
         {{ item.label }}
       </button>
     </div>
 
-    <div class="grid gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4 shadow-sm sm:grid-cols-4">
+    <div class="filter-panel grid gap-3 sm:grid-cols-4">
       <div>
         <label class="mb-1 block text-xs text-gray-400">Search</label>
         <input v-model="searchQuery" type="text" placeholder="Search task title" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @keyup.enter="applyFilters" />

@@ -6,7 +6,7 @@ import './style.css'
 import { useAuthStore } from './stores/authStore'
 import { useThemeStore } from './stores/themeStore'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 function setBootMessage(message) {
   const el = document.getElementById('boot-message')
@@ -30,7 +30,7 @@ async function checkBackendHealth(timeoutMs = 9000) {
 
 async function waitForBackendReady() {
   const startedAt = Date.now()
-  while (true) {
+  while (Date.now() - startedAt < 45000) {
     const isReady = await checkBackendHealth()
     if (isReady) return
     const elapsedSec = Math.floor((Date.now() - startedAt) / 1000)
@@ -43,6 +43,7 @@ async function waitForBackendReady() {
     }
     await new Promise((resolve) => setTimeout(resolve, 2500))
   }
+  setBootMessage('Server check timed out. Opening the workspace...')
 }
 
 const app = createApp(App)

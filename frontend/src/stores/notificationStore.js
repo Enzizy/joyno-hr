@@ -47,8 +47,12 @@ export const useNotificationStore = defineStore('notification', () => {
   }
 
   async function refreshUnreadCount() {
-    const data = await getNotifications({ limit: 1, offset: 0 })
-    unreadCount.value = Number(data.unread_count || 0)
+    try {
+      const data = await getNotifications({ limit: 1, offset: 0 })
+      unreadCount.value = Number(data.unread_count || 0)
+    } catch {
+      return unreadCount.value
+    }
     return unreadCount.value
   }
 

@@ -15,18 +15,19 @@ defineEmits(['update:modelValue'])
 
 <template>
   <div class="w-full">
-    <label v-if="label" class="mb-1 block text-sm font-medium text-gray-200">
+    <label v-if="label" :for="name || undefined" class="mb-1.5 block text-sm font-medium text-gray-200">
       {{ label }}
       <span v-if="required" class="text-red-500">*</span>
     </label>
     <input
       type="date"
       :name="name"
+      :id="name || undefined"
       :value="modelValue"
       :disabled="disabled"
       :min="min"
       :max="max"
-      class="date-input block w-full rounded-lg border bg-gray-900 px-4 py-3 text-base text-gray-100 placeholder:text-gray-500 shadow-sm focus:border-primary-500 focus:ring-primary-500"
+      class="date-input form-control"
       :class="error ? 'border-red-500' : 'border-gray-700'"
       @input="$emit('update:modelValue', $event.target.value)"
     />
@@ -39,13 +40,13 @@ defineEmits(['update:modelValue'])
   cursor: pointer;
   opacity: 0.9;
   filter: invert(1);
-  background-color: rgba(148, 163, 184, 0.2);
+  background-color: rgba(115, 115, 115, 0.22);
   border-radius: 6px;
   padding: 6px;
 }
 
 .date-input::-webkit-calendar-picker-indicator:hover {
-  background-color: rgba(148, 163, 184, 0.35);
+  background-color: rgba(163, 163, 163, 0.3);
 }
 
 .date-input:focus::-webkit-calendar-picker-indicator {
