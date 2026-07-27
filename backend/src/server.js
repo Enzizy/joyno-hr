@@ -16,6 +16,7 @@ const { cleanupCompletedTasks } = require('./services/taskCleanupService')
 const { escapeHtml, renderEmailBodyHtml } = require('./services/emailTemplateService')
 const { dispatchPreferredEmail, flushDailyEmailDigests } = require('./services/emailPreferenceService')
 const { countPhilippineWorkingDays } = require('./services/philippineHolidayService')
+const { buildLeavePayrollWorkbook } = require('./services/leavePayrollWorkbookService')
 const {
   getLeavePolicies,
   getLeavePolicySettings,
@@ -3219,13 +3220,17 @@ app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', '
   let sql = `
     SELECT
       lr.employee_id,
-      COALESCE(MAX(lr.employee_name), '') AS employee_name,
-      COALESCE(MAX(e.department), '') AS department,
-      COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.paid_days, 0) ELSE 0 END), 0)::numeric AS approved_paid_days,
-      COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.unpaid_days, 0) ELSE 0 END), 0)::numeric AS approved_unpaid_days,
-      COALESCE(SUM(CASE WHEN lr.status = 'approved' THEN COALESCE(lr.unpaid_days, 0) ELSE 0 END), 0)::numeric AS deduct_salary_days,
-      COUNT(*)::int AS request_count,
-      COUNT(CASE WHEN COALESCE(BTRIM(lr.reason), '') <> '' THEN 1 END)::int AS reasons_count
+      lr.employee_code,
+      lr.employee_name,
+      COALESCE(e.department, '') AS department,
+      lr.leave_type_id,
+      lr.leave_type_name,
+      lr.start_date,
+      lr.end_date,
+      lr.leave_pay_type,
+      lr.leave_days,
+      lr.paid_days,
+      lr.unpaid_days
     FROM leave_requests lr
     LEFT JOIN employees e ON lr.employee_id = e.id
     WHERE lr.status = 'approved'
@@ -3239,38 +3244,10 @@ app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', '
     params.push(to)
     sql += ` AND lr.start_date <= $${params.length}`
   }
-  sql += ' GROUP BY lr.employee_id ORDER BY employee_name ASC'
+  sql += ' ORDER BY lr.employee_name ASC, lr.start_date ASC, lr.id ASC'
   const { rows } = await db.query(sql, params)
 
-  const workbook = new ExcelJS.Workbook()
-  const sheet = workbook.addWorksheet('Payroll Leave Summary')
-  sheet.columns = [
-    { header: 'Employee', key: 'employee', width: 28 },
-    { header: 'Department', key: 'department', width: 18 },
-    { header: 'Approved paid days', key: 'approved_paid_days', width: 16 },
-    { header: 'Approved unpaid days', key: 'approved_unpaid_days', width: 18 },
-    { header: 'Deduct salary days', key: 'deduct_salary_days', width: 16 },
-    { header: 'Request count', key: 'request_count', width: 12 },
-    { header: 'Reasons count', key: 'reasons_count', width: 12 },
-  ]
-  const headerRow = sheet.getRow(1)
-  headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-  headerRow.alignment = { vertical: 'middle', horizontal: 'left' }
-  headerRow.eachCell((cell) => {
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } }
-  })
-
-  rows.forEach((r) => {
-    sheet.addRow({
-      employee: r.employee_name || r.employee_id || '',
-      department: r.department || '-',
-      approved_paid_days: Number(r.approved_paid_days || 0),
-      approved_unpaid_days: Number(r.approved_unpaid_days || 0),
-      deduct_salary_days: Number(r.deduct_salary_days || 0),
-      request_count: Number(r.request_count || 0),
-      reasons_count: Number(r.reasons_count || 0),
-    })
-  })
+  const workbook = buildLeavePayrollWorkbook(rows)
 
   const filename = `leave-payroll-summary-${from || 'from'}-to-${to || 'to'}.xlsx`
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')

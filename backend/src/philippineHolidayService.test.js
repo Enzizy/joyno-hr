@@ -46,3 +46,21 @@ test('does not exclude a special working holiday', async () => {
   )
   assert.equal(days, 1)
 })
+
+test('accepts PostgreSQL date values represented as Date objects', async () => {
+  const days = await countPhilippineWorkingDays(
+    holidayDb(),
+    new Date(2026, 6, 27),
+    new Date(2026, 6, 27)
+  )
+  assert.equal(days, 1)
+})
+
+test('accepts timestamp-form date strings returned by a database driver', async () => {
+  const days = await countPhilippineWorkingDays(
+    holidayDb(),
+    '2026-07-27T00:00:00.000Z',
+    '2026-07-27T00:00:00.000Z'
+  )
+  assert.equal(days, 1)
+})
