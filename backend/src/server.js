@@ -920,7 +920,7 @@ function requireRole(roles) {
   }
 }
 
-app.use(createLeaveInsightsRouter({ db, authRequired, requireRole }))
+app.use(createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog }))
 app.use(createLeaveChangeRequestRouter({
   db,
   authRequired,

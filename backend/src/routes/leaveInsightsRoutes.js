@@ -1,6 +1,7 @@
 const express = require('express')
 const { getLeavePolicySettings } = require('../services/leavePolicyService')
 const { getPhilippineHolidays, validDate } = require('../services/philippineHolidayService')
+const { validateHrCalendarEntry } = require('../services/hrCalendarEntryService')
 
 const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
 
@@ -8,8 +9,40 @@ function isManagement(user) {
   return MANAGEMENT_ROLES.includes(user?.role)
 }
 
-function createLeaveInsightsRouter({ db, authRequired, requireRole }) {
+function createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog }) {
   const router = express.Router()
+
+  async function loadHrCalendarEntry(id) {
+    const { rows } = await db.query(
+      `SELECT
+         entry.id AS record_id,
+         'hr-' || entry.id AS id,
+         'hr_entry' AS source,
+         entry.entry_type,
+         entry.employee_id,
+         CASE
+           WHEN entry.entry_type = 'leave'
+             THEN TRIM(CONCAT(employee.first_name, ' ', employee.last_name))
+           ELSE entry.title
+         END AS employee_name,
+         entry.title,
+         entry.leave_type_name,
+         entry.start_date,
+         entry.end_date,
+         CASE WHEN entry.entry_type = 'leave' THEN 'recorded' ELSE 'note' END AS status,
+         'not_applicable' AS leave_pay_type,
+         entry.description,
+         entry.is_employee_visible,
+         COALESCE(employee.department, 'Unassigned') AS department,
+         entry.created_at,
+         entry.updated_at
+       FROM hr_calendar_entries entry
+       LEFT JOIN employees employee ON employee.id = entry.employee_id
+       WHERE entry.id = $1`,
+      [id]
+    )
+    return rows[0] || null
+  }
 
   router.get('/api/philippine-holidays', authRequired, async (req, res) => {
     if (!validDate(req.query.from) || !validDate(req.query.to) || req.query.from > req.query.to) {
@@ -17,6 +50,147 @@ function createLeaveInsightsRouter({ db, authRequired, requireRole }) {
     }
     res.json(await getPhilippineHolidays(db, req.query.from, req.query.to))
   })
+
+  router.get('/api/hr-calendar-entries', authRequired, async (req, res) => {
+    if (!validDate(req.query.from) || !validDate(req.query.to) || req.query.from > req.query.to) {
+      return res.status(400).json({ message: 'Valid calendar date range is required' })
+    }
+
+    const params = [req.query.from, req.query.to]
+    const filters = ['entry.start_date <= $2', 'entry.end_date >= $1']
+    if (!isManagement(req.user)) {
+      params.push(req.user.employee_id || 0)
+      filters.push(`entry.employee_id = $${params.length}`)
+      filters.push('entry.is_employee_visible = TRUE')
+    } else if (req.query.department) {
+      params.push(String(req.query.department))
+      filters.push(`COALESCE(employee.department, 'Unassigned') = $${params.length}`)
+    }
+
+    const { rows } = await db.query(
+      `SELECT
+         entry.id AS record_id,
+         'hr-' || entry.id AS id,
+         'hr_entry' AS source,
+         entry.entry_type,
+         entry.employee_id,
+         CASE
+           WHEN entry.entry_type = 'leave'
+             THEN TRIM(CONCAT(employee.first_name, ' ', employee.last_name))
+           ELSE entry.title
+         END AS employee_name,
+         entry.title,
+         entry.leave_type_name,
+         entry.start_date,
+         entry.end_date,
+         CASE WHEN entry.entry_type = 'leave' THEN 'recorded' ELSE 'note' END AS status,
+         'not_applicable' AS leave_pay_type,
+         entry.description,
+         entry.is_employee_visible,
+         COALESCE(employee.department, 'Unassigned') AS department,
+         entry.created_at,
+         entry.updated_at
+       FROM hr_calendar_entries entry
+       LEFT JOIN employees employee ON employee.id = entry.employee_id
+       WHERE ${filters.join(' AND ')}
+       ORDER BY entry.start_date ASC, entry.created_at ASC`,
+      params
+    )
+    res.json(rows)
+  })
+
+  router.post(
+    '/api/hr-calendar-entries',
+    authRequired,
+    requireRole(MANAGEMENT_ROLES),
+    async (req, res) => {
+      const validated = validateHrCalendarEntry(req.body)
+      if (validated.error) return res.status(400).json({ message: validated.error })
+      const entry = validated.value
+
+      if (entry.employee_id) {
+        const employeeResult = await db.query('SELECT id FROM employees WHERE id = $1', [entry.employee_id])
+        if (!employeeResult.rows.length) return res.status(404).json({ message: 'Employee not found' })
+      }
+
+      const { rows } = await db.query(
+        `INSERT INTO hr_calendar_entries
+           (entry_type, employee_id, title, leave_type_name, start_date, end_date,
+            description, is_employee_visible, created_by, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+         RETURNING id`,
+        [
+          entry.entry_type,
+          entry.employee_id,
+          entry.title,
+          entry.leave_type_name,
+          entry.start_date,
+          entry.end_date,
+          entry.description,
+          entry.is_employee_visible,
+          req.user.id,
+        ]
+      )
+      const id = rows[0]?.id
+      await addAuditLog(req.user.id, 'create_hr_calendar_entry', 'hr_calendar_entries', id)
+      res.status(201).json(await loadHrCalendarEntry(id))
+    }
+  )
+
+  router.put(
+    '/api/hr-calendar-entries/:id',
+    authRequired,
+    requireRole(MANAGEMENT_ROLES),
+    async (req, res) => {
+      const id = Number(req.params.id)
+      if (!id) return res.status(400).json({ message: 'Invalid calendar entry id' })
+      const validated = validateHrCalendarEntry(req.body)
+      if (validated.error) return res.status(400).json({ message: validated.error })
+      const entry = validated.value
+
+      if (entry.employee_id) {
+        const employeeResult = await db.query('SELECT id FROM employees WHERE id = $1', [entry.employee_id])
+        if (!employeeResult.rows.length) return res.status(404).json({ message: 'Employee not found' })
+      }
+
+      const { rowCount } = await db.query(
+        `UPDATE hr_calendar_entries
+         SET entry_type = $1, employee_id = $2, title = $3, leave_type_name = $4,
+             start_date = $5, end_date = $6, description = $7,
+             is_employee_visible = $8, updated_by = $9, updated_at = NOW()
+         WHERE id = $10`,
+        [
+          entry.entry_type,
+          entry.employee_id,
+          entry.title,
+          entry.leave_type_name,
+          entry.start_date,
+          entry.end_date,
+          entry.description,
+          entry.is_employee_visible,
+          req.user.id,
+          id,
+        ]
+      )
+      if (!rowCount) return res.status(404).json({ message: 'Calendar entry not found' })
+      await addAuditLog(req.user.id, 'update_hr_calendar_entry', 'hr_calendar_entries', id)
+      res.json(await loadHrCalendarEntry(id))
+    }
+  )
+
+  router.delete(
+    '/api/hr-calendar-entries/:id',
+    authRequired,
+    requireRole(MANAGEMENT_ROLES),
+    async (req, res) => {
+      const id = Number(req.params.id)
+      if (!id) return res.status(400).json({ message: 'Invalid calendar entry id' })
+      const { rowCount } = await db.query('DELETE FROM hr_calendar_entries WHERE id = $1', [id])
+      if (!rowCount) return res.status(404).json({ message: 'Calendar entry not found' })
+      await addAuditLog(req.user.id, 'delete_hr_calendar_entry', 'hr_calendar_entries', id)
+      res.json({ ok: true })
+    }
+  )
 
   router.get('/api/leave-calendar', authRequired, async (req, res) => {
     const now = new Date()

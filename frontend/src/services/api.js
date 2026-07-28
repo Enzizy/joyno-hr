@@ -217,6 +217,32 @@ export async function getPhilippineHolidays(from, to) {
   }
 }
 
+export async function getHrCalendarEntries(options = {}) {
+  const params = new URLSearchParams()
+  if (options.from) params.set('from', options.from)
+  if (options.to) params.set('to', options.to)
+  if (options.department && options.department !== 'all') params.set('department', options.department)
+  return request(`/api/hr-calendar-entries?${params.toString()}`)
+}
+
+export async function createHrCalendarEntry(data) {
+  return request('/api/hr-calendar-entries', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function updateHrCalendarEntry(id, data) {
+  return request(`/api/hr-calendar-entries/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deleteHrCalendarEntry(id) {
+  return request(`/api/hr-calendar-entries/${id}`, { method: 'DELETE' })
+}
+
 export async function getLeaveAvailability(options = {}) {
   const params = new URLSearchParams()
   params.set('employee_id', options.employeeId)

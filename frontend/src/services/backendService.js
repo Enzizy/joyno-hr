@@ -93,6 +93,22 @@ export async function getLeaveTimeline(id) {
   return api.getLeaveTimeline(id)
 }
 
+export async function getHrCalendarEntries(options = {}) {
+  return api.getHrCalendarEntries(options)
+}
+
+export async function createHrCalendarEntry(data) {
+  return api.createHrCalendarEntry(data)
+}
+
+export async function updateHrCalendarEntry(id, data) {
+  return api.updateHrCalendarEntry(id, data)
+}
+
+export async function deleteHrCalendarEntry(id) {
+  return api.deleteHrCalendarEntry(id)
+}
+
 export async function getLeaveBalances() {
   return []
 }
