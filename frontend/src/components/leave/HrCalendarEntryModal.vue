@@ -183,10 +183,6 @@ watch(() => [props.show, props.entry], ([show]) => {
       <p v-if="form.entry_type === 'leave'" class="rounded-xl border border-emerald-700/30 bg-emerald-500/[0.06] p-3 text-xs leading-5 text-emerald-200">
         This creates an official approved leave. The system will apply leave policy rules, deduct eligible credits, include it in reports and payroll, and notify the employee.
       </p>
-      <p v-else class="rounded-xl border border-fuchsia-700/30 bg-fuchsia-500/[0.06] p-3 text-xs leading-5 text-fuchsia-200">
-        Calendar notes are informational only and do not affect leave credits or payroll.
-      </p>
-
       <p v-if="error" class="rounded-lg border border-red-700/40 bg-red-500/10 p-3 text-sm text-red-300">
         {{ error }}
       </p>

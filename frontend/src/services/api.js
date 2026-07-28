@@ -273,8 +273,27 @@ export async function updateLeaveRequest(id, data) {
   return request(`/api/leave-requests/${id}`, { method: 'PUT', body: isFormData ? data : JSON.stringify(data) })
 }
 
-export async function approveLeaveRequest(id) {
-  return request(`/api/leave-requests/${id}/approve`, { method: 'POST' })
+export async function approveLeaveRequest(id, options = {}) {
+  return request(`/api/leave-requests/${id}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(options),
+  })
+}
+
+export async function reviewLeaveAttachment(id, data) {
+  return request(`/api/leave-requests/${id}/attachment-review`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function uploadLeaveAttachmentReplacement(id, file) {
+  const body = new FormData()
+  body.append('attachment', file)
+  return request(`/api/leave-requests/${id}/attachment-replacement`, {
+    method: 'POST',
+    body,
+  })
 }
 
 export async function rejectLeaveRequest(id, comment) {

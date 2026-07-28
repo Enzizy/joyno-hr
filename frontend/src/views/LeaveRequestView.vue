@@ -3,7 +3,13 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
-import { createLeaveComment, getLeaveComments, getLeavePolicySettings, getLeaveTimeline } from '@/services/backendService'
+import {
+  createLeaveComment,
+  getLeaveComments,
+  getLeavePolicySettings,
+  getLeaveTimeline,
+  uploadLeaveAttachmentReplacement,
+} from '@/services/backendService'
 import { usePhilippineWorkingDays } from '@/composables/usePhilippineWorkingDays'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
@@ -13,8 +19,10 @@ import EmployeeLeaveRequestForm from '@/components/leave/EmployeeLeaveRequestFor
 import EmployeeLeaveRequestsList from '@/components/leave/EmployeeLeaveRequestsList.vue'
 import LeaveBalanceCards from '@/components/leave/LeaveBalanceCards.vue'
 import LeaveCalendarPanel from '@/components/leave/LeaveCalendarPanel.vue'
+import LeaveAttachmentPreviewModal from '@/components/leave/LeaveAttachmentPreviewModal.vue'
 import LeaveDetailsModal from '@/components/leave/LeaveDetailsModal.vue'
 import LeavePolicyDetails from '@/components/leave/LeavePolicyDetails.vue'
+import { useAttachmentPreview } from '@/composables/useAttachmentPreview'
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
 const leaveStore = useLeaveStore()
@@ -28,9 +36,15 @@ const attachment = ref(null)
 const cancelModal = ref(false)
 const cancellingRow = ref(null)
 const cancelling = ref(false)
-const attachmentModal = ref(false)
-const attachmentUrl = ref('')
-const attachmentLoading = ref(false)
+const {
+  close: closeAttachment,
+  isPdf: attachmentIsPdf,
+  loading: attachmentLoading,
+  open: openAttachment,
+  show: attachmentModal,
+  url: attachmentUrl,
+} = useAttachmentPreview(API_BASE)
+const attachmentUploading = ref(false)
 const editModal = ref(false)
 const editingRow = ref(null)
 const editSubmitting = ref(false)
@@ -376,29 +390,21 @@ async function confirmCancel() {
   }
 }
 
-async function openAttachment(row) {
-  if (!row?.id) return
-  attachmentLoading.value = true
-  attachmentModal.value = true
-  const token = localStorage.getItem('token')
+async function uploadReplacementDocument(file) {
+  if (!conversationRow.value || !file) return
+  attachmentUploading.value = true
   try {
-    const res = await fetch(`${API_BASE}/api/leave-requests/${row.id}/attachment`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!res.ok) throw new Error('Unable to load attachment')
-    const blob = await res.blob()
-    attachmentUrl.value = URL.createObjectURL(blob)
-  } catch {
-    attachmentUrl.value = ''
+    const updated = await uploadLeaveAttachmentReplacement(conversationRow.value.id, file)
+    const index = leaveStore.requests.findIndex((row) => Number(row.id) === Number(updated.id))
+    if (index !== -1) leaveStore.requests[index] = updated
+    conversationRow.value = updated
+    timeline.value = await getLeaveTimeline(updated.id).catch(() => timeline.value)
+    toast.success('Replacement document uploaded for review.')
+  } catch (error) {
+    toast.error(error.message || 'Unable to upload the replacement document.')
   } finally {
-    attachmentLoading.value = false
+    attachmentUploading.value = false
   }
-}
-
-function closeAttachment() {
-  attachmentModal.value = false
-  if (attachmentUrl.value) URL.revokeObjectURL(attachmentUrl.value)
-  attachmentUrl.value = ''
 }
 
 function onEditAttachmentChange(event) {
@@ -504,9 +510,11 @@ async function sendReply() {
     :comments-loading="commentsLoading"
     :timeline="timeline"
     :timeline-loading="timelineLoading"
+    :attachment-uploading="attachmentUploading"
     @close="conversationModal = false"
     @add-note="replyModal = true"
     @view-attachment="openAttachment"
+    @upload-document-replacement="uploadReplacementDocument"
   />
   <AppModal :show="replyModal" title="Reply to management" @close="replyModal = false">
     <label class="text-sm font-medium text-gray-200">Message<textarea v-model="reply" rows="4" maxlength="2000" class="form-control mt-1.5 resize-y" placeholder="Write your reply…" /><span class="mt-1 block text-right text-xs font-normal text-gray-500">{{ reply.length }} / 2000</span></label>
@@ -560,7 +568,7 @@ async function sendReply() {
         <label class="mb-1 block text-sm font-medium text-gray-200">Replace attachment (optional)</label>
         <input
           type="file"
-          accept="image/*"
+          accept="image/*,application/pdf"
           class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-gray-100 shadow-sm focus:border-primary-500 focus:ring-primary-500"
           @change="onEditAttachmentChange"
         />
@@ -572,18 +580,13 @@ async function sendReply() {
       </div>
     </form>
   </AppModal>
-  <AppModal :show="attachmentModal" title="Attachment" @close="closeAttachment">
-    <div v-if="attachmentLoading" class="flex items-center justify-center py-8">
-      <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
-    </div>
-    <div v-else>
-      <img v-if="attachmentUrl" :src="attachmentUrl" alt="Attachment" class="max-h-[70vh] w-full rounded-lg object-contain" />
-      <p v-else class="text-sm text-gray-400">Unable to load attachment.</p>
-    </div>
-    <template #footer>
-      <AppButton variant="secondary" @click="closeAttachment">Close</AppButton>
-    </template>
-  </AppModal>
+  <LeaveAttachmentPreviewModal
+    :show="attachmentModal"
+    :loading="attachmentLoading"
+    :url="attachmentUrl"
+    :is-pdf="attachmentIsPdf"
+    @close="closeAttachment"
+  />
 </template>
 
 

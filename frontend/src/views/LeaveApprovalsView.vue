@@ -18,12 +18,16 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import LeaveDetailsModal from '@/components/leave/LeaveDetailsModal.vue'
 import LeaveApprovalCards from '@/components/leave/LeaveApprovalCards.vue'
 import LeaveApprovalInbox from '@/components/leave/LeaveApprovalInbox.vue'
+import LeaveApprovalDecisionModals from '@/components/leave/LeaveApprovalDecisionModals.vue'
+import LeaveAttachmentPreviewModal from '@/components/leave/LeaveAttachmentPreviewModal.vue'
 import LeaveChangeRequestInbox from '@/components/leave/LeaveChangeRequestInbox.vue'
 import { usePersistentFilters } from '@/composables/usePersistentFilters'
 import { useLeaveApprovalInbox } from '@/composables/useLeaveApprovalInbox'
+import { useLeaveDocumentApproval } from '@/composables/useLeaveDocumentApproval'
+import { useAttachmentPreview } from '@/composables/useAttachmentPreview'
+import { getAttachmentReviewPresentation } from '@/utils/leaveAttachmentPresentation'
 import trashIcon from '@/assets/icons/trash.svg?raw'
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
-
 const leaveStore = useLeaveStore()
 const toast = useToastStore()
 const rejectModal = ref(false)
@@ -33,9 +37,14 @@ const rejecting = ref(false)
 const deleteModal = ref(false)
 const deletingRow = ref(null)
 const deleting = ref(false)
-const attachmentModal = ref(false)
-const attachmentUrl = ref('')
-const attachmentLoading = ref(false)
+const {
+  close: closeAttachment,
+  isPdf: attachmentIsPdf,
+  loading: attachmentLoading,
+  open: openAttachment,
+  show: attachmentModal,
+  url: attachmentUrl,
+} = useAttachmentPreview(API_BASE)
 const statusFilter = ref('all')
 const typeFilter = ref('all')
 const nameQuery = ref('')
@@ -55,9 +64,6 @@ const availability = ref(null)
 const availabilityLoading = ref(false)
 const timeline = ref([])
 const timelineLoading = ref(false)
-const approveModal = ref(false)
-const approvingRow = ref(null)
-const approving = ref(false)
 const { bulkApprove, bulkApproving, inboxLoading, inboxRows, loadInbox, resolveInboxRow } = useLeaveApprovalInbox(leaveStore, toast)
 const entitlementRows = computed(() =>
   leaveStore.leaveTypes.map((type) => ({
@@ -76,12 +82,10 @@ function formatDate(value) {
   if (Number.isNaN(date.getTime())) return String(value)
   return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
 }
-
 function formatRange(start, end) {
   if (!start && !end) return '-'
   return `${formatDate(start)} - ${formatDate(end)}`
 }
-
 onMounted(async () => {
   const [, employeeRows] = await Promise.all([
     leaveStore.fetchRequests(),
@@ -90,7 +94,6 @@ onMounted(async () => {
   ])
   employees.value = employeeRows
 })
-
 async function openDetails(row) {
   detailsRow.value = row
   detailsModal.value = true
@@ -118,7 +121,6 @@ async function openDetails(row) {
   timelineLoading.value = false
   availabilityLoading.value = false
 }
-
 function closeDetails() {
   detailsModal.value = false
   detailsRow.value = null
@@ -126,7 +128,6 @@ function closeDetails() {
   timeline.value = []
   availability.value = null
 }
-
 function calculateAvailability(row) {
   const employeeMap = new Map(employees.value.map((employee) => [Number(employee.id), employee]))
   const employee = employeeMap.get(Number(row.employee_id))
@@ -149,7 +150,6 @@ function calculateAvailability(row) {
     conflicts,
   }
 }
-
 async function saveNote() {
   if (!detailsRow.value || !note.value.trim()) return
   savingNote.value = true
@@ -165,7 +165,6 @@ async function saveNote() {
     savingNote.value = false
   }
 }
-
 const typeOptions = computed(() => {
   const set = new Set()
   leaveStore.requests.forEach((r) => {
@@ -174,7 +173,6 @@ const typeOptions = computed(() => {
   })
   return Array.from(set)
 })
-
 const filteredRequests = computed(() => {
   return leaveStore.requests.filter((r) => {
     if (statusFilter.value !== 'all' && r.status !== statusFilter.value) return false
@@ -194,12 +192,10 @@ const filteredRequests = computed(() => {
     return true
   })
 })
-
 const pagedRequests = computed(() => {
   const start = (page.value - 1) * pageSize.value
   return filteredRequests.value.slice(start, start + pageSize.value)
 })
-
 const canPrev = computed(() => page.value > 1)
 const canNext = computed(() => filteredRequests.value.length > page.value * pageSize.value)
 
@@ -209,7 +205,6 @@ function resetFilters() {
   nameQuery.value = ''
   page.value = 1
 }
-
 function changePageSize(event) {
   pageSize.value = Number(event.target.value) || 10
   page.value = 1
@@ -225,25 +220,35 @@ function prevPage() {
   page.value -= 1
 }
 
-function openApproveModal(row) {
-  approvingRow.value = row
-  approveModal.value = true
+const {
+  approveModal,
+  approving,
+  approvingRow,
+  approvalBlockedForReview,
+  approvalDocumentStatus,
+  approvalRequiresUnpaidConfirmation,
+  confirmApprove,
+  markDocumentValid: reviewDocumentAsValid,
+  openApproveModal,
+  openReplacementModal,
+  replacementDays,
+  replacementModal,
+  replacementReason,
+  requestDocumentReplacement: submitDocumentReplacementRequest,
+  reviewingDocument,
+  unpaidApprovalConfirmed,
+} = useLeaveDocumentApproval(leaveStore, toast, { loadInbox, closeDetails })
+
+function syncDetailsRow(updated) {
+  if (detailsRow.value && Number(detailsRow.value.id) === Number(updated.id)) detailsRow.value = updated
 }
 
-async function confirmApprove() {
-  if (!approvingRow.value) return
-  approving.value = true
-  try {
-    await leaveStore.approve(approvingRow.value.id)
-    toast.success('Leave request approved.')
-    approveModal.value = false
-    closeDetails()
-    await loadInbox()
-  } catch (err) {
-    toast.error(err.message || 'Failed to approve.')
-  } finally {
-    approving.value = false
-  }
+function markDocumentValid(row) {
+  return reviewDocumentAsValid(row, syncDetailsRow)
+}
+
+function requestDocumentReplacement() {
+  return submitDocumentReplacementRequest(syncDetailsRow)
 }
 
 function openRejectModal(row) {
@@ -280,31 +285,6 @@ function payBreakdown(row) {
   const unpaid = Number(row?.unpaid_days || 0)
   if (paid <= 0 && unpaid <= 0) return ''
   return `${paid.toFixed(0)} paid / ${unpaid.toFixed(0)} unpaid`
-}
-
-async function openAttachment(row) {
-  if (!row?.id) return
-  attachmentLoading.value = true
-  attachmentModal.value = true
-  const token = localStorage.getItem('token')
-  try {
-    const res = await fetch(`${API_BASE}/api/leave-requests/${row.id}/attachment`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    })
-    if (!res.ok) throw new Error('Unable to load attachment')
-    const blob = await res.blob()
-    attachmentUrl.value = URL.createObjectURL(blob)
-  } catch {
-    attachmentUrl.value = ''
-  } finally {
-    attachmentLoading.value = false
-  }
-}
-
-function closeAttachment() {
-  attachmentModal.value = false
-  if (attachmentUrl.value) URL.revokeObjectURL(attachmentUrl.value)
-  attachmentUrl.value = ''
 }
 
 async function confirmReject() {
@@ -444,14 +424,23 @@ async function confirmDelete() {
             <span v-else>-</span>
           </td>
           <td class="px-4 py-3 text-sm text-gray-300">
-            <button
-              v-if="row.attachment_data"
-              class="text-primary-300 hover:text-primary-200"
-              @click.stop="openAttachment(row)"
-            >
-              View
-            </button>
-            <span v-else>-</span>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                v-if="row.attachment_data"
+                class="text-primary-300 hover:text-primary-200"
+                @click.stop="openAttachment(row)"
+              >
+                View
+              </button>
+              <StatusBadge
+                v-if="row.attachment_review_status && row.attachment_review_status !== 'not_required'"
+                :status="getAttachmentReviewPresentation(row.attachment_review_status).label"
+                :variant="getAttachmentReviewPresentation(row.attachment_review_status).variant"
+              >
+                {{ getAttachmentReviewPresentation(row.attachment_review_status).label }}
+              </StatusBadge>
+              <span v-if="!row.attachment_data && row.attachment_review_status === 'not_required'">-</span>
+            </div>
           </td>
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
@@ -509,24 +498,39 @@ async function confirmDelete() {
       :timeline-loading="timelineLoading"
       :availability="availability"
       :availability-loading="availabilityLoading"
+      :document-reviewing="reviewingDocument"
       management
       @close="closeDetails"
       @add-note="noteModal = true"
       @approve="openApproveModal"
       @reject="openRejectModal"
       @view-attachment="openAttachment"
+      @mark-document-valid="markDocumentValid"
+      @request-document-replacement="openReplacementModal"
     />
 
-    <AppModal :show="approveModal" title="Approve leave request" @close="approveModal = false">
-      <div v-if="approvingRow" class="space-y-3 text-sm text-gray-300">
-        <p>Approve <strong class="text-gray-100">{{ approvingRow.employee_name }}</strong>'s leave for <strong class="text-gray-100">{{ formatRange(approvingRow.start_date, approvingRow.end_date) }}</strong>?</p>
-        <p class="rounded-lg border border-emerald-900/50 bg-emerald-950/20 p-3 text-xs text-emerald-300">This confirms the absence and applies any paid leave credit deduction.</p>
-      </div>
-      <template #footer>
-        <AppButton variant="secondary" @click="approveModal = false">Cancel</AppButton>
-        <AppButton variant="success" :loading="approving" @click="confirmApprove">Approve leave</AppButton>
-      </template>
-    </AppModal>
+    <LeaveApprovalDecisionModals
+      :approve-modal="approveModal"
+      :approving="approving"
+      :row="approvingRow"
+      :document-status="approvalDocumentStatus"
+      :blocked-for-review="approvalBlockedForReview"
+      :requires-unpaid-confirmation="approvalRequiresUnpaidConfirmation"
+      :unpaid-confirmed="unpaidApprovalConfirmed"
+      :replacement-modal="replacementModal"
+      :replacement-reason="replacementReason"
+      :replacement-days="replacementDays"
+      :reviewing-document="reviewingDocument"
+      @close-approve="approveModal = false"
+      @approve="confirmApprove"
+      @view-document="openAttachment"
+      @mark-document-valid="markDocumentValid"
+      @update:unpaid-confirmed="unpaidApprovalConfirmed = $event"
+      @close-replacement="replacementModal = false"
+      @update:replacement-reason="replacementReason = $event"
+      @update:replacement-days="replacementDays = $event"
+      @request-replacement="requestDocumentReplacement"
+    />
 
     <AppModal :show="noteModal" title="Add leave note" @close="noteModal = false">
       <textarea v-model="note" rows="4" class="form-control resize-y" placeholder="Write a note for the employee..." />
@@ -570,18 +574,13 @@ async function confirmDelete() {
         <AppButton variant="danger" :loading="deleting" @click="confirmDelete">Delete</AppButton>
       </template>
     </AppModal>
-    <AppModal :show="attachmentModal" title="Attachment" @close="closeAttachment">
-      <div v-if="attachmentLoading" class="flex items-center justify-center py-8">
-        <div class="h-8 w-8 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
-      </div>
-      <div v-else>
-        <img v-if="attachmentUrl" :src="attachmentUrl" alt="Attachment" class="max-h-[70vh] w-full rounded-lg object-contain" />
-        <p v-else class="text-sm text-gray-400">Unable to load attachment.</p>
-      </div>
-      <template #footer>
-        <AppButton variant="secondary" @click="closeAttachment">Close</AppButton>
-      </template>
-    </AppModal>
+    <LeaveAttachmentPreviewModal
+      :show="attachmentModal"
+      :loading="attachmentLoading"
+      :url="attachmentUrl"
+      :is-pdf="attachmentIsPdf"
+      @close="closeAttachment"
+    />
   </div>
 </template>
 

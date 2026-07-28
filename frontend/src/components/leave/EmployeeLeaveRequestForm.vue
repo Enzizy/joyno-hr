@@ -76,8 +76,8 @@ function formatPayType(value) {
 
       <label class="sm:col-span-2 text-sm font-medium text-gray-200">
         Attachment <span class="font-normal text-gray-500">(optional)</span>
-        <input type="file" accept="image/*" :disabled="disabled || submitting" class="form-control mt-1.5 file:mr-3 file:rounded-md file:border-0 file:bg-gray-800 file:px-3 file:py-1.5 file:text-xs file:text-gray-200" @change="$emit('attachment-change', $event)" />
-        <span class="mt-1 block text-xs font-normal text-gray-500">Images only, up to 1MB.</span>
+        <input type="file" accept="image/*,application/pdf" :disabled="disabled || submitting" class="form-control mt-1.5 file:mr-3 file:rounded-md file:border-0 file:bg-gray-800 file:px-3 file:py-1.5 file:text-xs file:text-gray-200" @change="$emit('attachment-change', $event)" />
+        <span class="mt-1 block text-xs font-normal text-gray-500">PDF, JPG, or PNG up to 3MB.</span>
       </label>
 
       <p v-if="missingDocument" class="rounded-lg border border-amber-800/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-300 sm:col-span-2">

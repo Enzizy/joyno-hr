@@ -76,8 +76,8 @@ export const useLeaveStore = defineStore('leave', () => {
     return data
   }
 
-  async function approve(id) {
-    const data = await approveLeaveRequest(id)
+  async function approve(id, options = {}) {
+    const data = await approveLeaveRequest(id, options)
     const idx = requests.value.findIndex((r) => r.id === id)
     if (idx !== -1) requests.value[idx] = data
     return data

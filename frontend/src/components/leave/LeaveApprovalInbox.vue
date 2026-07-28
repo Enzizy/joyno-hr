@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import { getAttachmentReviewPresentation } from '@/utils/leaveAttachmentPresentation'
 
 const props = defineProps({ rows: { type: Array, default: () => [] }, loading: Boolean, bulkLoading: Boolean })
 const emit = defineEmits(['approve', 'reject', 'details', 'bulk-approve'])
@@ -62,7 +64,7 @@ function urgencyClass(urgency) {
         <div class="flex items-start gap-3">
           <input v-if="row.low_risk" v-model="selectedIds" type="checkbox" :value="row.id" class="mt-1 rounded border-gray-700" :aria-label="`Select ${row.employee_name}`" />
           <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-2"><h3 class="font-semibold text-gray-100">{{ row.employee_name }}</h3><span class="rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" :class="urgencyClass(row.urgency)">{{ row.urgency }}</span><span v-if="row.low_risk" class="rounded-full bg-emerald-950/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">Low risk</span></div>
+            <div class="flex flex-wrap items-center gap-2"><h3 class="font-semibold text-gray-100">{{ row.employee_name }}</h3><span class="rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide" :class="urgencyClass(row.urgency)">{{ row.urgency }}</span><span v-if="row.low_risk" class="rounded-full bg-emerald-950/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">Low risk</span><StatusBadge v-if="row.attachment_review_status && row.attachment_review_status !== 'not_required'" :status="getAttachmentReviewPresentation(row.attachment_review_status).label" :variant="getAttachmentReviewPresentation(row.attachment_review_status).variant">{{ getAttachmentReviewPresentation(row.attachment_review_status).label }}</StatusBadge></div>
             <p class="mt-1 text-sm text-gray-400">{{ row.leave_type_name }} · {{ formatDate(row.start_date) }} – {{ formatDate(row.end_date) }}</p>
           </div>
         </div>

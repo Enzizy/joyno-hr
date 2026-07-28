@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
+import { useAuthStore } from '@/stores/authStore'
 import {
   getNotifications,
   markNotificationRead,
@@ -10,10 +11,12 @@ import {
   cleanupNotifications,
 } from '@/services/backendService'
 
-function resolveNotificationLink(item) {
+function resolveNotificationLink(item, role) {
   if (!item) return null
   if (item.target_table === 'tasks') return '/tasks'
-  if (item.target_table === 'leave_requests') return '/leave-approvals'
+  if (item.target_table === 'leave_requests') {
+    return role === 'employee' ? '/leave-request' : '/leave-approvals'
+  }
   if (item.target_table === 'clients') return '/clients'
   if (item.target_table === 'leads') return '/leads'
   if (item.target_table === 'automation_rules') return '/automation'
@@ -21,6 +24,7 @@ function resolveNotificationLink(item) {
 }
 
 export const useNotificationStore = defineStore('notification', () => {
+  const authStore = useAuthStore()
   const items = ref([])
   const total = ref(0)
   const unreadCount = ref(0)
@@ -29,7 +33,7 @@ export const useNotificationStore = defineStore('notification', () => {
   const topbarItems = computed(() =>
     items.value.slice(0, 8).map((item) => ({
       ...item,
-      link: resolveNotificationLink(item),
+      link: resolveNotificationLink(item, authStore.role),
     }))
   )
 

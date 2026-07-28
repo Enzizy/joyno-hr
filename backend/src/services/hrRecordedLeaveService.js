@@ -1,3 +1,5 @@
+const { initialReviewStatus } = require('./leaveAttachmentReviewService')
+
 function httpError(status, message) {
   const error = new Error(message)
   error.status = status
@@ -62,13 +64,21 @@ async function createHrRecordedLeave({
     const source = user.role === 'hr' ? 'hr_recorded' : 'admin_recorded'
     const reason = entry.description
       || `Official leave recorded directly by ${String(user.role || 'management').toUpperCase()}.`
+    const attachmentReviewStatus = initialReviewStatus(
+      effectiveLeaveType,
+      false,
+      entry.supporting_document_received
+    )
     const insertResult = await tx.query(
       `INSERT INTO leave_requests
        (employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date,
         reason, status, approved_by, approved_by_name, approved_by_role, decided_at,
         leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted,
-        submission_source, entered_by, offline_document_received)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9,$10,$11,NOW(),$12,$13,$14,$15,$16,$17,$9,$18)
+        submission_source, entered_by, offline_document_received,
+        attachment_review_status, attachment_reviewed_by, attachment_reviewed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9,$10,$11,NOW(),$12,$13,$14,$15,$16,$17,$9,$18,$19,
+               CASE WHEN $19 = 'valid' THEN $9 ELSE NULL END,
+               CASE WHEN $19 = 'valid' THEN NOW() ELSE NULL END)
        RETURNING id`,
       [
         employee.id,
@@ -89,6 +99,7 @@ async function createHrRecordedLeave({
         compensation.creditsDeducted,
         source,
         entry.supporting_document_received,
+        attachmentReviewStatus,
       ]
     )
     const id = insertResult.rows[0]?.id

@@ -19,6 +19,13 @@ const { countPhilippineWorkingDays } = require('./services/philippineHolidayServ
 const { buildLeavePayrollWorkbook } = require('./services/leavePayrollWorkbookService')
 const { createHrRecordedLeave } = require('./services/hrRecordedLeaveService')
 const {
+  approvalDocumentDecision,
+  claimAttachmentDeadlineReminders,
+  expireAttachmentDeadlines,
+  initialReviewStatus,
+  unpaidCompensation,
+} = require('./services/leaveAttachmentReviewService')
+const {
   getLeavePolicies,
   getLeavePolicySettings,
   resolveEffectiveLeaveType,
@@ -28,6 +35,7 @@ const {
 } = require('./services/leavePolicyService')
 const { createLeaveInsightsRouter } = require('./routes/leaveInsightsRoutes')
 const { createLeaveChangeRequestRouter } = require('./routes/leaveChangeRequestRoutes')
+const { createLeaveAttachmentReviewRouter } = require('./routes/leaveAttachmentReviewRoutes')
 const { createWorkspaceRouter } = require('./routes/workspaceRoutes')
 const {
   LEAD_STATUSES,
@@ -63,7 +71,7 @@ const LEAD_COLUMNS =
 const CLIENT_COLUMNS =
   'id, lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status, created_at'
 const LEAVE_REQUEST_COLUMNS =
-  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, submission_source, entered_by, offline_document_received, created_at, decided_at'
+  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, attachment_review_status, attachment_review_note, attachment_reviewed_by, attachment_reviewed_at, attachment_resubmit_due_at, attachment_replacement_requested_at, attachment_version, attachment_uploaded_at, submission_source, entered_by, offline_document_received, created_at, decided_at'
 const NOTIFICATION_COLUMNS =
   'id, user_id, type, title, message, target_table, target_id, is_read, created_at'
 
@@ -374,10 +382,11 @@ async function sendLeaveCommentEmail({ leaveRequestId, recipient, isEmployeeReci
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 },
+  limits: { fileSize: 3 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'application/pdf') return cb(null, true)
     if (file.mimetype && file.mimetype.startsWith('image/')) return cb(null, true)
-    return cb(new Error('Only image attachments are allowed'))
+    return cb(new Error('Only PDF or image attachments are allowed'))
   },
 })
 
@@ -402,7 +411,7 @@ function uploadAttachment(req, res, next) {
   return upload.single('attachment')(req, res, (err) => {
     if (!err) return next()
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ message: 'Attachment too large (max 1MB)' })
+      return res.status(413).json({ message: 'Attachment too large (max 3MB)' })
     }
     return res.status(400).json({ message: err.message || 'Invalid attachment' })
   })
@@ -475,6 +484,76 @@ async function cleanupOldNotifications(days = 90) {
   )
 }
 
+async function processAttachmentReviewDeadlines() {
+  const [expired, reminders] = await Promise.all([
+    expireAttachmentDeadlines(db),
+    claimAttachmentDeadlineReminders(db),
+  ])
+
+  for (const leave of reminders) {
+    const { rows } = await db.query(
+      'SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1',
+      [leave.employee_id]
+    )
+    const owner = rows[0]
+    await createNotification({
+      userId: owner?.id,
+      type: 'leave_document_deadline_reminder',
+      title: 'Leave Document Due Soon',
+      message: `Your replacement document for ${leave.leave_type_name} is due within 24 hours.`,
+      targetTable: 'leave_requests',
+      targetId: leave.id,
+    })
+    const contact = await getUserContactById(owner?.id)
+    sendEmailNotification({
+      to: contact?.email,
+      subject: `Leave Document Due Soon: ${leave.leave_type_name}`,
+      text: [
+        `Hi ${contact?.name || 'Employee'},`,
+        '',
+        `Your replacement document for ${leave.leave_type_name} is due within 24 hours.`,
+        `Deadline: ${new Date(leave.attachment_resubmit_due_at).toLocaleString('en-PH')}`,
+        PRIMARY_FRONTEND_ORIGIN ? `Upload it here: ${PRIMARY_FRONTEND_ORIGIN}/leave-request` : '',
+      ].filter(Boolean).join('\n'),
+    })
+  }
+
+  for (const leave of expired) {
+    const { rows } = await db.query(
+      'SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1',
+      [leave.employee_id]
+    )
+    const owner = rows[0]
+    const message = `The replacement document deadline for ${leave.leave_type_name} was missed. The request is now eligible for unpaid approval only.`
+    await createNotification({
+      userId: owner?.id,
+      type: 'leave_document_deadline_missed',
+      title: 'Leave Document Deadline Missed',
+      message,
+      targetTable: 'leave_requests',
+      targetId: leave.id,
+    })
+    await notifyRoles(['admin', 'hr', 'ceo'], {
+      type: 'leave_document_deadline_missed',
+      title: 'Leave Document Deadline Missed',
+      message: `${leave.employee_name}: ${message}`,
+      targetTable: 'leave_requests',
+      targetId: leave.id,
+    })
+    const contact = await getUserContactById(owner?.id)
+    sendEmailNotification({
+      to: contact?.email,
+      subject: `Leave Document Deadline Missed: ${leave.leave_type_name}`,
+      text: [
+        `Hi ${contact?.name || 'Employee'},`,
+        '',
+        message,
+        PRIMARY_FRONTEND_ORIGIN ? `View your request: ${PRIMARY_FRONTEND_ORIGIN}/leave-request` : '',
+      ].filter(Boolean).join('\n'),
+    })
+  }
+}
+
 function taskTypeSql(alias = 't') {
   return `COALESCE(NULLIF(${alias}.task_type, ''), CASE WHEN ${alias}.client_id IS NULL AND ${alias}.service_id IS NULL THEN 'meeting' ELSE 'task' END)`
 }
@@ -494,6 +573,7 @@ async function completePastDueMeetings() {
 
 async function runApprovalSlaEscalations() {
   await completePastDueMeetings()
+  await processAttachmentReviewDeadlines()
   const pendingLeaveResult = await db.query(
     `SELECT id, employee_name, created_at
      FROM leave_requests
@@ -992,6 +1072,20 @@ app.use(createLeaveInsightsRouter({
   requireRole,
   addAuditLog,
   createOfficialHrRecordedLeave,
+}))
+app.use(createLeaveAttachmentReviewRouter({
+  db,
+  authRequired,
+  requireRole,
+  uploadAttachment,
+  resolveLeaveType,
+  createNotification,
+  notifyRoles,
+  getUserContactById,
+  sendEmailNotification,
+  addAuditLog,
+  leaveRequestColumns: LEAVE_REQUEST_COLUMNS,
+  frontendOrigin: PRIMARY_FRONTEND_ORIGIN,
 }))
 app.use(createLeaveChangeRequestRouter({
   db,
@@ -2818,11 +2912,16 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     Boolean(attachmentData)
   )
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
+  const attachmentReviewStatus = initialReviewStatus(leaveType, Boolean(attachmentData))
 
   const { rows } = await db.query(
     `INSERT INTO leave_requests
-     (employee_id, employee_code, employee_name, leave_type_name, start_date, end_date, reason, status, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13,$14,$15)
+     (employee_id, employee_code, employee_name, leave_type_name, start_date, end_date, reason,
+      status, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted,
+      attachment_name, attachment_type, attachment_data, attachment_review_status,
+      attachment_version, attachment_uploaded_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+             CASE WHEN $17 > 0 THEN NOW() ELSE NULL END)
      RETURNING id`,
     [
       user.employee_id,
@@ -2840,14 +2939,29 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
       attachmentName,
       attachmentType,
       attachmentData,
+      attachmentReviewStatus,
+      attachmentData ? 1 : 0,
     ]
   )
 
   const createdId = rows[0]?.id
+  if (attachmentData) {
+    await db.query(
+      `INSERT INTO leave_attachment_review_events
+         (leave_request_id, attachment_version, action, actor_user_id, actor_role, actor_name)
+       VALUES ($1,1,'initial_uploaded',$2,$3,$4)`,
+      [createdId, req.user.id, req.user.role, req.user.email]
+    )
+  }
+  const documentReviewMessage = attachmentReviewStatus === 'pending_review'
+    ? ' The supporting document is awaiting HR validation.'
+    : attachmentReviewStatus === 'missing'
+      ? ' A supporting document is still required for paid leave.'
+      : ''
   await notifyRoles(['admin', 'hr', 'ceo'], {
     type: 'leave_pending',
     title: 'New Leave Request',
-    message: `${emp.first_name} ${emp.last_name} submitted a ${compensation.leavePayType} leave request.`,
+    message: `${emp.first_name} ${emp.last_name} submitted a leave request.${documentReviewMessage}`,
     targetTable: 'leave_requests',
     targetId: createdId,
   })
@@ -2870,9 +2984,14 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
         `Employee: ${emp.first_name} ${emp.last_name}\n` +
         `Type: ${leaveType.name}\n` +
         `Dates: ${formatEmailDateRange(start_date, end_date)}\n` +
-        `Pay: ${String(compensation.leavePayType || '').toUpperCase()}\n` +
+        `Estimated pay: ${String(compensation.leavePayType || '').toUpperCase()}\n` +
         `Paid days: ${compensation.paidDays}\n` +
         `Unpaid days: ${compensation.unpaidDays}\n` +
+        (attachmentReviewStatus === 'pending_review'
+          ? `Document: Pending HR validation; estimated pay may change.\n`
+          : attachmentReviewStatus === 'missing'
+            ? `Document: Missing; paid approval is unavailable without a valid document.\n`
+            : '') +
         `Reason: ${reason}\n` +
         (leaveApprovalsUrl ? `\nOpen leave approvals: ${leaveApprovalsUrl}\n` : '\n') +
         `\n- ${MAIL_APP_NAME}`,
@@ -2949,13 +3068,27 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     Boolean(attachmentData)
   )
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
+  const sameLeaveType = String(request.leave_type_name || '').toLowerCase() === String(leaveType.name || '').toLowerCase()
+  const attachmentReviewStatus = req.file || !sameLeaveType
+    ? initialReviewStatus(leaveType, Boolean(attachmentData))
+    : request.attachment_review_status
+  const attachmentVersion = Number(request.attachment_version || 0) + (req.file ? 1 : 0)
 
   await db.query(
     `UPDATE leave_requests
      SET leave_type_name=$1, start_date=$2, end_date=$3, reason=$4,
          leave_pay_type=$5, leave_days=$6, paid_days=$7, unpaid_days=$8, credits_deducted=$9,
-         attachment_name=$10, attachment_type=$11, attachment_data=$12
-     WHERE id=$13`,
+         attachment_name=$10, attachment_type=$11, attachment_data=$12,
+         attachment_review_status=$13,
+         attachment_review_note=CASE WHEN $13 IN ('not_required','missing','pending_review') THEN NULL ELSE attachment_review_note END,
+         attachment_reviewed_by=CASE WHEN $13 IN ('not_required','missing','pending_review') THEN NULL ELSE attachment_reviewed_by END,
+         attachment_reviewed_at=CASE WHEN $13 IN ('not_required','missing','pending_review') THEN NULL ELSE attachment_reviewed_at END,
+         attachment_resubmit_due_at=CASE WHEN $13 IN ('not_required','missing','pending_review') THEN NULL ELSE attachment_resubmit_due_at END,
+         attachment_replacement_requested_at=CASE WHEN $13 IN ('not_required','missing','pending_review') THEN NULL ELSE attachment_replacement_requested_at END,
+         attachment_reminder_sent_at=CASE WHEN $13 IN ('not_required','missing','pending_review') THEN NULL ELSE attachment_reminder_sent_at END,
+         attachment_version=$14,
+         attachment_uploaded_at=CASE WHEN $15 THEN NOW() ELSE attachment_uploaded_at END
+     WHERE id=$16`,
     [
       leaveType.name,
       start_date,
@@ -2969,10 +3102,21 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
       attachmentName,
       attachmentType,
       attachmentData,
+      attachmentReviewStatus,
+      attachmentVersion,
+      Boolean(req.file),
       id,
     ]
   )
 
+  if (req.file) {
+    await db.query(
+      `INSERT INTO leave_attachment_review_events
+         (leave_request_id, attachment_version, action, actor_user_id, actor_role, actor_name)
+       VALUES ($1,$2,'replacement_uploaded',$3,$4,$5)`,
+      [id, attachmentVersion, req.user.id, req.user.role, req.user.email]
+    )
+  }
   await addAuditLog(req.user.id, 'update_leave_request', 'leave_requests', id)
   const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   res.json({ ...(updated.rows[0] || { id }), compensation_message: compensation.note || null })
@@ -2990,17 +3134,28 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
 
   const leaveType = await resolveLeaveType(leaveRequest.leave_type_name)
   if (!leaveType) return res.status(400).json({ message: 'Invalid leave type on request' })
+  const documentDecision = approvalDocumentDecision(leaveType, leaveRequest, req.body || {})
+  if (!documentDecision.allowed) {
+    return res.status(409).json({
+      message: documentDecision.message,
+      code: documentDecision.code,
+      document_status: documentDecision.status,
+      replacement_due_at: leaveRequest.attachment_resubmit_due_at,
+    })
+  }
   await resetEmployeeLeaveCreditsIfNeeded(leaveRequest.employee_id)
   const employeeResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [leaveRequest.employee_id])
   const employee = employeeResult.rows[0]
   if (!employee) return res.status(404).json({ message: 'Employee not found' })
-  const compensation = await resolveLeaveCompensation(
-    employee,
-    leaveType,
-    leaveRequest.start_date,
-    leaveRequest.end_date,
-    Boolean(leaveRequest.attachment_data)
-  )
+  const compensation = documentDecision.forceUnpaid
+    ? unpaidCompensation(leaveRequest)
+    : await resolveLeaveCompensation(
+      employee,
+      leaveType,
+      leaveRequest.start_date,
+      leaveRequest.end_date,
+      Boolean(leaveRequest.attachment_data)
+    )
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 
   await db.query(

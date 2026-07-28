@@ -3,8 +3,10 @@ import { computed, ref, watch } from 'vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
+import LeaveAttachmentReviewCard from '@/components/leave/LeaveAttachmentReviewCard.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { getLeaveTypePresentation } from '@/utils/leavePresentation'
+import { requiresAttachmentReview } from '@/utils/leaveAttachmentPresentation'
 
 const props = defineProps({
   show: Boolean,
@@ -16,9 +18,20 @@ const props = defineProps({
   availability: { type: Object, default: null },
   availabilityLoading: Boolean,
   management: Boolean,
+  attachmentUploading: Boolean,
+  documentReviewing: Boolean,
 })
 
-defineEmits(['close', 'add-note', 'approve', 'reject', 'view-attachment'])
+defineEmits([
+  'close',
+  'add-note',
+  'approve',
+  'reject',
+  'view-attachment',
+  'mark-document-valid',
+  'request-document-replacement',
+  'upload-document-replacement',
+])
 
 const activeTab = ref('overview')
 watch(() => props.row?.id, () => { activeTab.value = 'overview' })
@@ -55,6 +68,7 @@ function eventTone(type) {
   if (type === 'approved') return 'border-emerald-500 bg-emerald-500/15 text-emerald-300'
   if (type === 'rejected') return 'border-red-500 bg-red-500/15 text-red-300'
   if (type === 'comment') return 'border-blue-500 bg-blue-500/15 text-blue-300'
+  if (type === 'document') return 'border-violet-500 bg-violet-500/15 text-violet-300'
   return 'border-primary-500 bg-primary-500/15 text-primary-300'
 }
 </script>
@@ -97,7 +111,18 @@ function eventTone(type) {
           </div>
         </div>
 
-        <AppButton v-if="row.attachment_data" size="sm" variant="secondary" @click="$emit('view-attachment', row)">View attachment</AppButton>
+        <LeaveAttachmentReviewCard
+          v-if="requiresAttachmentReview(row)"
+          :row="row"
+          :management="management"
+          :uploading="attachmentUploading"
+          :review-loading="documentReviewing"
+          @view="$emit('view-attachment', $event)"
+          @mark-valid="$emit('mark-document-valid', $event)"
+          @request-replacement="$emit('request-document-replacement', $event)"
+          @upload="$emit('upload-document-replacement', $event)"
+        />
+        <AppButton v-else-if="row.attachment_data" size="sm" variant="secondary" @click="$emit('view-attachment', row)">View attachment</AppButton>
       </div>
 
       <div v-else class="space-y-4">

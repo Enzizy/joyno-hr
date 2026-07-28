@@ -314,7 +314,7 @@ function createLeaveInsightsRouter({
     const ownsRequest = Number(leave.employee_id) === Number(req.user.employee_id)
     if (!ownsRequest && !isManagement(req.user)) return res.status(403).json({ message: 'Forbidden' })
 
-    const [commentResult, changeResult] = await Promise.all([
+    const [commentResult, changeResult, documentResult] = await Promise.all([
       db.query(
         `SELECT c.id, c.message, c.author_role, c.created_at, u.email,
                 e.first_name, e.last_name
@@ -330,6 +330,13 @@ function createLeaveInsightsRouter({
                 review_comment, reviewed_by_name, reviewed_by_role,
                 created_at, reviewed_at
          FROM leave_change_requests
+         WHERE leave_request_id = $1 ORDER BY created_at ASC`,
+        [id]
+      ),
+      db.query(
+        `SELECT id, attachment_version, action, note, response_days, due_at,
+                actor_role, actor_name, created_at
+         FROM leave_attachment_review_events
          WHERE leave_request_id = $1 ORDER BY created_at ASC`,
         [id]
       ),
@@ -353,6 +360,27 @@ function createLeaveInsightsRouter({
         actor_role: comment.author_role,
         message: comment.message,
         created_at: comment.created_at,
+      })
+    }
+    const documentTitles = {
+      initial_uploaded: 'Supporting document uploaded',
+      mark_valid: 'Supporting document accepted',
+      request_replacement: 'Replacement document requested',
+      replacement_uploaded: 'Replacement document uploaded',
+      deadline_missed: 'Document replacement deadline missed',
+    }
+    for (const documentEvent of documentResult.rows) {
+      const deadline = documentEvent.due_at
+        ? `Deadline: ${new Date(documentEvent.due_at).toLocaleString('en-PH')}`
+        : ''
+      events.push({
+        id: `document-${documentEvent.id}`,
+        type: 'document',
+        title: documentTitles[documentEvent.action] || 'Supporting document updated',
+        actor: documentEvent.actor_name || 'Employee',
+        actor_role: documentEvent.actor_role,
+        message: [documentEvent.note, deadline].filter(Boolean).join('\n'),
+        created_at: documentEvent.created_at,
       })
     }
     if (['approved', 'rejected', 'cancelled'].includes(leave.status)) {

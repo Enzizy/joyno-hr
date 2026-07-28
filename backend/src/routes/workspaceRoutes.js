@@ -194,7 +194,8 @@ function createWorkspaceRouter({ db, authRequired, requireRole }) {
       const { rows } = await db.query(
         `SELECT lr.id, lr.employee_id, lr.employee_name, lr.leave_type_name, lr.start_date, lr.end_date,
                 lr.reason, lr.leave_pay_type, lr.leave_days, lr.paid_days, lr.unpaid_days,
-                lr.attachment_name, lr.created_at, e.department, e.leave_credits,
+                lr.attachment_name, lr.attachment_review_status, lr.attachment_resubmit_due_at,
+                lr.created_at, e.department, e.leave_credits,
                 GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - lr.created_at)) / 3600))::int AS filing_age_hours,
                 (lr.start_date - CURRENT_DATE)::int AS days_until_start,
                 COALESCE((
@@ -218,10 +219,14 @@ function createWorkspaceRouter({ db, authRequired, requireRole }) {
         const urgency = overdue || age >= 48 ? 'critical' : age >= 24 || Number(row.days_until_start) <= 2 ? 'high' : 'normal'
         const enoughCredits = String(row.leave_pay_type || '').toLowerCase() === 'unpaid'
           || Number(row.leave_credits || 0) >= Number(row.paid_days || row.leave_days || 0)
+        const documentReady = ['not_required', 'valid'].includes(row.attachment_review_status)
         return {
           ...row,
           urgency,
-          low_risk: urgency === 'normal' && Number(row.overlapping_count || 0) === 0 && enoughCredits,
+          low_risk: urgency === 'normal'
+            && Number(row.overlapping_count || 0) === 0
+            && enoughCredits
+            && documentReady,
         }
       }))
     }

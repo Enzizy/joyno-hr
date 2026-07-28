@@ -129,8 +129,16 @@ export async function updateLeaveRequest(id, data) {
   return api.updateLeaveRequest(id, data)
 }
 
-export async function approveLeaveRequest(id) {
-  return api.approveLeaveRequest(id)
+export async function approveLeaveRequest(id, options = {}) {
+  return api.approveLeaveRequest(id, options)
+}
+
+export async function reviewLeaveAttachment(id, data) {
+  return api.reviewLeaveAttachment(id, data)
+}
+
+export async function uploadLeaveAttachmentReplacement(id, file) {
+  return api.uploadLeaveAttachmentReplacement(id, file)
 }
 
 export async function rejectLeaveRequest(id, comment) {
