@@ -140,7 +140,6 @@ function normalizeCalendarEvents(rows) {
 
 function eventTone(event) {
   if (event.entry_type === 'note') return 'border-fuchsia-600/40 bg-fuchsia-500/15 text-fuchsia-200'
-  if (event.source === 'hr_entry') return 'border-violet-600/40 bg-violet-500/15 text-violet-200'
   if (event.status === 'pending') return 'border-amber-600/40 bg-amber-500/15 text-amber-200'
   if (String(event.leave_pay_type).toLowerCase() === 'unpaid') return 'border-blue-600/40 bg-blue-500/15 text-blue-200'
   return 'border-emerald-600/40 bg-emerald-500/15 text-emerald-200'
@@ -231,8 +230,12 @@ async function saveEntry(payload) {
       await updateHrCalendarEntry(editingEntry.value.record_id, payload)
       toast.success('Calendar entry updated.')
     } else {
-      await createHrCalendarEntry(payload)
-      toast.success('Calendar entry added.')
+      const result = await createHrCalendarEntry(payload)
+      toast.success(
+        payload.entry_type === 'leave'
+          ? result?.compensation_message || 'Official leave recorded and approved.'
+          : 'Calendar note added.'
+      )
     }
     entryModalOpen.value = false
     editingEntry.value = null
@@ -292,7 +295,7 @@ onMounted(async () => {
       <div v-if="showFilters && !compact" class="flex flex-col gap-3 sm:flex-row sm:items-end">
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="text-xs text-gray-400">Department<select v-model="departmentFilter" class="form-control mt-1 min-w-44"><option value="all">All departments</option><option v-for="department in departments" :key="department" :value="department">{{ department }}</option></select></label>
-          <label class="text-xs text-gray-400">Status<select v-model="statusFilter" class="form-control mt-1 min-w-36"><option value="all">All statuses</option><option value="approved">Approved</option><option value="pending">Pending</option><option value="recorded">HR-recorded</option><option value="note">Calendar notes</option></select></label>
+          <label class="text-xs text-gray-400">Status<select v-model="statusFilter" class="form-control mt-1 min-w-36"><option value="all">All statuses</option><option value="approved">Approved</option><option value="pending">Pending</option><option value="note">Calendar notes</option></select></label>
         </div>
         <AppButton v-if="canManageCalendar" class="whitespace-nowrap" @click="openCreateEntry">
           <span class="text-base leading-none">+</span> Add entry
@@ -339,7 +342,6 @@ onMounted(async () => {
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-emerald-500" />Approved paid</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-blue-500" />Approved unpaid</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-amber-500" />Pending</span>
-      <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-violet-500" />HR-recorded leave</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-fuchsia-500" />HR calendar note</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rotate-45 bg-rose-500" />Regular holiday</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rotate-45 bg-amber-500" />Special non-working day</span>
@@ -364,9 +366,6 @@ onMounted(async () => {
           </StatusBadge>
         </div>
       </div>
-      <p v-if="selectedEvent.source === 'hr_entry'" class="rounded-xl border border-violet-700/30 bg-violet-500/[0.07] p-3 text-xs leading-5 text-violet-200">
-        Recorded directly by HR for calendar tracking. It does not change leave credits or payroll.
-      </p>
       <dl class="grid gap-4 sm:grid-cols-2">
         <div v-if="selectedEvent.entry_type !== 'note'">
           <dt class="text-xs text-gray-500">Leave type</dt>

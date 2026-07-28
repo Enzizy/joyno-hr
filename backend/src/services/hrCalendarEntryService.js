@@ -15,6 +15,7 @@ function validateHrCalendarEntry(input = {}) {
   const employeeId = Number.isInteger(parsedEmployeeId) && parsedEmployeeId > 0 ? parsedEmployeeId : null
   const leaveTypeName = cleanText(input.leave_type_name, 120)
   const noteTitle = cleanText(input.title, 160)
+  const supportingDocumentReceived = input.supporting_document_received === true
 
   if (!ENTRY_TYPES.has(entryType)) {
     return { error: 'Entry type must be leave or note' }
@@ -23,10 +24,10 @@ function validateHrCalendarEntry(input = {}) {
     return { error: 'A valid calendar date range is required' }
   }
   if (entryType === 'leave' && !employeeId) {
-    return { error: 'Employee is required for an HR-recorded leave' }
+    return { error: 'Employee is required for an official leave' }
   }
   if (entryType === 'leave' && !leaveTypeName) {
-    return { error: 'Leave type is required for an HR-recorded leave' }
+    return { error: 'Leave type is required for an official leave' }
   }
   if (entryType === 'note' && !noteTitle) {
     return { error: 'Title is required for a calendar note' }
@@ -36,12 +37,13 @@ function validateHrCalendarEntry(input = {}) {
     value: {
       entry_type: entryType,
       employee_id: employeeId,
-      title: entryType === 'note' ? noteTitle : 'HR-recorded leave',
+      title: entryType === 'note' ? noteTitle : 'Official leave',
       leave_type_name: entryType === 'leave' ? leaveTypeName : null,
       start_date: startDate,
       end_date: endDate,
       description: description || null,
-      is_employee_visible: entryType === 'leave' && input.is_employee_visible === true,
+      is_employee_visible: entryType === 'leave',
+      supporting_document_received: entryType === 'leave' && supportingDocumentReceived,
     },
   }
 }

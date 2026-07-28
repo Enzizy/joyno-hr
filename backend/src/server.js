@@ -17,6 +17,7 @@ const { escapeHtml, renderEmailBodyHtml } = require('./services/emailTemplateSer
 const { dispatchPreferredEmail, flushDailyEmailDigests } = require('./services/emailPreferenceService')
 const { countPhilippineWorkingDays } = require('./services/philippineHolidayService')
 const { buildLeavePayrollWorkbook } = require('./services/leavePayrollWorkbookService')
+const { createHrRecordedLeave } = require('./services/hrRecordedLeaveService')
 const {
   getLeavePolicies,
   getLeavePolicySettings,
@@ -62,7 +63,7 @@ const LEAD_COLUMNS =
 const CLIENT_COLUMNS =
   'id, lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status, created_at'
 const LEAVE_REQUEST_COLUMNS =
-  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, created_at, decided_at'
+  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, submission_source, entered_by, offline_document_received, created_at, decided_at'
 const NOTIFICATION_COLUMNS =
   'id, user_id, type, title, message, target_table, target_id, is_read, created_at'
 
@@ -733,8 +734,8 @@ async function resetAllEmployeeLeaveCreditsIfNeeded() {
   )
 }
 
-async function calculateLeaveDays(startDate, endDate) {
-  return countPhilippineWorkingDays(db, startDate, endDate)
+async function calculateLeaveDays(startDate, endDate, queryDb = db) {
+  return countPhilippineWorkingDays(queryDb, startDate, endDate)
 }
 
 function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
@@ -747,8 +748,15 @@ function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
   return leaveStart >= minDate
 }
 
-async function resolveLeaveCompensation(employee, leaveType, startDate, endDate, hasMedicalAttachment = false) {
-  const leaveDays = await calculateLeaveDays(startDate, endDate)
+async function resolveLeaveCompensation(
+  employee,
+  leaveType,
+  startDate,
+  endDate,
+  hasMedicalAttachment = false,
+  queryDb = db
+) {
+  const leaveDays = await calculateLeaveDays(startDate, endDate, queryDb)
   if (!leaveDays || leaveDays <= 0) return null
 
   const paidDaysCap = Number(leaveType?.paid_days_per_year || 0)
@@ -786,7 +794,7 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
   }
 
   const leaveYear = new Date(startDate).getFullYear()
-  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear)
+  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, null, queryDb)
   const remainingTypePaidDays = Math.max(0, paidDaysCap - usedDays)
   const availableCredits = Math.max(0, Number(employee?.leave_credits || 0))
   const payableDays = Math.min(leaveDays, remainingTypePaidDays, availableCredits)
@@ -823,7 +831,7 @@ async function resolveLeaveCompensation(employee, leaveType, startDate, endDate,
   }
 }
 
-async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, excludeRequestId = null) {
+async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, excludeRequestId = null, queryDb = db) {
   const params = [employeeId, leaveTypeName, String(year)]
   let sql = `
     SELECT
@@ -846,7 +854,7 @@ async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, exclude
     params.push(excludeRequestId)
     sql += ` AND id <> $${params.length}`
   }
-  const { rows } = await db.query(sql, params)
+  const { rows } = await queryDb.query(sql, params)
   return Number(rows[0]?.used_days || 0)
 }
 
@@ -920,7 +928,71 @@ function requireRole(roles) {
   }
 }
 
-app.use(createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog }))
+async function createOfficialHrRecordedLeave({ entry, user }) {
+  await resetEmployeeLeaveCreditsIfNeeded(entry.employee_id)
+  const created = await createHrRecordedLeave({
+    db,
+    entry,
+    user,
+    employeeColumns: EMPLOYEE_COLUMNS,
+    resolveLeaveType,
+    resolveEffectiveLeaveType,
+    calculateTenureMonths,
+    resolveLeaveCompensation,
+  })
+
+  const ownerResult = await db.query(
+    'SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1',
+    [created.employee.id]
+  )
+  const ownerUser = ownerResult.rows[0]
+  if (ownerUser?.id) {
+    await createNotification({
+      userId: ownerUser.id,
+      type: 'leave_approved',
+      title: 'Leave Recorded and Approved',
+      message: `Management recorded your ${created.leaveType.name} as an approved leave.`,
+      targetTable: 'leave_requests',
+      targetId: created.id,
+    })
+    const ownerContact = await getUserContactById(ownerUser.id)
+    await sendEmailNotification({
+      to: ownerContact?.email,
+      subject: `Leave Recorded: ${created.leaveType.name}`,
+      text: [
+        `Hi ${ownerContact?.name || 'Employee'},`,
+        '',
+        'Management recorded and approved your leave submitted outside the HR system.',
+        `Type: ${created.leaveType.name}`,
+        `Dates: ${formatEmailDateRange(entry.start_date, entry.end_date)}`,
+        `Paid days: ${created.compensation.paidDays}`,
+        `Unpaid days: ${created.compensation.unpaidDays}`,
+        `Credits deducted: ${created.compensation.creditsDeducted}`,
+        entry.description ? `Note: ${entry.description}` : '',
+      ].filter(Boolean).join('\n'),
+    })
+  }
+
+  await updateEmployeeStatus(created.employee.id)
+  await addAuditLog(user.id, 'create_official_hr_recorded_leave', 'leave_requests', created.id)
+  const result = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [created.id])
+  return {
+    ...(result.rows[0] || { id: created.id }),
+    source: created.source,
+    entry_type: 'leave',
+    record_id: created.id,
+    description: created.reason,
+    compensation_message: created.compensation.note || null,
+  }
+}
+
+app.use(createLeaveInsightsRouter({
+  db,
+  authRequired,
+  requireRole,
+  addAuditLog,
+  createOfficialHrRecordedLeave,
+}))
 app.use(createLeaveChangeRequestRouter({
   db,
   authRequired,

@@ -9,7 +9,13 @@ function isManagement(user) {
   return MANAGEMENT_ROLES.includes(user?.role)
 }
 
-function createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog }) {
+function createLeaveInsightsRouter({
+  db,
+  authRequired,
+  requireRole,
+  addAuditLog,
+  createOfficialHrRecordedLeave,
+}) {
   const router = express.Router()
 
   async function loadHrCalendarEntry(id) {
@@ -107,6 +113,17 @@ function createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog 
       const validated = validateHrCalendarEntry(req.body)
       if (validated.error) return res.status(400).json({ message: validated.error })
       const entry = validated.value
+
+      if (entry.entry_type === 'leave') {
+        try {
+          const leave = await createOfficialHrRecordedLeave({ entry, user: req.user })
+          return res.status(201).json(leave)
+        } catch (error) {
+          return res.status(error.status || 500).json({
+            message: error.status ? error.message : 'Unable to record the official leave',
+          })
+        }
+      }
 
       if (entry.employee_id) {
         const employeeResult = await db.query('SELECT id FROM employees WHERE id = $1', [entry.employee_id])
@@ -211,8 +228,11 @@ function createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog 
     }
 
     const { rows } = await db.query(
-      `SELECT lr.id, lr.employee_id, lr.employee_name, lr.leave_type_name, lr.start_date,
-              lr.end_date, lr.status, lr.leave_pay_type, COALESCE(e.department, 'Unassigned') AS department
+      `SELECT lr.id, lr.id AS record_id, lr.employee_id, lr.employee_name, lr.leave_type_name,
+              lr.start_date, lr.end_date, lr.status, lr.leave_pay_type,
+              COALESCE(lr.submission_source, 'employee') AS source,
+              'leave' AS entry_type, lr.reason AS description,
+              COALESCE(e.department, 'Unassigned') AS department
        FROM leave_requests lr
        JOIN employees e ON e.id = lr.employee_id
        WHERE ${filters.join(' AND ')}
@@ -284,7 +304,8 @@ function createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog 
     const id = Number(req.params.id)
     const requestResult = await db.query(
       `SELECT id, employee_id, employee_name, leave_type_name, status, created_at, decided_at,
-              approved_by_name, approved_by_role, rejection_comment
+              approved_by_name, approved_by_role, rejection_comment,
+              COALESCE(submission_source, 'employee') AS submission_source
        FROM leave_requests WHERE id = $1`,
       [id]
     )
@@ -313,11 +334,13 @@ function createLeaveInsightsRouter({ db, authRequired, requireRole, addAuditLog 
         [id]
       ),
     ])
+    const recordedByManagement = ['hr_recorded', 'admin_recorded'].includes(leave.submission_source)
     const events = [{
       id: `submitted-${id}`,
-      type: 'submitted',
-      title: 'Leave request submitted',
-      actor: leave.employee_name || 'Employee',
+      type: recordedByManagement ? 'recorded' : 'submitted',
+      title: recordedByManagement ? 'Official leave recorded by management' : 'Leave request submitted',
+      actor: recordedByManagement ? leave.approved_by_name || 'Management' : leave.employee_name || 'Employee',
+      actor_role: recordedByManagement ? leave.approved_by_role : 'employee',
       message: leave.leave_type_name,
       created_at: leave.created_at,
     }]

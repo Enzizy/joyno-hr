@@ -5,7 +5,7 @@ import LeaveCalendarPanel from '@/components/leave/LeaveCalendarPanel.vue'
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Leave Calendar" description="Track employee absences, HR-recorded leave, calendar notes, and Philippine holidays." eyebrow="Leave management" />
+    <PageHeader title="Leave Calendar" description="Track approved and pending leave, calendar notes, and Philippine holidays." eyebrow="Leave management" />
     <LeaveCalendarPanel />
   </div>
 </template>

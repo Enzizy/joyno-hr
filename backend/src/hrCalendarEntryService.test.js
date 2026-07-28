@@ -2,7 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 const { validateHrCalendarEntry } = require('./services/hrCalendarEntryService')
 
-test('normalizes a valid HR-recorded leave', () => {
+test('normalizes a valid official leave recorded by management', () => {
   const result = validateHrCalendarEntry({
     entry_type: 'leave',
     employee_id: 42,
@@ -10,18 +10,19 @@ test('normalizes a valid HR-recorded leave', () => {
     start_date: '2026-07-28',
     end_date: '2026-07-28',
     description: 'Submitted by email.',
-    is_employee_visible: true,
+    supporting_document_received: true,
   })
 
   assert.deepEqual(result.value, {
     entry_type: 'leave',
     employee_id: 42,
-    title: 'HR-recorded leave',
+    title: 'Official leave',
     leave_type_name: 'Sick Leave',
     start_date: '2026-07-28',
     end_date: '2026-07-28',
     description: 'Submitted by email.',
     is_employee_visible: true,
+    supporting_document_received: true,
   })
 })
 
@@ -32,7 +33,7 @@ test('requires an employee and leave type for manual leave', () => {
       start_date: '2026-07-28',
       end_date: '2026-07-28',
     }).error,
-    'Employee is required for an HR-recorded leave'
+    'Employee is required for an official leave'
   )
 })
 
@@ -47,4 +48,5 @@ test('creates management-only notes by default', () => {
   assert.equal(result.value.title, 'Written leave letter received')
   assert.equal(result.value.employee_id, null)
   assert.equal(result.value.is_employee_visible, false)
+  assert.equal(result.value.supporting_document_received, false)
 })

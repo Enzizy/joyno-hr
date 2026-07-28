@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppDatePicker from '@/components/ui/AppDatePicker.vue'
 import AppModal from '@/components/ui/AppModal.vue'
+import SearchCombobox from '@/components/ui/SearchCombobox.vue'
 
 const props = defineProps({
   show: Boolean,
@@ -14,7 +15,6 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'save', 'request-delete'])
 const error = ref('')
-const employeeSearch = ref('')
 const form = reactive({
   entry_type: 'leave',
   employee_id: '',
@@ -23,7 +23,7 @@ const form = reactive({
   start_date: '',
   end_date: '',
   description: '',
-  is_employee_visible: true,
+  supporting_document_received: false,
 })
 
 const isEditing = computed(() => Boolean(props.entry?.record_id))
@@ -32,19 +32,19 @@ const sortedEmployees = computed(() => [...props.employees].sort((left, right) =
     `${right.first_name || ''} ${right.last_name || ''}`
   )
 ))
-const filteredEmployees = computed(() => {
-  const query = employeeSearch.value.trim().toLowerCase()
-  if (!query) return sortedEmployees.value
-  return sortedEmployees.value.filter((employee) =>
-    [
-      employee.employee_code,
-      employee.first_name,
-      employee.last_name,
-      employee.department,
-      employee.position,
-    ].some((value) => String(value || '').toLowerCase().includes(query))
-  )
-})
+const employeeOptions = computed(() => sortedEmployees.value.map((employee) => {
+  const name = `${employee.first_name || ''} ${employee.last_name || ''}`.trim()
+  const meta = [employee.employee_code, employee.department, employee.position].filter(Boolean).join(' · ')
+  return {
+    value: String(employee.id),
+    label: name,
+    meta,
+    searchText: `${name} ${meta}`,
+  }
+}))
+const selectedLeaveType = computed(() =>
+  props.leaveTypes.find((leaveType) => leaveType.name === form.leave_type_name) || null
+)
 
 function resetForm() {
   const entry = props.entry || {}
@@ -55,8 +55,7 @@ function resetForm() {
   form.start_date = String(entry.start_date || '').slice(0, 10)
   form.end_date = String(entry.end_date || entry.start_date || '').slice(0, 10)
   form.description = entry.description || ''
-  form.is_employee_visible = entry.is_employee_visible ?? true
-  employeeSearch.value = ''
+  form.supporting_document_received = Boolean(entry.offline_document_received)
   error.value = ''
 }
 
@@ -79,11 +78,13 @@ function submit() {
     entry_type: form.entry_type,
     employee_id: form.entry_type === 'leave' ? Number(form.employee_id) : null,
     leave_type_name: form.entry_type === 'leave' ? form.leave_type_name : null,
-    title: form.entry_type === 'note' ? form.title.trim() : 'HR-recorded leave',
+    title: form.entry_type === 'note' ? form.title.trim() : 'Official leave',
     start_date: form.start_date,
     end_date: form.end_date,
     description: form.description.trim(),
-    is_employee_visible: form.entry_type === 'leave' && form.is_employee_visible,
+    is_employee_visible: form.entry_type === 'leave',
+    supporting_document_received:
+      form.entry_type === 'leave' && form.supporting_document_received,
   })
 }
 
@@ -107,7 +108,7 @@ watch(() => [props.show, props.entry], ([show]) => {
           :class="form.entry_type === 'leave' ? 'bg-violet-500/20 text-violet-200 ring-1 ring-violet-500/40' : 'text-gray-400 hover:bg-gray-800'"
           @click="form.entry_type = 'leave'"
         >
-          HR-recorded leave
+          Official leave
         </button>
         <button
           type="button"
@@ -122,17 +123,13 @@ watch(() => [props.show, props.entry], ([show]) => {
       <div v-if="form.entry_type === 'leave'" class="grid gap-4 sm:grid-cols-2">
         <label class="text-sm font-medium text-gray-200">
           Employee <span class="text-red-500">*</span>
-          <input
-            v-model="employeeSearch"
-            class="form-control mt-1.5"
-            placeholder="Search name, code, or department"
+          <SearchCombobox
+            v-model="form.employee_id"
+            class="mt-1.5"
+            :options="employeeOptions"
+            placeholder="Search employee name, code, or department"
+            empty-text="No matching employees"
           />
-          <select v-model="form.employee_id" class="form-control mt-2">
-            <option value="">Select employee</option>
-            <option v-for="employee in filteredEmployees" :key="employee.id" :value="employee.id">
-              {{ employee.first_name }} {{ employee.last_name }} · {{ employee.department || 'Unassigned' }}
-            </option>
-          </select>
         </label>
         <label class="text-sm font-medium text-gray-200">
           Leave type <span class="text-red-500">*</span>
@@ -172,16 +169,22 @@ watch(() => [props.show, props.entry], ([show]) => {
         <span class="mt-1 block text-right text-xs text-gray-500">{{ form.description.length }} / 500</span>
       </label>
 
-      <label v-if="form.entry_type === 'leave'" class="flex items-start gap-3 rounded-xl border border-gray-800 bg-gray-950/40 p-4">
-        <input v-model="form.is_employee_visible" type="checkbox" class="mt-0.5 h-4 w-4 accent-primary-500" />
+      <label
+        v-if="form.entry_type === 'leave' && selectedLeaveType?.requires_attachment_for_paid"
+        class="flex items-start gap-3 rounded-xl border border-gray-800 bg-gray-950/40 p-4"
+      >
+        <input v-model="form.supporting_document_received" type="checkbox" class="mt-0.5 h-4 w-4 accent-primary-500" />
         <span>
-          <span class="block text-sm font-medium text-gray-200">Show this entry to the employee</span>
-          <span class="mt-1 block text-xs leading-5 text-gray-500">The employee will see that HR recorded this leave on their calendar.</span>
+          <span class="block text-sm font-medium text-gray-200">Supporting document received offline</span>
+          <span class="mt-1 block text-xs leading-5 text-gray-500">Confirm that HR received the required medical certificate or supporting document outside the system.</span>
         </span>
       </label>
 
-      <p class="rounded-xl border border-amber-700/30 bg-amber-500/[0.06] p-3 text-xs leading-5 text-amber-200">
-        Calendar tracking only. This entry does not deduct leave credits, change payroll, or replace the formal leave approval workflow.
+      <p v-if="form.entry_type === 'leave'" class="rounded-xl border border-emerald-700/30 bg-emerald-500/[0.06] p-3 text-xs leading-5 text-emerald-200">
+        This creates an official approved leave. The system will apply leave policy rules, deduct eligible credits, include it in reports and payroll, and notify the employee.
+      </p>
+      <p v-else class="rounded-xl border border-fuchsia-700/30 bg-fuchsia-500/[0.06] p-3 text-xs leading-5 text-fuchsia-200">
+        Calendar notes are informational only and do not affect leave credits or payroll.
       </p>
 
       <p v-if="error" class="rounded-lg border border-red-700/40 bg-red-500/10 p-3 text-sm text-red-300">
@@ -200,7 +203,9 @@ watch(() => [props.show, props.entry], ([show]) => {
         Delete
       </AppButton>
       <AppButton variant="secondary" :disabled="saving" @click="emit('close')">Cancel</AppButton>
-      <AppButton :loading="saving" @click="submit">{{ isEditing ? 'Save changes' : 'Add to calendar' }}</AppButton>
+      <AppButton :loading="saving" @click="submit">
+        {{ isEditing ? 'Save changes' : form.entry_type === 'leave' ? 'Record official leave' : 'Add calendar note' }}
+      </AppButton>
     </template>
   </AppModal>
 </template>
