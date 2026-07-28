@@ -9,6 +9,17 @@ function isManagement(user) {
   return MANAGEMENT_ROLES.includes(user?.role)
 }
 
+function getLeaveCalendarAccessPolicy(user) {
+  const management = isManagement(user)
+  return {
+    management,
+    employeeId: management ? null : Number(user?.employee_id) || 0,
+    includePending: management,
+    sameDepartmentOnly: !management,
+    discloseSensitiveDetails: management,
+  }
+}
+
 function createLeaveInsightsRouter({
   db,
   authRequired,
@@ -217,11 +228,31 @@ function createLeaveInsightsRouter({
     const from = validDate(req.query.from) ? req.query.from : defaultFrom
     const to = validDate(req.query.to) ? req.query.to : defaultTo
     const params = [from, to]
-    const filters = ["lr.status IN ('pending', 'approved')", 'lr.start_date <= $2', 'lr.end_date >= $1']
+    const access = getLeaveCalendarAccessPolicy(req.user)
+    const filters = [
+      access.includePending ? "lr.status IN ('pending', 'approved')" : "lr.status = 'approved'",
+      'lr.start_date <= $2',
+      'lr.end_date >= $1',
+    ]
+    let viewerJoin = ''
+    const payExpression = access.discloseSensitiveDetails
+      ? 'lr.leave_pay_type'
+      : "'not_disclosed'::text"
+    const descriptionExpression = access.discloseSensitiveDetails
+      ? 'lr.reason'
+      : 'NULL::text'
 
-    if (!isManagement(req.user)) {
-      params.push(req.user.employee_id || 0)
-      filters.push(`lr.employee_id = $${params.length}`)
+    if (access.sameDepartmentOnly) {
+      params.push(access.employeeId)
+      const viewerParam = `$${params.length}`
+      viewerJoin = `LEFT JOIN employees viewer ON viewer.id = ${viewerParam}`
+      filters.push(
+        `(lr.employee_id = ${viewerParam}
+          OR (
+            NULLIF(TRIM(viewer.department), '') IS NOT NULL
+            AND LOWER(TRIM(e.department)) = LOWER(TRIM(viewer.department))
+          ))`
+      )
     } else if (req.query.department) {
       params.push(String(req.query.department))
       filters.push(`COALESCE(e.department, 'Unassigned') = $${params.length}`)
@@ -229,12 +260,13 @@ function createLeaveInsightsRouter({
 
     const { rows } = await db.query(
       `SELECT lr.id, lr.id AS record_id, lr.employee_id, lr.employee_name, lr.leave_type_name,
-              lr.start_date, lr.end_date, lr.status, lr.leave_pay_type,
+              lr.start_date, lr.end_date, lr.status, ${payExpression} AS leave_pay_type,
               COALESCE(lr.submission_source, 'employee') AS source,
-              'leave' AS entry_type, lr.reason AS description,
+              'leave' AS entry_type, ${descriptionExpression} AS description,
               COALESCE(e.department, 'Unassigned') AS department
        FROM leave_requests lr
        JOIN employees e ON e.id = lr.employee_id
+       ${viewerJoin}
        WHERE ${filters.join(' AND ')}
        ORDER BY lr.start_date ASC, lr.employee_name ASC`,
       params
@@ -428,4 +460,4 @@ function createLeaveInsightsRouter({
   return router
 }
 
-module.exports = { createLeaveInsightsRouter }
+module.exports = { createLeaveInsightsRouter, getLeaveCalendarAccessPolicy }

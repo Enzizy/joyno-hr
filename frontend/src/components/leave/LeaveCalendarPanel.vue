@@ -140,6 +140,7 @@ function normalizeCalendarEvents(rows) {
 
 function eventTone(event) {
   if (event.entry_type === 'note') return 'border-fuchsia-600/40 bg-fuchsia-500/15 text-fuchsia-200'
+  if (!canManageCalendar.value) return 'border-emerald-600/40 bg-emerald-500/15 text-emerald-200'
   if (event.status === 'pending') return 'border-amber-600/40 bg-amber-500/15 text-amber-200'
   if (String(event.leave_pay_type).toLowerCase() === 'unpaid') return 'border-blue-600/40 bg-blue-500/15 text-blue-200'
   return 'border-emerald-600/40 bg-emerald-500/15 text-emerald-200'
@@ -189,7 +190,12 @@ async function loadCalendar() {
     } catch {
       const rows = normalizeCalendarEvents(await getLeaveRequests())
       const leaveRows = rows
-        .filter((row) => ['pending', 'approved'].includes(row.status) && row.start_date <= monthEnd.value && row.end_date >= monthStart.value)
+        .filter((row) => {
+          const allowedStatus = canManageCalendar.value
+            ? ['pending', 'approved'].includes(row.status)
+            : row.status === 'approved'
+          return allowedStatus && row.start_date <= monthEnd.value && row.end_date >= monthStart.value
+        })
       events.value = addEmployeeDepartments(normalizeCalendarEvents([...leaveRows, ...hrEntryRows]))
     }
   } catch (error) {
@@ -288,7 +294,9 @@ onMounted(async () => {
         </div>
         <div v-if="compact" class="hidden min-w-0 text-center lg:block">
           <h2 class="text-sm font-semibold text-gray-100">Leave calendar</h2>
-          <p class="mt-0.5 truncate text-[11px] text-gray-500">Review scheduled leave while choosing your dates.</p>
+          <p class="mt-0.5 truncate text-[11px] text-gray-500">
+            {{ canManageCalendar ? 'Review scheduled leave while choosing dates.' : 'Approved leave in your department.' }}
+          </p>
         </div>
         <AppButton class="justify-self-end" variant="ghost" size="sm" @click="goToday">Today</AppButton>
       </div>
@@ -339,9 +347,12 @@ onMounted(async () => {
     </div>
 
     <div class="flex flex-wrap gap-4 border-t border-gray-800 px-4 py-3 text-[11px] text-gray-500">
-      <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-emerald-500" />Approved paid</span>
-      <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-blue-500" />Approved unpaid</span>
-      <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-amber-500" />Pending</span>
+      <template v-if="canManageCalendar">
+        <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-emerald-500" />Approved paid</span>
+        <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-blue-500" />Approved unpaid</span>
+        <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-amber-500" />Pending</span>
+      </template>
+      <span v-else class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-emerald-500" />Approved leave</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rounded-full bg-fuchsia-500" />HR calendar note</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rotate-45 bg-rose-500" />Regular holiday</span>
       <span class="inline-flex items-center gap-1.5"><i class="h-2 w-2 rotate-45 bg-amber-500" />Special non-working day</span>
