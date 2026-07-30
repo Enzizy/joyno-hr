@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useLeaveStore } from '@/stores/leaveStore'
 import { useToastStore } from '@/stores/toastStore'
 import { getEmployees } from '@/services/backendService'
@@ -92,18 +92,9 @@ const entitlementRows = computed(() =>
   }))
 )
 const loading = computed(() => leaveStore.loading || inboxLoading.value)
-const desktopReview = () => typeof window !== 'undefined' && window.matchMedia('(min-width: 1280px)').matches
-
-async function selectFirstVisible() {
-  await nextTick()
-  const first = pagedRows.value[0]
-  if (first && desktopReview()) await loadDetails(first)
-  else closePanel()
-}
-
-async function changeTab(tab) {
+function changeTab(tab) {
+  closePanel()
   activeTab.value = tab
-  await selectFirstVisible()
 }
 
 async function reviewRow(row) {
@@ -115,19 +106,12 @@ async function confirmDelete() {
   deleteConfirmation.value = false
 }
 
-watch(pagedRows, async (visibleRows) => {
-  if (!selectedRow.value) return
-  const stillVisible = visibleRows.some((row) => Number(row.id) === Number(selectedId.value))
-  if (!stillVisible) await selectFirstVisible()
-})
-
 onMounted(async () => {
   const [, employeeRows] = await Promise.all([
     Promise.all([leaveStore.fetchRequests(), leaveStore.fetchTypes(), loadInbox()]),
     getEmployees().catch(() => []),
   ])
   employees.value = employeeRows
-  await selectFirstVisible()
 })
 </script>
 
@@ -149,10 +133,7 @@ onMounted(async () => {
       </div>
     </details>
 
-    <div
-      class="grid min-w-0 gap-4"
-      :class="selectedRow ? 'xl:grid-cols-[minmax(0,1fr)_minmax(390px,0.58fr)]' : 'grid-cols-1'"
-    >
+    <div class="min-w-0">
       <LeaveApprovalQueue
         :active-tab="activeTab"
         :counts="counts"

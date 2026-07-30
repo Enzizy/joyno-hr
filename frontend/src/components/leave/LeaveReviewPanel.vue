@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { getAttachmentReviewPresentation } from '@/utils/leaveAttachmentPresentation'
@@ -44,6 +44,21 @@ const approveDisabled = computed(() =>
   || (requiresUnpaidConfirmation.value && !approveAsUnpaid.value)
 )
 const documentRequired = computed(() => documentStatus.value !== 'not_required')
+const attachmentIsImage = computed(() =>
+  String(props.row?.attachment_type || '').startsWith('image/')
+)
+const attachmentIsPdf = computed(() => {
+  const type = String(props.row?.attachment_type || '').toLowerCase()
+  const name = String(props.row?.attachment_name || '').toLowerCase()
+  return type === 'application/pdf' || name.endsWith('.pdf')
+})
+const attachmentPreviewUrl = computed(() => {
+  if (!props.row?.attachment_data) return ''
+  if (attachmentIsPdf.value) {
+    return `${props.row.attachment_data}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`
+  }
+  return props.row.attachment_data
+})
 
 watch(() => props.row?.id, () => {
   activeComposer.value = ''
@@ -52,6 +67,21 @@ watch(() => props.row?.id, () => {
   replacementReason.value = ''
   replacementDays.value = 2
   approveAsUnpaid.value = false
+})
+
+function closeOnEscape(event) {
+  if (event.key === 'Escape' && props.row) emit('close')
+}
+
+watch(() => Boolean(props.row), (show) => {
+  document.body.classList.toggle('overflow-hidden', show)
+  if (show) document.addEventListener('keydown', closeOnEscape)
+  else document.removeEventListener('keydown', closeOnEscape)
+})
+
+onBeforeUnmount(() => {
+  document.body.classList.remove('overflow-hidden')
+  document.removeEventListener('keydown', closeOnEscape)
 })
 
 function initials(name) {
@@ -81,6 +111,11 @@ function formatRange(row) {
 function estimatedPay(row) {
   const value = String(row?.leave_pay_type || 'unpaid').replaceAll('_', ' ')
   return `${row?.status === 'pending' ? 'Estimated ' : ''}${value}`
+}
+
+function durationLabel(row) {
+  const days = Number(row?.leave_days || 1)
+  return `${days} working ${days === 1 ? 'day' : 'days'}`
 }
 
 function reviewLabel(row) {
@@ -122,25 +157,30 @@ function submitReplacement() {
 </script>
 
 <template>
-  <div
-    v-if="row"
-    class="fixed inset-0 z-40 xl:sticky xl:inset-auto xl:top-4 xl:z-0 xl:h-[calc(100dvh-7.5rem)]"
-  >
-    <button class="absolute inset-0 bg-black/75 xl:hidden" aria-label="Close review panel" @click="$emit('close')" />
-    <aside class="absolute inset-y-0 right-0 flex h-full w-full max-w-xl flex-col border-l border-gray-800 bg-gray-950 shadow-2xl shadow-black/80 xl:relative xl:inset-auto xl:max-w-none xl:rounded-xl xl:border">
-      <header class="flex shrink-0 items-start justify-between gap-4 border-b border-gray-800 px-5 py-4">
-        <div>
-          <p class="text-lg font-semibold text-gray-100">Review leave request</p>
-          <p class="mt-1 text-xs text-gray-600">Complete the review without leaving this page.</p>
-        </div>
-        <button class="icon-button h-8 w-8" aria-label="Close review panel" @click="$emit('close')">×</button>
+  <Teleport to="body">
+    <div v-if="row" class="fixed inset-0 z-50">
+      <button
+        type="button"
+        class="absolute inset-0 bg-black/60 backdrop-blur-[1px]"
+        aria-label="Close leave review"
+        @click="emit('close')"
+      />
+      <aside
+        class="absolute inset-y-0 right-0 flex h-full w-full max-w-md flex-col border-l border-gray-800 bg-gray-950 shadow-2xl shadow-black/80"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="`Review ${row.employee_name}'s leave request`"
+      >
+      <header class="flex shrink-0 items-center justify-between gap-4 border-b border-gray-800 px-5 py-4">
+        <h2 class="text-base font-semibold text-gray-100">Review leave request</h2>
+        <button class="icon-button h-8 w-8 text-lg" aria-label="Close review panel" @click="emit('close')">×</button>
       </header>
 
       <div class="min-h-0 flex-1 overflow-y-auto">
         <div v-if="detailLoading" class="space-y-4 p-5">
           <div v-for="item in 5" :key="item" class="h-24 animate-pulse rounded-xl bg-gray-900" />
         </div>
-        <div v-else class="space-y-4 p-5">
+        <div v-else class="space-y-3 p-5">
           <section class="flex items-center gap-3">
             <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-primary-700/40 bg-primary-500/10 text-sm font-bold text-primary-200">
               {{ initials(row.employee_name) }}
@@ -149,7 +189,6 @@ function submitReplacement() {
               <p class="truncate font-semibold text-gray-100">{{ row.employee_name }}</p>
               <p class="mt-0.5 text-xs font-medium text-violet-300">{{ reviewLabel(row) }}</p>
             </div>
-            <StatusBadge class="ml-auto" :status="row.status" />
           </section>
 
           <dl class="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-gray-800 bg-gray-800 sm:grid-cols-4">
@@ -158,12 +197,12 @@ function submitReplacement() {
               <dd class="mt-1.5 text-xs font-semibold text-gray-200">{{ row.leave_type_name }}</dd>
             </div>
             <div class="bg-gray-900 p-3">
-              <dt class="text-[10px] uppercase tracking-wider text-gray-600">Dates</dt>
+              <dt class="text-[10px] uppercase tracking-wider text-gray-600">Date</dt>
               <dd class="mt-1.5 text-xs font-semibold text-gray-200">{{ formatRange(row) }}</dd>
             </div>
             <div class="bg-gray-900 p-3">
               <dt class="text-[10px] uppercase tracking-wider text-gray-600">Duration</dt>
-              <dd class="mt-1.5 text-xs font-semibold text-gray-200">{{ Number(row.leave_days || 1) }} working day(s)</dd>
+              <dd class="mt-1.5 text-xs font-semibold text-gray-200">{{ durationLabel(row) }}</dd>
             </div>
             <div class="bg-gray-900 p-3">
               <dt class="text-[10px] uppercase tracking-wider text-gray-600">Pay treatment</dt>
@@ -199,25 +238,75 @@ function submitReplacement() {
               Replacement due {{ formatDate(row.attachment_resubmit_due_at, true) }}
             </p>
 
-            <div class="mt-4 flex flex-wrap gap-2">
-              <AppButton v-if="row.attachment_data" variant="secondary" size="sm" @click="$emit('view-document', row)">Open document</AppButton>
-              <AppButton
-                v-if="row.status === 'pending' && documentStatus === 'pending_review'"
-                variant="success"
-                size="sm"
-                :loading="actionLoading === 'document'"
-                @click="$emit('mark-document-valid')"
+            <div class="mt-4 grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
+              <button
+                v-if="row.attachment_data"
+                type="button"
+                class="group flex h-28 items-center justify-center overflow-hidden rounded-lg border border-gray-700 bg-gray-950"
+                aria-label="Open supporting document"
+                @click="emit('view-document', row)"
               >
-                Confirm valid
-              </AppButton>
-              <AppButton
-                v-if="row.status === 'pending' && ['pending_review', 'missing', 'deadline_missed'].includes(documentStatus)"
-                variant="danger"
-                size="sm"
-                @click="activeComposer = activeComposer === 'replacement' ? '' : 'replacement'"
-              >
-                Request replacement
-              </AppButton>
+                <img
+                  v-if="attachmentIsImage"
+                  :src="attachmentPreviewUrl"
+                  :alt="row.attachment_name"
+                  class="h-full w-full bg-white object-contain transition group-hover:scale-[1.02]"
+                />
+                <embed
+                  v-else-if="attachmentIsPdf"
+                  :src="attachmentPreviewUrl"
+                  type="application/pdf"
+                  class="pointer-events-none h-full w-full bg-white"
+                />
+                <span v-else class="flex flex-col items-center gap-2 text-gray-500">
+                  <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h4" />
+                  </svg>
+                  <span class="text-[10px] uppercase tracking-wider">Document</span>
+                </span>
+              </button>
+              <div v-else class="flex h-28 items-center justify-center rounded-lg border border-dashed border-red-900/60 bg-red-950/10 text-xs font-medium text-red-300">
+                No document
+              </div>
+
+              <div class="divide-y divide-gray-800">
+                <button
+                  v-if="row.attachment_data"
+                  type="button"
+                  class="flex w-full items-center gap-3 py-3 text-left text-sm font-medium text-primary-300 transition hover:text-primary-200"
+                  @click="emit('view-document', row)"
+                >
+                  <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" />
+                    <circle cx="12" cy="12" r="2.5" stroke-width="1.7" />
+                  </svg>
+                  Open document
+                </button>
+                <button
+                  v-if="row.status === 'pending' && documentStatus === 'pending_review'"
+                  type="button"
+                  class="flex w-full items-center gap-3 py-3 text-left text-sm font-medium text-emerald-400 transition hover:text-emerald-300 disabled:opacity-50"
+                  :disabled="actionLoading === 'document'"
+                  @click="emit('mark-document-valid')"
+                >
+                  <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="9" stroke-width="1.7" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="m8 12 2.5 2.5L16 9" />
+                  </svg>
+                  {{ actionLoading === 'document' ? 'Confirming…' : 'Confirm valid' }}
+                </button>
+                <button
+                  v-if="row.status === 'pending' && ['pending_review', 'missing', 'deadline_missed'].includes(documentStatus)"
+                  type="button"
+                  class="flex w-full items-center gap-3 py-3 text-left text-sm font-medium text-red-400 transition hover:text-red-300"
+                  @click="activeComposer = activeComposer === 'replacement' ? '' : 'replacement'"
+                >
+                  <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M20 7v5h-5M4 17v-5h5M6.3 8A7 7 0 0 1 18 6l2 1M18 16a7 7 0 0 1-11.7 2L4 17" />
+                  </svg>
+                  Request replacement
+                </button>
+              </div>
             </div>
 
             <div v-if="activeComposer === 'replacement'" class="mt-4 space-y-3 border-t border-gray-800 pt-4">
@@ -236,7 +325,9 @@ function submitReplacement() {
           </section>
 
           <section class="flex items-start gap-3 rounded-xl border border-gray-800 bg-gray-900 p-4">
-            <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-400">✓</span>
+            <svg class="mt-0.5 h-5 w-5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6" d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6" />
+            </svg>
             <div>
               <p class="text-sm font-semibold text-gray-200">Department availability</p>
               <p class="mt-1 text-xs leading-5" :class="availability?.has_warning ? 'text-amber-300' : 'text-gray-500'">{{ availabilityText() }}</p>
@@ -245,7 +336,13 @@ function submitReplacement() {
 
           <details class="rounded-xl border border-gray-800 bg-gray-900">
             <summary class="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-gray-300">
-              <span>Activity <span class="ml-1 text-xs font-normal text-gray-600">{{ timeline.length }} updates</span></span>
+              <span class="flex items-center gap-3">
+                <svg class="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="9" stroke-width="1.6" />
+                  <path stroke-linecap="round" stroke-width="1.6" d="M12 7v5l3 2" />
+                </svg>
+                <span>Activity <span class="ml-1 text-xs font-normal text-gray-600">{{ timeline.length }} updates</span></span>
+              </span>
               <span class="text-gray-600">›</span>
             </summary>
             <ol class="space-y-3 border-t border-gray-800 p-4">
@@ -281,7 +378,8 @@ function submitReplacement() {
             <span class="text-xs leading-5 text-red-200">Approve this request as unpaid leave without deducting credits.</span>
           </label>
 
-          <p v-if="row.status === 'pending' && approvalBlocked" class="rounded-xl border border-amber-800/40 bg-amber-950/15 p-3 text-xs text-amber-300">
+          <p v-if="row.status === 'pending' && approvalBlocked" class="flex items-center gap-2 rounded-xl border border-amber-800/40 bg-amber-950/15 p-3 text-xs text-amber-300">
+            <span class="flex h-4 w-4 items-center justify-center rounded-full border border-amber-500 text-[10px]">!</span>
             {{ documentStatus === 'replacement_required' ? 'Waiting for the employee’s replacement document.' : 'Confirm the supporting document before approval.' }}
           </p>
         </div>
@@ -289,15 +387,20 @@ function submitReplacement() {
 
       <footer class="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-gray-800 bg-gray-950 px-5 py-4">
         <template v-if="row.status === 'pending'">
-          <AppButton variant="danger" @click="activeComposer = activeComposer === 'reject' ? '' : 'reject'">Reject</AppButton>
-          <AppButton variant="secondary" @click="activeComposer = activeComposer === 'note' ? '' : 'note'">Add note</AppButton>
+          <AppButton class="sm:min-w-24" variant="danger" @click="activeComposer = activeComposer === 'reject' ? '' : 'reject'">Reject</AppButton>
+          <AppButton class="sm:min-w-24" variant="secondary" @click="activeComposer = activeComposer === 'note' ? '' : 'note'">Add note</AppButton>
           <AppButton
+            class="min-w-36 flex-1"
             :variant="approveDisabled ? 'secondary' : 'success'"
             :loading="actionLoading === 'approve'"
             :disabled="approveDisabled"
             @click="$emit('approve', { approveAsUnpaid })"
           >
             {{ requiresUnpaidConfirmation ? 'Approve as unpaid' : 'Approve leave' }}
+            <svg v-if="approveDisabled" class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <rect x="5" y="10" width="14" height="11" rx="2" stroke-width="1.7" />
+              <path stroke-linecap="round" stroke-width="1.7" d="M8 10V7a4 4 0 0 1 8 0v3" />
+            </svg>
           </AppButton>
         </template>
         <template v-else>
@@ -305,6 +408,7 @@ function submitReplacement() {
           <AppButton variant="secondary" @click="activeComposer = activeComposer === 'note' ? '' : 'note'">Add note</AppButton>
         </template>
       </footer>
-    </aside>
-  </div>
+      </aside>
+    </div>
+  </Teleport>
 </template>
