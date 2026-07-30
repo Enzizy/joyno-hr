@@ -7,6 +7,10 @@ const {
 
 const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
 
+function asyncRoute(handler) {
+  return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next)
+}
+
 function createLeaveAttachmentReviewRouter({
   db,
   authRequired,
@@ -66,7 +70,7 @@ function createLeaveAttachmentReviewRouter({
     '/api/leave-requests/:id/attachment-review',
     authRequired,
     requireRole(MANAGEMENT_ROLES),
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
       const id = Number(req.params.id)
       if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
       const leave = await loadLeave(id)
@@ -108,10 +112,10 @@ function createLeaveAttachmentReviewRouter({
                attachment_reviewed_by = $3,
                attachment_reviewed_at = NOW(),
                attachment_resubmit_due_at = $4,
-               attachment_replacement_requested_at = CASE WHEN $1 = 'replacement_required' THEN NOW() ELSE NULL END,
+               attachment_replacement_requested_at = CASE WHEN $6::boolean THEN NOW() ELSE NULL END,
                attachment_reminder_sent_at = NULL
            WHERE id = $5`,
-          [status, note || null, req.user.id, dueAt, id]
+          [status, note || null, req.user.id, dueAt, id, action === 'request_replacement']
         )
         await tx.query(
           `INSERT INTO leave_attachment_review_events
@@ -158,14 +162,14 @@ function createLeaveAttachmentReviewRouter({
 
       await addAuditLog(req.user.id, action, 'leave_requests', id)
       res.json(await loadLeave(id))
-    }
+    })
   )
 
   router.post(
     '/api/leave-requests/:id/attachment-replacement',
     authRequired,
     uploadAttachment,
-    async (req, res) => {
+    asyncRoute(async (req, res) => {
       const id = Number(req.params.id)
       if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
       const leave = await loadLeave(id)
@@ -232,8 +236,16 @@ function createLeaveAttachmentReviewRouter({
       }
       await addAuditLog(req.user.id, 'upload_leave_attachment_replacement', 'leave_requests', id)
       res.json(await loadLeave(id))
-    }
+    })
   )
+
+  router.use((error, req, res, next) => {
+    console.error('Leave attachment workflow failed', error)
+    if (res.headersSent) return next(error)
+    return res.status(500).json({
+      message: 'Unable to update the supporting document. Please try again.',
+    })
+  })
 
   return router
 }
