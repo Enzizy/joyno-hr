@@ -65,8 +65,11 @@ test('records an HR-entered leave as approved and deducts paid credits transacti
   assert.equal(result.source, 'hr_recorded')
   assert.equal(result.compensation.creditsDeducted, 1)
   assert.ok(insertCall.sql.includes("'approved'"))
-  assert.ok(insertCall.sql.includes('$20::boolean'))
-  assert.equal(insertCall.params[19], false)
+  assert.ok(insertCall.sql.includes('$21::boolean'))
+  assert.equal((insertCall.sql.match(/\$9(?!\d)/g) || []).length, 1)
+  assert.equal(insertCall.params[17], dependencies.user.id)
+  assert.equal(insertCall.params[20], false)
+  assert.equal(insertCall.params[21], dependencies.user.id)
   assert.ok(calls.some(({ sql }) => sql.includes('leave_credits = GREATEST')))
 })
 
@@ -83,10 +86,12 @@ test('records an offline supporting document without reusing the status SQL para
   await createHrRecordedLeave(dependencies)
 
   const insertCall = calls.find(({ sql }) => sql.includes('INSERT INTO leave_requests'))
-  assert.equal(insertCall.params[17], true)
-  assert.equal(insertCall.params[18], 'valid')
-  assert.equal(insertCall.params[19], true)
-  assert.doesNotMatch(insertCall.sql, /\$19\s*=\s*'valid'/)
+  assert.equal(insertCall.params[17], dependencies.user.id)
+  assert.equal(insertCall.params[18], true)
+  assert.equal(insertCall.params[19], 'valid')
+  assert.equal(insertCall.params[20], true)
+  assert.equal(insertCall.params[21], dependencies.user.id)
+  assert.doesNotMatch(insertCall.sql, /\$20\s*=\s*'valid'/)
 })
 
 test('rejects an HR-entered leave that overlaps an existing request', async () => {
