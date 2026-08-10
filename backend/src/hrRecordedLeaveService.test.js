@@ -64,6 +64,7 @@ test('records an HR-entered leave as approved and deducts paid credits transacti
   assert.equal(result.id, 42)
   assert.equal(result.source, 'hr_recorded')
   assert.equal(result.compensation.creditsDeducted, 1)
+  assert.equal(insertCall.params[3], null)
   assert.ok(insertCall.sql.includes("'approved'"))
   assert.ok(insertCall.sql.includes('$21::boolean'))
   assert.ok(insertCall.sql.includes('$18::integer'))

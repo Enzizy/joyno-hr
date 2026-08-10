@@ -84,7 +84,8 @@ async function createHrRecordedLeave({
         employee.id,
         employee.employee_code,
         employeeName,
-        effectiveLeaveType.id,
+        // leave_type_id is a legacy integer column; current policy IDs are strings.
+        null,
         effectiveLeaveType.name,
         entry.start_date,
         entry.end_date,
