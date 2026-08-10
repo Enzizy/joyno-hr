@@ -59,12 +59,34 @@ function createDependencies({ overlap = false } = {}) {
 test('records an HR-entered leave as approved and deducts paid credits transactionally', async () => {
   const { calls, dependencies } = createDependencies()
   const result = await createHrRecordedLeave(dependencies)
+  const insertCall = calls.find(({ sql }) => sql.includes('INSERT INTO leave_requests'))
 
   assert.equal(result.id, 42)
   assert.equal(result.source, 'hr_recorded')
   assert.equal(result.compensation.creditsDeducted, 1)
-  assert.ok(calls.some(({ sql }) => sql.includes("'approved'")))
+  assert.ok(insertCall.sql.includes("'approved'"))
+  assert.ok(insertCall.sql.includes('$20::boolean'))
+  assert.equal(insertCall.params[19], false)
   assert.ok(calls.some(({ sql }) => sql.includes('leave_credits = GREATEST')))
+})
+
+test('records an offline supporting document without reusing the status SQL parameter', async () => {
+  const { calls, dependencies } = createDependencies()
+  dependencies.entry.leave_type_name = 'Sick Leave'
+  dependencies.entry.supporting_document_received = true
+  dependencies.resolveLeaveType = async () => ({
+    id: 'sick_leave',
+    name: 'Sick Leave',
+    requires_attachment_for_paid: true,
+  })
+
+  await createHrRecordedLeave(dependencies)
+
+  const insertCall = calls.find(({ sql }) => sql.includes('INSERT INTO leave_requests'))
+  assert.equal(insertCall.params[17], true)
+  assert.equal(insertCall.params[18], 'valid')
+  assert.equal(insertCall.params[19], true)
+  assert.doesNotMatch(insertCall.sql, /\$19\s*=\s*'valid'/)
 })
 
 test('rejects an HR-entered leave that overlaps an existing request', async () => {

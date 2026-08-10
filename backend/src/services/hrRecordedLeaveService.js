@@ -77,8 +77,8 @@ async function createHrRecordedLeave({
         submission_source, entered_by, offline_document_received,
         attachment_review_status, attachment_reviewed_by, attachment_reviewed_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9,$10,$11,NOW(),$12,$13,$14,$15,$16,$17,$9,$18,$19,
-               CASE WHEN $19 = 'valid' THEN $9 ELSE NULL END,
-               CASE WHEN $19 = 'valid' THEN NOW() ELSE NULL END)
+               CASE WHEN $20::boolean THEN $9 ELSE NULL END,
+               CASE WHEN $20::boolean THEN NOW() ELSE NULL END)
        RETURNING id`,
       [
         employee.id,
@@ -100,6 +100,7 @@ async function createHrRecordedLeave({
         source,
         entry.supporting_document_received,
         attachmentReviewStatus,
+        attachmentReviewStatus === 'valid',
       ]
     )
     const id = insertResult.rows[0]?.id

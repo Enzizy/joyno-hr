@@ -130,6 +130,7 @@ function createLeaveInsightsRouter({
           const leave = await createOfficialHrRecordedLeave({ entry, user: req.user })
           return res.status(201).json(leave)
         } catch (error) {
+          if (!error.status) console.error('Unable to record official leave', error)
           return res.status(error.status || 500).json({
             message: error.status ? error.message : 'Unable to record the official leave',
           })
