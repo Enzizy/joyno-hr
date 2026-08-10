@@ -76,8 +76,8 @@ async function createHrRecordedLeave({
         leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted,
         submission_source, entered_by, offline_document_received,
         attachment_review_status, attachment_reviewed_by, attachment_reviewed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9,$10,$11,NOW(),$12,$13,$14,$15,$16,$17,$18,$19,$20,
-               CASE WHEN $21::boolean THEN $22 ELSE NULL END,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9,$10,$11,NOW(),$12,$13,$14,$15,$16,$17,$18::integer,$19,$20,
+               CASE WHEN $21::boolean THEN $22::integer ELSE NULL::integer END,
                CASE WHEN $21::boolean THEN NOW() ELSE NULL END)
        RETURNING id`,
       [
