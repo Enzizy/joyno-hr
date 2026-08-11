@@ -18,6 +18,7 @@ const { dispatchPreferredEmail, flushDailyEmailDigests } = require('./services/e
 const { countPhilippineWorkingDays } = require('./services/philippineHolidayService')
 const { buildLeavePayrollWorkbook } = require('./services/leavePayrollWorkbookService')
 const { createHrRecordedLeave } = require('./services/hrRecordedLeaveService')
+const { getEmployeeLeaveBalanceBreakdown } = require('./services/employeeLeaveBalanceService')
 const {
   approvalDocumentDecision,
   claimAttachmentDeadlineReminders,
@@ -1331,7 +1332,10 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
   await syncAllEmployeeStatuses()
   const { rows } = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.params.id])
   if (!rows.length) return res.status(404).json({ message: 'Employee not found' })
-  res.json(rows[0])
+  const employee = rows[0]
+  const policies = await getLeavePolicies()
+  employee.leave_balance_breakdown = await getEmployeeLeaveBalanceBreakdown(db, employee, policies)
+  res.json(employee)
 })
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
