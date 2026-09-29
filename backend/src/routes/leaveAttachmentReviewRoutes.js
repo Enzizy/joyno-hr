@@ -1,11 +1,11 @@
 const express = require('express')
+const { MANAGEMENT_ROLES } = require('../constants/roles')
 const {
   REVIEW_STATUSES,
   calculateBusinessDayDeadline,
   requiresDocument,
 } = require('../services/leaveAttachmentReviewService')
 
-const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next)

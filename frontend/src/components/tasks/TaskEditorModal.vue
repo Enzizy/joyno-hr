@@ -26,7 +26,7 @@ const isEditing = computed(() => Boolean(props.task))
 const isMeeting = computed(() => !isEditing.value && props.mode === 'meeting')
 const modalTitle = computed(() => isEditing.value ? 'Edit Task' : isMeeting.value ? 'Create Meeting' : 'Create Task')
 const entityLabel = computed(() => isMeeting.value ? 'Meeting' : 'Task')
-const assignableUsers = computed(() => props.users.filter((user) => String(user.role || '').toLowerCase() !== 'ceo'))
+const assignableUsers = computed(() => props.users)
 const departmentOptions = computed(() => {
   const values = new Set(assignableUsers.value.map((user) => String(user.department || '').trim()).filter(Boolean))
   return Array.from(values).sort((a, b) => a.localeCompare(b))

@@ -37,6 +37,19 @@ test('requires an employee and leave type for manual leave', () => {
   )
 })
 
+test('requires the source and reason for management-recorded leave', () => {
+  assert.equal(
+    validateHrCalendarEntry({
+      entry_type: 'leave',
+      employee_id: 42,
+      leave_type_name: 'Sick Leave',
+      start_date: '2026-07-28',
+      end_date: '2026-07-28',
+    }).error,
+    'Record how the leave request was received and the reason provided'
+  )
+})
+
 test('creates management-only notes by default', () => {
   const result = validateHrCalendarEntry({
     entry_type: 'note',

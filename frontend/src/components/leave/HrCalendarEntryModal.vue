@@ -69,6 +69,10 @@ function submit() {
     error.value = 'Employee and leave type are required.'
     return
   }
+  if (form.entry_type === 'leave' && !form.description.trim()) {
+    error.value = 'Record how the request was received and the reason provided.'
+    return
+  }
   if (form.entry_type === 'note' && !form.title.trim()) {
     error.value = 'Add a short title for the calendar note.'
     return
@@ -158,13 +162,15 @@ watch(() => [props.show, props.entry], ([show]) => {
       </div>
 
       <label class="block text-sm font-medium text-gray-200">
-        Short description <span class="font-normal text-gray-500">(optional)</span>
+        {{ form.entry_type === 'leave' ? 'How received and reason' : 'Short description' }}
+        <span v-if="form.entry_type === 'leave'" class="text-red-500">*</span>
+        <span v-else class="font-normal text-gray-500">(optional)</span>
         <textarea
           v-model="form.description"
           rows="3"
           maxlength="500"
           class="form-control mt-1.5 resize-y"
-          :placeholder="form.entry_type === 'leave' ? 'How the request was received or other context…' : 'Add helpful context for HR and management…'"
+          :placeholder="form.entry_type === 'leave' ? 'Example: Employee messaged HR in Teams and requested sick leave due to fever.' : 'Add helpful context for HR and management…'"
         />
         <span class="mt-1 block text-right text-xs text-gray-500">{{ form.description.length }} / 500</span>
       </label>
@@ -181,7 +187,7 @@ watch(() => [props.show, props.entry], ([show]) => {
       </label>
 
       <p v-if="form.entry_type === 'leave'" class="rounded-xl border border-emerald-700/30 bg-emerald-500/[0.06] p-3 text-xs leading-5 text-emerald-200">
-        This creates an official approved leave. The system will apply leave policy rules, deduct eligible credits, include it in reports and payroll, and notify the employee.
+        Use this when the employee submitted leave directly to management instead of filing in the system. It creates an approved, audited leave, applies leave policy, updates payroll, and notifies the employee.
       </p>
       <p v-if="error" class="rounded-lg border border-red-700/40 bg-red-500/10 p-3 text-sm text-red-300">
         {{ error }}

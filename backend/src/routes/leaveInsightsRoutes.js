@@ -1,12 +1,12 @@
 const express = require('express')
+const { MANAGEMENT_ROLES, isManagementRole } = require('../constants/roles')
 const { getLeavePolicySettings } = require('../services/leavePolicyService')
 const { getPhilippineHolidays, validDate } = require('../services/philippineHolidayService')
 const { validateHrCalendarEntry } = require('../services/hrCalendarEntryService')
 
-const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
 
 function isManagement(user) {
-  return MANAGEMENT_ROLES.includes(user?.role)
+  return isManagementRole(user?.role)
 }
 
 function getLeaveCalendarAccessPolicy(user) {

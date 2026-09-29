@@ -1,7 +1,7 @@
 const express = require('express')
 const { addAuditLog, updateEmployeeStatus } = require('../helpers')
+const { MANAGEMENT_ROLES } = require('../constants/roles')
 
-const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
 const REQUEST_COLUMNS = `
   lcr.id, lcr.leave_request_id, lcr.employee_id, lcr.request_type,
   lcr.original_start_date, lcr.original_end_date, lcr.requested_start_date,
@@ -58,7 +58,7 @@ function createLeaveChangeRequestRouter({
 
   async function notifyManagement(changeRequest) {
     const typeLabel = changeRequest.request_type === 'move' ? 'reschedule' : 'cancellation'
-    await notifyRoles(['admin', 'hr'], {
+    await notifyRoles(MANAGEMENT_ROLES, {
       type: 'leave_change_requested',
       title: `Leave ${typeLabel} requested`,
       message: `${changeRequest.employee_name} requested a leave ${typeLabel}.`,
@@ -67,7 +67,7 @@ function createLeaveChangeRequestRouter({
     })
     const { rows } = await db.query(
       `SELECT DISTINCT email FROM users
-       WHERE role IN ('admin', 'hr') AND email IS NOT NULL AND email <> ''`
+       WHERE role IN ('admin', 'hr', 'ceo') AND email IS NOT NULL AND email <> ''`
     )
     const reviewUrl = frontendOrigin ? `${frontendOrigin}/leave-approvals` : ''
     for (const recipient of rows) {

@@ -78,7 +78,7 @@ const taskTypeOptions = [
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const offset = computed(() => (page.value - 1) * pageSize.value)
-const assignableUsers = computed(() => users.value.filter((user) => String(user.role || '').toLowerCase() !== 'ceo'))
+const assignableUsers = computed(() => users.value)
 
 function userLabel(id) {
   const user = users.value.find((u) => Number(u.id) === Number(id))

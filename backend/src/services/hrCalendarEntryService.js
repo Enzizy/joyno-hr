@@ -29,6 +29,9 @@ function validateHrCalendarEntry(input = {}) {
   if (entryType === 'leave' && !leaveTypeName) {
     return { error: 'Leave type is required for an official leave' }
   }
+  if (entryType === 'leave' && !description) {
+    return { error: 'Record how the leave request was received and the reason provided' }
+  }
   if (entryType === 'note' && !noteTitle) {
     return { error: 'Title is required for a calendar note' }
   }

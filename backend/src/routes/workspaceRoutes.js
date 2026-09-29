@@ -1,11 +1,11 @@
 const express = require('express')
+const { MANAGEMENT_ROLES, isManagementRole } = require('../constants/roles')
 
-const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
 const EMAIL_DELIVERY_OPTIONS = ['immediate', 'daily', 'off']
 const NOTIFICATION_CATEGORIES = ['leave', 'task', 'system']
 
 function isManagement(user) {
-  return MANAGEMENT_ROLES.includes(user?.role)
+  return isManagementRole(user?.role)
 }
 
 function parseLimit(value, fallback = 6, maximum = 12) {

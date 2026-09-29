@@ -38,6 +38,10 @@ const { createLeaveInsightsRouter } = require('./routes/leaveInsightsRoutes')
 const { createLeaveChangeRequestRouter } = require('./routes/leaveChangeRequestRoutes')
 const { createLeaveAttachmentReviewRouter } = require('./routes/leaveAttachmentReviewRoutes')
 const { createWorkspaceRouter } = require('./routes/workspaceRoutes')
+const { createUserRouter } = require('./routes/userRoutes')
+const { createPayrollRouter } = require('./routes/payrollRoutes')
+const { createPayrollService } = require('./services/payrollService')
+const { isRoleAllowed } = require('./constants/roles')
 const {
   LEAD_STATUSES,
   LEAD_SOURCES,
@@ -100,7 +104,7 @@ const corsOptions = {
     if (allowedOrigins.includes(normalizeOrigin(origin))) return callback(null, true)
     return callback(new Error('Not allowed by CORS'))
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 204,
 }
@@ -1002,7 +1006,7 @@ async function authRequired(req, res, next) {
 
 function requireRole(roles) {
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || !isRoleAllowed(roles, req.user.role)) {
       return res.status(403).json({ message: 'Forbidden' })
     }
     return next()
@@ -1099,6 +1103,8 @@ app.use(createLeaveChangeRequestRouter({
   frontendOrigin: PRIMARY_FRONTEND_ORIGIN,
 }))
 app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
+const payrollService = createPayrollService({ db })
+app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog }))
 
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
@@ -1264,60 +1270,8 @@ app.post('/api/auth/reset-password', loginLimiter, async (req, res) => {
   return res.json({ message: 'Password reset successful. You can now log in.' })
 })
 
-// Users (Admin)
-app.get('/api/users', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT u.id, u.email, u.role, u.employee_id, e.employee_code, e.first_name, e.last_name, e.department
-     FROM users u
-     LEFT JOIN employees e ON u.employee_id = e.id
-     ORDER BY u.id DESC`
-  )
-  res.json(rows)
-})
-
-app.post('/api/users', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
-  const { email, password, role = 'employee', employee_id = null } = req.body || {}
-  const allowedRoles = new Set(['employee', 'hr', 'admin'])
-  if (!email || !password) return res.status(400).json({ message: 'Email and password required' })
-  if (!allowedRoles.has(role)) return res.status(400).json({ message: 'Invalid role' })
-  if (!employee_id) return res.status(400).json({ message: 'Employee link is required' })
-  const employeeId = Number(employee_id)
-  if (!employeeId) return res.status(400).json({ message: 'Invalid employee id' })
-  const employeeExists = await db.query('SELECT id FROM employees WHERE id = $1', [employeeId])
-  if (!employeeExists.rows.length) return res.status(404).json({ message: 'Employee not found' })
-  const alreadyLinked = await db.query('SELECT id FROM users WHERE employee_id = $1 LIMIT 1', [employeeId])
-  if (alreadyLinked.rows.length) return res.status(409).json({ message: 'Selected employee already has an account' })
-  const hash = await bcrypt.hash(password, 10)
-  const { rows } = await db.query(
-    'INSERT INTO users (email, password_hash, role, employee_id) VALUES ($1,$2,$3,$4) RETURNING id',
-    [email, hash, role, employeeId]
-  )
-  const createdId = rows[0]?.id
-  await addAuditLog(req.user.id, 'create_user', 'users', createdId)
-  res.json({ message: 'User created' })
-})
-
-app.delete('/api/users/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
-  const id = Number(req.params.id)
-  if (!id) return res.status(400).json({ message: 'Invalid user id' })
-  if (id === req.user.id) return res.status(400).json({ message: 'Cannot delete your own account' })
-  const { rows } = await db.query('SELECT id FROM users WHERE id = $1', [id])
-  if (!rows.length) return res.status(404).json({ message: 'User not found' })
-  const reassignedTasks = await db.query('UPDATE tasks SET assigned_to = $1 WHERE assigned_to = $2', [req.user.id, id])
-  const reassignedRules = await db.query('UPDATE automation_rules SET assigned_to = $1 WHERE assigned_to = $2', [
-    req.user.id,
-    id,
-  ])
-  await db.query('DELETE FROM users WHERE id = $1', [id])
-  await addAuditLog(req.user.id, 'delete_user', 'users', id)
-  res.json({
-    message: 'User deleted',
-    reassigned: {
-      tasks: reassignedTasks.rowCount || 0,
-      automation_rules: reassignedRules.rowCount || 0,
-    },
-  })
-})
+// User accounts
+app.use(createUserRouter({ db, authRequired, requireRole, addAuditLog }))
 
 // Employees
 app.get('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
@@ -1448,7 +1402,7 @@ app.post('/api/employees/:id/awol', authRequired, requireRole(['admin', 'hr', 'c
       'Absent Without Official Leave',
       start_date,
       end_date,
-      reason || 'AWOL set by admin/hr',
+      reason || 'AWOL set by management',
       leaveDays,
       req.user.id,
       req.user.email,
@@ -2317,7 +2271,7 @@ app.put('/api/tasks/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), asy
   res.json(rows[0])
 })
 
-app.post('/api/tasks/:id/start', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+app.post('/api/tasks/:id/start', authRequired, requireRole(['admin', 'hr', 'ceo', 'employee']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const ownClause =
@@ -2343,7 +2297,7 @@ app.post('/api/tasks/:id/start', authRequired, requireRole(['admin', 'hr', 'empl
   res.json(rows[0])
 })
 
-app.post('/api/tasks/:id/complete', authRequired, uploadProof, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+app.post('/api/tasks/:id/complete', authRequired, uploadProof, requireRole(['admin', 'hr', 'ceo', 'employee']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const ownCheck =
@@ -2408,7 +2362,7 @@ app.post('/api/tasks/:id/cancel', authRequired, requireRole(['admin', 'hr', 'ceo
   res.json(rows[0])
 })
 
-app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'employee']), async (req, res) => {
+app.get('/api/tasks/:id/proof', authRequired, requireRole(['admin', 'hr', 'ceo', 'employee']), async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid task id' })
   const ownCheck =
@@ -2888,7 +2842,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
     return res.status(400).json({ message: 'Invalid leave type' })
   }
   if (selectedLeaveType.id === 'awol') {
-    return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
+    return res.status(403).json({ message: 'AWOL can only be set by management from employee management' })
   }
   const leaveType = await resolveEffectiveLeaveType(
     selectedLeaveType,
@@ -3039,7 +2993,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
     return res.status(400).json({ message: 'Invalid leave type' })
   }
   if (selectedLeaveType.id === 'awol') {
-    return res.status(403).json({ message: 'AWOL can only be set by admin/hr from employee management' })
+    return res.status(403).json({ message: 'AWOL can only be set by management from employee management' })
   }
   await resetEmployeeLeaveCreditsIfNeeded(req.user.employee_id)
   const empResult = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.user.employee_id])
@@ -3514,6 +3468,8 @@ app.get('/api/audit-logs', authRequired, requireRole(['admin', 'hr', 'ceo']), as
 
 const PORT = process.env.PORT || 3000
 const DB_RETRY_MS = Number(process.env.DB_RETRY_MS || 15000)
+const RUN_MIGRATIONS_ON_STARTUP = process.env.RUN_MIGRATIONS_ON_STARTUP !== 'false'
+const RUN_BACKGROUND_JOBS = process.env.RUN_BACKGROUND_JOBS !== 'false'
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -3522,10 +3478,14 @@ function sleep(ms) {
 async function ensureDatabaseReadyWithRetry() {
   while (true) {
     try {
-      await runMigrations()
+      if (RUN_MIGRATIONS_ON_STARTUP) {
+        await runMigrations()
+      } else {
+        await db.query('SELECT 1')
+      }
       dbReady = true
       console.log('Database connection ready')
-      if (!backgroundJobsStarted) {
+      if (RUN_BACKGROUND_JOBS && !backgroundJobsStarted) {
         backgroundJobsStarted = true
         runApprovalSlaEscalations().catch((err) => console.error('SLA escalation run failed', err))
         setInterval(() => {

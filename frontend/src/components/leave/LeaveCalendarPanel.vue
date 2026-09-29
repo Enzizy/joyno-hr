@@ -12,6 +12,7 @@ import {
   updateHrCalendarEntry,
 } from '@/services/backendService'
 import { useAuthStore } from '@/stores/authStore'
+import { isManagementRole } from '@/utils/roles'
 import { useToastStore } from '@/stores/toastStore'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
@@ -45,7 +46,7 @@ const editingEntry = ref(null)
 const deleteTarget = ref(null)
 const employeeDepartments = ref(new Map())
 
-const canManageCalendar = computed(() => ['admin', 'hr', 'ceo'].includes(authStore.role))
+const canManageCalendar = computed(() => isManagementRole(authStore.role))
 const monthLabel = computed(() => currentMonth.value.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))
 const monthStart = computed(() => toISO(new Date(currentMonth.value.getFullYear(), currentMonth.value.getMonth(), 1)))
 const monthEnd = computed(() => toISO(new Date(currentMonth.value.getFullYear(), currentMonth.value.getMonth() + 1, 0)))

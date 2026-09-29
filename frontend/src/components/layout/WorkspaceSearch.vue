@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { getSearchNavForRole } from '@/router/navConfig'
 import { searchWorkspace } from '@/services/backendService'
 import { useAuthStore } from '@/stores/authStore'
+import { isManagementRole } from '@/utils/roles'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -76,7 +77,7 @@ function formatDate(value) {
 }
 
 function resultPath(group, item) {
-  const management = ['admin', 'hr', 'ceo'].includes(authStore.role)
+  const management = isManagementRole(authStore.role)
   if (group === 'employees') return `/employees?employee=${item.id}`
   if (group === 'leaves') return `${management ? '/leave-approvals' : '/leave-request'}?request=${item.id}`
   if (group === 'tasks') return `${management ? '/tasks' : '/my-tasks'}?task=${item.id}`

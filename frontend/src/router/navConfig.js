@@ -1,5 +1,4 @@
-const ALL_ROLES = ['admin', 'hr', 'ceo', 'employee']
-const MANAGEMENT_ROLES = ['admin', 'hr', 'ceo']
+import { ALL_ROLES, MANAGEMENT_ROLES, isRoleAllowed } from '@/utils/roles'
 
 export const navGroups = [
   {
@@ -43,9 +42,10 @@ export const navGroups = [
   {
     name: 'Insights',
     icon: 'chart',
-    roles: MANAGEMENT_ROLES,
+    roles: ALL_ROLES,
     children: [
       { path: '/reports', name: 'Leave reports', icon: 'chart', roles: MANAGEMENT_ROLES },
+      { path: '/payroll', name: 'Payroll', icon: 'chart', roles: ALL_ROLES },
     ],
   },
   {
@@ -60,7 +60,7 @@ export const navGroups = [
 ]
 
 function roleAllowed(item, role) {
-  return !item.roles || item.roles.includes(role)
+  return !item.roles || isRoleAllowed(item.roles, role)
 }
 
 export function getNavForRole(role) {

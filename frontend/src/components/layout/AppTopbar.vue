@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import WorkspaceSearch from '@/components/layout/WorkspaceSearch.vue'
 import { useAuthStore } from '@/stores/authStore'
+import { isManagementRole } from '@/utils/roles'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useThemeStore } from '@/stores/themeStore'
 
@@ -56,7 +57,7 @@ function toggleMenu() {
 async function openNotification(item) {
   if (!item.is_read) await notificationStore.markRead(item.id)
   notificationsOpen.value = false
-  const management = ['admin', 'hr', 'ceo'].includes(authStore.role)
+  const management = isManagementRole(authStore.role)
   const link = item.target_table === 'leave_requests'
     ? (management ? '/leave-approvals' : '/leave-request')
     : item.target_table === 'tasks' ? (management ? '/tasks' : '/my-tasks') : item.link

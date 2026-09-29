@@ -8,6 +8,7 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import { getNotificationPreferences, updateNotificationPreferences } from '@/services/backendService'
 import { useAuthStore } from '@/stores/authStore'
+import { isManagementRole } from '@/utils/roles'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useToastStore } from '@/stores/toastStore'
 
@@ -37,7 +38,7 @@ const categories = [
 ]
 const totalPages = computed(() => Math.max(1, Math.ceil(store.total / pageSize)))
 const allSelected = computed(() => store.items.length > 0 && store.items.every((item) => selectedIds.value.includes(item.id)))
-const canManage = computed(() => ['admin', 'hr', 'ceo'].includes(authStore.role))
+const canManage = computed(() => isManagementRole(authStore.role))
 
 function formatDate(value) {
   if (!value) return ''

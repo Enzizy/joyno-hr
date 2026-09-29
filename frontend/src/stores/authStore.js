@@ -1,6 +1,7 @@
 ﻿import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { login as apiLogin, fetchMe as apiFetchMe } from '@/services/api'
+import { isManagementRole } from '@/utils/roles'
 
 export const useAuthStore = defineStore('auth', () => {
   const userProfile = ref(null)
@@ -13,8 +14,8 @@ export const useAuthStore = defineStore('auth', () => {
   const isHR = computed(() => role.value === 'hr')
   const isCEO = computed(() => role.value === 'ceo')
   const isEmployee = computed(() => role.value === 'employee')
-  const canAccessAdmin = computed(() => isAdmin.value || isHR.value || isCEO.value)
-  const canAccessHR = computed(() => isAdmin.value || isHR.value || isCEO.value)
+  const canAccessAdmin = computed(() => isManagementRole(role.value))
+  const canAccessHR = computed(() => isManagementRole(role.value))
 
   async function initAuth() {
     try {

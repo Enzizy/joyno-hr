@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import AppLayout from '@/layouts/AppLayout.vue'
+import { isRoleAllowed } from '@/utils/roles'
 
 const routes = [
   {
@@ -109,6 +110,12 @@ const routes = [
         component: () => import('@/views/ReportsView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
+      {
+        path: 'payroll',
+        name: 'Payroll',
+        component: () => import('@/views/PayrollView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
+      },
       // Admin
       {
         path: 'users',
@@ -164,7 +171,7 @@ router.beforeEach(async (to, from, next) => {
   }
 
   const allowedRoles = to.meta.roles
-  if (allowedRoles && allowedRoles.length && !allowedRoles.includes(authStore.role)) {
+  if (allowedRoles && allowedRoles.length && !isRoleAllowed(allowedRoles, authStore.role)) {
     next({ name: 'Dashboard' })
     return
   }

@@ -192,6 +192,50 @@ export async function getDashboardOverview() {
   return api.getDashboardOverview()
 }
 
+export async function getPayrollProfiles() {
+  return api.getPayrollProfiles()
+}
+
+export async function updatePayrollProfile(employeeId, data) {
+  return api.updatePayrollProfile(employeeId, data)
+}
+
+export async function importPayrollAttendance(file, periodStart, periodEnd) {
+  return api.importPayrollAttendance(file, periodStart, periodEnd)
+}
+
+export async function getPayrollAttendanceBatch(id) {
+  return api.getPayrollAttendanceBatch(id)
+}
+
+export async function updatePayrollAttendanceDay(id, data) {
+  return api.updatePayrollAttendanceDay(id, data)
+}
+
+export async function getPayrollRuns() {
+  return api.getPayrollRuns()
+}
+
+export async function getPayrollRun(id) {
+  return api.getPayrollRun(id)
+}
+
+export async function previewPayrollRun(data) {
+  return api.previewPayrollRun(data)
+}
+
+export async function approvePayrollRun(id) {
+  return api.approvePayrollRun(id)
+}
+
+export async function lockPayrollRun(id) {
+  return api.lockPayrollRun(id)
+}
+
+export async function getMyPayrollLines() {
+  return api.getMyPayrollLines()
+}
+
 export async function getNotifications(options = {}) {
   return api.getNotifications(options)
 }

@@ -52,6 +52,65 @@ export async function getDashboardOverview() {
   return request('/api/dashboard/overview')
 }
 
+// Payroll API contract: profiles GET and PUT /profiles/:employeeId;
+// attendance multipart POST fields file, periodStart, periodEnd; CSV parsing returns
+// a batch with exceptions/days; attendance corrections PATCH {timeIn,timeOut,status,reason}.
+// Preview POST accepts {periodStart,periodEnd,payday,cutoff,includeContributions,attendanceBatchId}.
+// Runs list via GET /runs; approve/lock are POST actions; employees read GET /my-lines.
+export async function getPayrollProfiles() {
+  return request('/api/payroll/profiles')
+}
+
+export async function updatePayrollProfile(employeeId, data) {
+  return request(`/api/payroll/profiles/${encodeURIComponent(employeeId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function importPayrollAttendance(file, periodStart, periodEnd) {
+  const body = new FormData()
+  body.append('file', file)
+  body.append('periodStart', periodStart)
+  body.append('periodEnd', periodEnd)
+  return request('/api/payroll/attendance/import', { method: 'POST', body })
+}
+
+export async function getPayrollAttendanceBatch(id) {
+  return request(`/api/payroll/attendance/batches/${encodeURIComponent(id)}`)
+}
+
+export async function updatePayrollAttendanceDay(id, data) {
+  return request(`/api/payroll/attendance/days/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function getPayrollRuns() {
+  return request('/api/payroll/runs')
+}
+
+export async function getPayrollRun(id) {
+  return request(`/api/payroll/runs/${encodeURIComponent(id)}`)
+}
+
+export async function previewPayrollRun(data) {
+  return request('/api/payroll/runs/preview', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export async function approvePayrollRun(id) {
+  return request(`/api/payroll/runs/${encodeURIComponent(id)}/approve`, { method: 'POST' })
+}
+
+export async function lockPayrollRun(id) {
+  return request(`/api/payroll/runs/${encodeURIComponent(id)}/lock`, { method: 'POST' })
+}
+
+export async function getMyPayrollLines() {
+  return request('/api/payroll/my-lines')
+}
+
 export async function getNotifications(options = {}) {
   const params = new URLSearchParams()
   if (options.limit) params.set('limit', options.limit)
