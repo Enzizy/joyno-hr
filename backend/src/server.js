@@ -132,6 +132,7 @@ const loginLimiter = rateLimit({
 })
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
+const PAYROLL_ENABLED = process.env.PAYROLL_ENABLED === 'true'
 const SMTP_USER = (process.env.SMTP_USER || '').trim()
 const SMTP_PASS = (process.env.SMTP_PASS || '').trim()
 const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
@@ -1103,8 +1104,10 @@ app.use(createLeaveChangeRequestRouter({
   frontendOrigin: PRIMARY_FRONTEND_ORIGIN,
 }))
 app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
-const payrollService = createPayrollService({ db })
-app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog }))
+if (PAYROLL_ENABLED) {
+  const payrollService = createPayrollService({ db })
+  app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog }))
+}
 
 async function loadUserProfile(userId) {
   const { rows } = await db.query(
@@ -3401,6 +3404,7 @@ app.get('/api/reports/leave.xlsx', authRequired, requireRole(['admin', 'hr', 'ce
 })
 
 app.get('/api/reports/leave-payroll.xlsx', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
+  if (!PAYROLL_ENABLED) return res.status(404).json({ message: 'Not found' })
   const { from, to } = req.query
   let sql = `
     SELECT

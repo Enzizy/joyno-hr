@@ -7,6 +7,7 @@ import AppDatePicker from '@/components/ui/AppDatePicker.vue'
 import AppTable from '@/components/ui/AppTable.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import { payrollEnabled } from '@/config/features'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 const toast = useToastStore()
@@ -180,7 +181,7 @@ onMounted(loadLeave)
       <p v-if="dateError" class="mt-2 text-sm text-red-400">{{ dateError }}</p>
       <div class="mt-4 flex flex-col gap-3 border-t border-gray-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
         <div class="flex flex-wrap gap-2"><span class="py-1.5 text-xs text-gray-500">Quick range:</span><button v-for="range in [{ id: 'month', label: 'This month' }, { id: 'quarter', label: 'Last 3 months' }, { id: 'year', label: 'This year' }]" :key="range.id" type="button" class="rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-300 hover:bg-gray-700" @click="setRange(range.id)">{{ range.label }}</button></div>
-        <div class="flex flex-wrap gap-2"><AppButton variant="secondary" size="sm" :disabled="!leaveData.length" :loading="exporting" @click="exportFile('/api/reports/leave.xlsx', 'leave-report')">Export details</AppButton><AppButton variant="secondary" size="sm" :disabled="!leaveData.length" :loading="exporting" @click="exportFile('/api/reports/leave-payroll.xlsx', 'leave-payroll')">Export payroll</AppButton></div>
+        <div class="flex flex-wrap gap-2"><AppButton variant="secondary" size="sm" :disabled="!leaveData.length" :loading="exporting" @click="exportFile('/api/reports/leave.xlsx', 'leave-report')">Export details</AppButton><AppButton v-if="payrollEnabled" variant="secondary" size="sm" :disabled="!leaveData.length" :loading="exporting" @click="exportFile('/api/reports/leave-payroll.xlsx', 'leave-payroll')">Export payroll</AppButton></div>
       </div>
     </section>
 

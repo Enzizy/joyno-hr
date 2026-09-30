@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { isRoleAllowed } from '@/utils/roles'
+import { payrollEnabled } from '@/config/features'
 
 const routes = [
   {
@@ -110,12 +111,12 @@ const routes = [
         component: () => import('@/views/ReportsView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
-      {
+      ...(payrollEnabled ? [{
         path: 'payroll',
         name: 'Payroll',
         component: () => import('@/views/PayrollView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
-      },
+      }] : []),
       // Admin
       {
         path: 'users',

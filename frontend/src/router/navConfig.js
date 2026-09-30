@@ -1,4 +1,5 @@
 import { ALL_ROLES, MANAGEMENT_ROLES, isRoleAllowed } from '@/utils/roles'
+import { payrollEnabled } from '@/config/features'
 
 export const navGroups = [
   {
@@ -45,7 +46,7 @@ export const navGroups = [
     roles: ALL_ROLES,
     children: [
       { path: '/reports', name: 'Leave reports', icon: 'chart', roles: MANAGEMENT_ROLES },
-      { path: '/payroll', name: 'Payroll', icon: 'chart', roles: ALL_ROLES },
+      { path: '/payroll', name: 'Payroll', icon: 'chart', roles: ALL_ROLES, hidden: !payrollEnabled },
     ],
   },
   {

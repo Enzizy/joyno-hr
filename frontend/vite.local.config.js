@@ -3,7 +3,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 const localPort = 5175
-const remoteApi = 'https://joyno-hr.onrender.com'
+const remoteApi = 'https://srv1981649.hstgr.cloud'
 const deployedFrontendOrigin = 'https://joyno-hr.pages.dev'
 
 export default defineConfig({
