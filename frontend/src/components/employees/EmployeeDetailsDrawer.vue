@@ -14,7 +14,6 @@ const paidLeaveBalances = computed(() => leaveBalance.value?.balances || [])
 const leaveToneById = {
   vacation_leave: { badge: 'border-emerald-800/70 bg-emerald-950/40 text-emerald-300', bar: 'bg-emerald-500' },
   sick_leave: { badge: 'border-sky-800/70 bg-sky-950/40 text-sky-300', bar: 'bg-sky-500' },
-  bereavement_leave: { badge: 'border-violet-800/70 bg-violet-950/40 text-violet-300', bar: 'bg-violet-500' },
   service_incentive_leave: { badge: 'border-amber-800/70 bg-amber-950/40 text-amber-300', bar: 'bg-amber-500' },
 }
 
@@ -23,7 +22,7 @@ function leaveTone(id) {
 }
 
 function leaveAbbreviation(item) {
-  const known = { vacation_leave: 'VL', sick_leave: 'SL', bereavement_leave: 'BL', service_incentive_leave: 'SIL' }
+  const known = { vacation_leave: 'VL', sick_leave: 'SL', service_incentive_leave: 'SIL' }
   return known[item.id] || String(item.name || 'Leave').split(/\s+/).map((word) => word[0]).join('').slice(0, 3).toUpperCase()
 }
 
@@ -87,6 +86,7 @@ onBeforeUnmount(() => {
                       <div class="min-w-0">
                         <p class="truncate text-sm font-medium text-gray-200">{{ item.name }}</p>
                         <p class="mt-0.5 text-xs text-gray-500">{{ item.eligible ? `${formatBalance(item.used)} used` : `Available after ${item.min_months_employed} months` }}</p>
+                        <p v-if="item.cash_convertible" class="mt-1 text-xs text-amber-300">Unused days are convertible to cash.</p>
                       </div>
                       <div class="shrink-0 text-right">
                         <p class="text-sm font-semibold text-gray-100">{{ item.eligible ? `${formatBalance(item.remaining)} days left` : 'Not eligible' }}</p>

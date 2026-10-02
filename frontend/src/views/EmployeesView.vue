@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useToastStore } from '@/stores/toastStore'
-import { getAuditLogs, getEmployee, getUsers, setEmployeeAwol as setEmployeeAwolApi } from '@/services/backendService'
+import { getAuditLogs, getEmployee, getUsers, getLeaveTypes, setEmployeeAwol as setEmployeeAwolApi } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -14,6 +14,7 @@ import PageHeader from '@/components/ui/PageHeader.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { usePersistentFilters } from '@/composables/usePersistentFilters'
 import EmployeeDetailsDrawer from '@/components/employees/EmployeeDetailsDrawer.vue'
+import { isPaidLeaveEligible } from '@/utils/leaveEligibility'
 import { getDepartmentPresentation, getShiftPresentation } from '@/utils/employeePresentation'
 
 const employeeStore = useEmployeeStore()
@@ -39,6 +40,7 @@ const selectedEmployee = ref(null)
 const drawerOpen = ref(false)
 const drawerLoading = ref(false)
 const users = ref([])
+const leavePolicies = ref([])
 const employeeActivities = ref([])
 usePersistentFilters('employees', { departmentFilter, statusFilter, shiftFilter, searchQuery, pageSize })
 const departmentOptions = ['Marketing', 'IT', 'Sales', 'Admin']
@@ -55,7 +57,7 @@ const form = ref({
 })
 
 onMounted(async () => {
-  await Promise.all([employeeStore.fetchList(), getUsers().then((rows) => { users.value = rows }).catch(() => {})])
+  await Promise.all([getLeaveTypes().then((policies) => { leavePolicies.value = policies }), employeeStore.fetchList(), getUsers().then((rows) => { users.value = rows }).catch(() => {})])
   document.addEventListener('click', closeActionMenu)
 })
 
@@ -93,21 +95,10 @@ const selectedUser = computed(() => users.value.find((user) => Number(user.emplo
 watch([departmentFilter, statusFilter, shiftFilter, searchQuery, pageSize], () => { page.value = 1 })
 watch(totalPages, (total) => { if (page.value > total) page.value = total })
 
-function monthsEmployed(dateValue) {
-  if (!dateValue) return 0
-  const hired = new Date(dateValue)
-  if (Number.isNaN(hired.getTime())) return 0
-  const today = new Date()
-  let months = (today.getFullYear() - hired.getFullYear()) * 12 + (today.getMonth() - hired.getMonth())
-  if (today.getDate() < hired.getDate()) months -= 1
-  return Math.max(0, months)
-}
-
 function creditsByTenure(dateValue) {
-  const months = monthsEmployed(dateValue)
-  if (months >= 12) return 15
-  if (months >= 6) return 3
-  return 0
+  return leavePolicies.value
+    .filter((policy) => isPaidLeaveEligible(dateValue, undefined, policy.min_months_employed))
+    .reduce((total, policy) => total + Number(policy.paid_days_per_year || 0), 0)
 }
 
 const computedFormCredits = computed(() => creditsByTenure(form.value.date_hired))
@@ -450,7 +441,7 @@ async function submitAwol() {
         <div class="rounded-lg border border-gray-800 bg-gray-950/70 px-4 py-3">
           <p class="text-sm font-medium text-gray-200">Auto leave credits</p>
           <p class="mt-1 text-2xl font-bold text-primary-200">{{ computedFormCredits.toFixed(2) }}</p>
-          <p class="mt-1 text-xs text-gray-400">Based on date hired: below 6 months = 0, 6-11 months = 3, 12+ months = 15.</p>
+          <p class="mt-1 text-xs text-gray-400">Separate annual allowances: 5 sick + 3 vacation days after 3 months, plus 5 SIL days after 1 year. This total follows the current leave policies.</p>
         </div>
         <div>
           <label class="mb-1 block text-sm font-medium text-gray-200">Status</label>

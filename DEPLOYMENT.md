@@ -115,3 +115,33 @@ npm install && npm run build
 7. If Pages requires a deploy command, set:
    - Build command: `npm install`
    - Deploy command: `npm run build`
+
+## Leave-credit release with payroll hidden
+
+Production builds hide the Pay page even if `VITE_PAYROLL_ENABLED=true` is set in Cloudflare.
+The production API also disables payroll endpoints. Local development can continue to use
+`VITE_PAYROLL_ENABLED=true` and `PAYROLL_ENABLED=true`.
+
+Cloudflare deploys the frontend from `main`. The Hostinger API needs this separate update:
+
+```bash
+cd /opt/joyno-hr
+git pull --ff-only
+cd backend
+sudo docker compose -f compose.kvm.yml build api
+sudo mkdir -p /opt/joyno-hr-backups
+sudo docker compose -f compose.kvm.yml run --rm --no-deps --user root \
+  -v /opt/joyno-hr-backups:/backups api node src/applyLeavePolicyUpdate.js /backups
+sudo docker compose -f compose.kvm.yml up -d --no-deps api
+sudo docker compose -f compose.kvm.yml exec -T api node -e \
+  "fetch('http://127.0.0.1:3000/health').then(r => r.text()).then(console.log)"
+```
+
+The targeted command backs up leave-policy rows and credit summaries, applies only migration
+023 in one transaction, and recalculates employee totals. It preserves historical leave and
+payroll records. It does not run the pending local payroll migrations.
+The backup path is printed by the command. If the migration is already recorded, it skips it.
+
+New allowances are separate: 5 sick and 3 vacation days after 3 months; 5 SIL days after 1 year.
+Bereavement is retired from new requests. Unused SIL is marked as cash-convertible;
+automatic cash payment remains pending a decision on timing and payroll handling.
