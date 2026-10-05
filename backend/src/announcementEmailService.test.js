@@ -11,7 +11,8 @@ test('announcement emails reuse the notification helper, target the saved audien
   ]}}},
   sendEmailNotification:async message=>messages.push(message),frontendOrigin:'https://hr.example.test',
  })
- await send({id:12,title:'Team update',body:'First line\nSecond line',priority:'important',author_name:'HR',notify_ceo:true})
+ const result=await send({id:12,title:'Team update',body:'First line\nSecond line',priority:'important',author_name:'HR',notify_ceo:true})
+ assert.deepEqual(result,{status:'scheduled',recipients:2})
  assert.deepEqual(queries[0].params,[12,true])
  assert.match(queries[0].sql,/r.announcement_id=\$1 AND r.employee_id=u.employee_id/)
  assert.match(queries[0].sql,/\$2::boolean AND LOWER\(u.role\)='ceo'/)
@@ -27,5 +28,13 @@ test('no linked email contacts schedules no delivery',async()=>{
  const send=createAnnouncementEmailSender({db:{query:async(sql,params)=>{
   assert.deepEqual(params,[13,false]);assert.match(sql,/NULLIF\(TRIM\(u.email\),''\) IS NOT NULL/);return {rows:[]}
  }},sendEmailNotification:()=>assert.fail('No mail should be scheduled'),frontendOrigin:'https://hr.example.test'})
- await send({id:13,notify_ceo:false})
+ assert.deepEqual(await send({id:13,notify_ceo:false}),{status:'no_recipients',recipients:0})
+})
+
+test('missing email configuration is reported instead of silently pretending to send',async()=>{
+ const send=createAnnouncementEmailSender({isEmailConfigured:()=>false,
+  db:{query:()=>assert.fail('No contact lookup needed without a provider')},
+  sendEmailNotification:()=>assert.fail('No configured provider'),frontendOrigin:'https://hr.example.test',
+ })
+ assert.deepEqual(await send({id:14,notify_ceo:true}),{status:'not_configured',recipients:0})
 })

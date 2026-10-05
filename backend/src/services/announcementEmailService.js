@@ -1,6 +1,7 @@
 // Reuse Tasks & meetings' delivery helper, including branding and email preferences.
-function createAnnouncementEmailSender({ db, sendEmailNotification, frontendOrigin }) {
+function createAnnouncementEmailSender({ db, sendEmailNotification, frontendOrigin, isEmailConfigured = ()=>true }) {
   return async function sendAnnouncementEmails(announcement) {
+    if (!isEmailConfigured()) return {status:'not_configured',recipients:0}
     const contacts = (await db.query(`SELECT u.id,u.email,
       COALESCE(NULLIF(TRIM(CONCAT_WS(' ',e.first_name,e.last_name)),''),u.email) AS name
       FROM users u LEFT JOIN employees e ON e.id=u.employee_id
@@ -22,6 +23,7 @@ function createAnnouncementEmailSender({ db, sendEmailNotification, frontendOrig
           '',announcement.body,'',`View announcement: ${url}`].join('\n'),
       })
     }
+    return {status:sent.size?'scheduled':'no_recipients',recipients:sent.size}
   }
 }
 

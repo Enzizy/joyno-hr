@@ -154,7 +154,10 @@ function createAnnouncementService({ db, sendAnnouncementEmails = async()=>{} })
     })
     // Mail scheduling runs after commit; retries of an already-published announcement do not resend.
     if(result.newlyPublished){
-      try{await sendAnnouncementEmails(result.announcement)}catch(error){console.error('Announcement email scheduling failed:',error.message)}
+      try{result.announcement.email_delivery=await sendAnnouncementEmails(result.announcement)}catch(error){
+        console.error('Announcement email scheduling failed:',error.message)
+        result.announcement.email_delivery={status:'failed'}
+      }
     }
     return result.announcement
   }

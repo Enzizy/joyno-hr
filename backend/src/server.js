@@ -138,7 +138,8 @@ const loginLimiter = rateLimit({
 })
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
-const PAYROLL_ENABLED = process.env.PAYROLL_ENABLED === 'true'
+// Payroll remains available for local testing only during the leave-policy release.
+const PAYROLL_ENABLED = process.env.NODE_ENV !== 'production' && process.env.PAYROLL_ENABLED === 'true'
 const SMTP_USER = (process.env.SMTP_USER || '').trim()
 const SMTP_PASS = (process.env.SMTP_PASS || '').trim()
 const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
@@ -915,7 +916,7 @@ app.use(createLeaveChangeRequestRouter({
 app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
 app.use(createAnnouncementRouter({
   service:createAnnouncementService({db,sendAnnouncementEmails:createAnnouncementEmailSender({
-    db,sendEmailNotification,frontendOrigin:PRIMARY_FRONTEND_ORIGIN,
+    db,sendEmailNotification,frontendOrigin:PRIMARY_FRONTEND_ORIGIN,isEmailConfigured,
   })}),authRequired,requireRole,
 }))
 if (PAYROLL_ENABLED) {

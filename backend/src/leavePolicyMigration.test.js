@@ -5,6 +5,8 @@ const path = require('node:path')
 require('dotenv').config()
 const { Client } = require('pg')
 const { refreshEmployeeLeaveCredits } = require('./services/employeeLeaveBalanceService')
+const { applyLeavePolicyUpdate } = require('./applyLeavePolicyUpdate')
+const os = require('node:os')
 
 // Optional integration check: session-local tables only, always rolled back.
 test('policy migration and credit reconciliation preserve history and independent balances', {
@@ -15,11 +17,13 @@ test('policy migration and credit reconciliation preserve history and independen
       ? { rejectUnauthorized: false } : false,
   })
   await client.connect()
+  const backupDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'joyno-leave-test-'))
   try {
     await client.query('BEGIN')
     // Unqualified SQL cannot resolve any permanent application tables.
     await client.query('SET LOCAL search_path = pg_temp')
     await client.query(`
+      CREATE TEMP TABLE schema_migrations (filename text PRIMARY KEY);
       CREATE TEMP TABLE leave_policies (id text PRIMARY KEY, name text, paid_days_per_year numeric,
         min_months_employed int, remarks text, is_employee_requestable boolean, updated_at timestamptz);
       CREATE TEMP TABLE leave_policy_settings (id int, probationary_months int DEFAULT 6, updated_at timestamptz);
@@ -50,7 +54,10 @@ test('policy migration and credit reconciliation preserve history and independen
     assert.ok(tables.rows.every((row) => row.relpersistence === 't'))
 
     const migration = fs.readFileSync(path.join(__dirname, '../migrations/023_leave_credit_policy_update.sql'), 'utf8')
-    await client.query(migration)
+    const result = await applyLeavePolicyUpdate({ transaction: (callback) => callback(client) }, backupDirectory)
+    assert.equal(result.alreadyApplied, false)
+    assert.equal(JSON.parse(fs.readFileSync(result.backupPath, 'utf8')).leave_policies.length, 4)
+    assert.equal((await applyLeavePolicyUpdate({ transaction: (callback) => callback(client) }, backupDirectory)).alreadyApplied, true)
     await refreshEmployeeLeaveCredits(client, null, '2026-10-02')
     const employees = await client.query('SELECT id, leave_credits, leave_credits_entitlement FROM employees ORDER BY id')
     assert.deepEqual(employees.rows.map((row) => [row.id, Number(row.leave_credits), Number(row.leave_credits_entitlement)]),

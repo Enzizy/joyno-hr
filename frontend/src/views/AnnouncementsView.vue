@@ -41,7 +41,9 @@ async function save(payload){
   editing.value=saved
   if(payload.publish)saved=await publishAnnouncement(saved.id,saved.version)
   editorOpen.value=false;editing.value=null;status.value=payload.publish?'published':'draft';page.value=1
-  toast.success(payload.publish?'Announcement published to the selected employees':'Draft saved. Employees cannot see it yet')
+  if(payload.publish && saved.email_delivery?.status==='not_configured')toast.warning('Announcement published in the app. Emails were not sent because email delivery is not configured.',10000)
+  else if(payload.publish && saved.email_delivery?.status==='failed')toast.warning('Announcement published in the app, but email scheduling failed. Contact your administrator.',10000)
+  else toast.success(payload.publish?'Announcement published to the selected employees':'Draft saved. Employees cannot see it yet')
   await load();if(payload.publish)await open(saved.id)
  }catch(e){editorError.value=e.message}finally{busy.value=false}
 }

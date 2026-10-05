@@ -29,7 +29,7 @@ test('announcement workflow: audience, private drafts, idempotent publishing, re
   }}
   const copies=[],emails=[]
   const sendEmails=createAnnouncementEmailSender({db,sendEmailNotification:async message=>emails.push(message),frontendOrigin:'https://hr.example.test'})
-  const service=createAnnouncementService({db,sendAnnouncementEmails:async item=>{assert.equal(inOperation,false);copies.push(item);await sendEmails(item)}}),hr={id:1,role:'hr'},ana={id:2,role:'employee',employee_id:1},ben={id:3,role:'employee',employee_id:2}
+  const service=createAnnouncementService({db,sendAnnouncementEmails:async item=>{assert.equal(inOperation,false);copies.push(item);return sendEmails(item)}}),hr={id:1,role:'hr'},ana={id:2,role:'employee',employee_id:1},ben={id:3,role:'employee',employee_id:2}
   const audience=await service.audience()
   assert.deepEqual(audience.map(p=>p.id),[1,2,3,5]);assert.equal(audience.find(p=>p.id===3).has_account,false)
   const input={title:'Fixture announcement',body:'Fixture message\nSecond line',priority:'important',recipientIds:[1,3],clientKey:crypto.randomUUID()}
@@ -55,6 +55,7 @@ test('announcement workflow: audience, private drafts, idempotent publishing, re
   await assert.rejects(service.publish(draft.id,draft.version-1,hr),error=>error.status===409)
   let published=await service.publish(draft.id,draft.version,hr)
   assert.equal(published.status,'published')
+  assert.deepEqual(published.email_delivery,{status:'scheduled',recipients:2})
   assert.equal((await client.query('SELECT COUNT(*)::integer AS n FROM notifications')).rows[0].n,2)
   await service.publish(draft.id,draft.version,hr)
   assert.equal((await client.query('SELECT COUNT(*)::integer AS n FROM notifications')).rows[0].n,2)
