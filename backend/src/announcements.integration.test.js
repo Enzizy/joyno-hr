@@ -1,5 +1,6 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path')
 const {createAnnouncementService}=require('./services/announcementService')
+const {createAnnouncementEmailSender}=require('./services/announcementEmailService')
 
 // Private fixture schema in one rolled-back transaction; no real announcements or notifications.
 test('announcement workflow: audience, private drafts, idempotent publishing, recipient access and retained archive',
@@ -26,8 +27,9 @@ test('announcement workflow: audience, private drafts, idempotent publishing, re
    catch(error){await client.query(`ROLLBACK TO SAVEPOINT ${sp}`);throw error}
    finally{inOperation=false}
   }}
-  const copies=[]
-  const service=createAnnouncementService({db,sendCeoEmail:async item=>{assert.equal(inOperation,false);copies.push(item)}}),hr={id:1,role:'hr'},ana={id:2,role:'employee',employee_id:1},ben={id:3,role:'employee',employee_id:2}
+  const copies=[],emails=[]
+  const sendEmails=createAnnouncementEmailSender({db,sendEmailNotification:async message=>emails.push(message),frontendOrigin:'https://hr.example.test'})
+  const service=createAnnouncementService({db,sendAnnouncementEmails:async item=>{assert.equal(inOperation,false);copies.push(item);await sendEmails(item)}}),hr={id:1,role:'hr'},ana={id:2,role:'employee',employee_id:1},ben={id:3,role:'employee',employee_id:2}
   const audience=await service.audience()
   assert.deepEqual(audience.map(p=>p.id),[1,2,3,5]);assert.equal(audience.find(p=>p.id===3).has_account,false)
   const input={title:'Fixture announcement',body:'Fixture message\nSecond line',priority:'important',recipientIds:[1,3],clientKey:crypto.randomUUID()}
@@ -44,6 +46,7 @@ test('announcement workflow: audience, private drafts, idempotent publishing, re
   assert.equal((await service.get(draft.id,hr)).title,input.title)
   assert.equal((await service.get(draft.id,hr)).version,draft.version)
   assert.equal((await client.query('SELECT COUNT(*)::integer AS n FROM notifications')).rows[0].n,0)
+  assert.equal(emails.length,0)
   await assert.rejects(service.save({...input,version:0},hr,draft.id),error=>error.status===409)
   draft=await service.save({...input,version:draft.version,recipientIds:[1,2]},hr,draft.id)
   // Combined filters must refer to a single employee: HR day + Sales night does not match HR night.
@@ -55,7 +58,8 @@ test('announcement workflow: audience, private drafts, idempotent publishing, re
   assert.equal((await client.query('SELECT COUNT(*)::integer AS n FROM notifications')).rows[0].n,2)
   await service.publish(draft.id,draft.version,hr)
   assert.equal((await client.query('SELECT COUNT(*)::integer AS n FROM notifications')).rows[0].n,2)
-  assert.equal(copies.length,0)
+  assert.equal(copies.length,1)
+  assert.deepEqual(emails.map(m=>m.to),['ana@example.test','ben@example.test'])
   assert.equal((await client.query('SELECT COUNT(*)::integer AS n FROM notifications WHERE user_id=4')).rows[0].n,0)
   const employeeItem=await service.get(draft.id,ana)
   assert.equal(employeeItem.body,input.body);assert.equal(employeeItem.recipients,undefined);assert.equal(employeeItem.client_key,undefined)
@@ -74,26 +78,27 @@ test('announcement workflow: audience, private drafts, idempotent publishing, re
   await client.query("INSERT INTO users VALUES(5,'selected-ceo@example.test','ceo',1)")
   const copyInput={...input,title:'CEO copy fixture',clientKey:crypto.randomUUID(),recipientIds:[1],notifyCeo:true}
   let copyDraft=await service.save(copyInput,hr)
-  assert.equal(copyDraft.notify_ceo,true);assert.equal(copies.length,0)
+  assert.equal(copyDraft.notify_ceo,true);assert.equal(copies.length,1);assert.equal(emails.length,2)
   assert.equal((await service.save(copyInput,hr)).id,copyDraft.id)
   await assert.rejects(service.save({...copyInput,notifyCeo:false},hr),error=>error.status===409)
   copyDraft=await service.save({...copyInput,notifyCeo:false,version:copyDraft.version},hr,copyDraft.id)
   assert.equal(copyDraft.notify_ceo,false)
   copyDraft=await service.save({...copyInput,version:copyDraft.version},hr,copyDraft.id)
-  assert.equal(copyDraft.notify_ceo,true);assert.equal(copies.length,0)
+  assert.equal(copyDraft.notify_ceo,true);assert.equal(copies.length,1);assert.equal(emails.length,2)
   await service.publish(copyDraft.id,copyDraft.version,hr)
-  assert.equal(copies.length,1);assert.equal(copies[0].id,copyDraft.id);assert.equal(copies[0].body,input.body)
+  assert.equal(copies.length,2);assert.equal(copies[1].id,copyDraft.id);assert.equal(copies[1].body,input.body)
+  assert.deepEqual(emails.slice(2).map(m=>m.to),['ana@example.test','ceo@example.test','selected-ceo@example.test'])
   const copyNotices=(await client.query('SELECT user_id FROM notifications WHERE target_id=$1 ORDER BY user_id',[copyDraft.id])).rows
   assert.deepEqual(copyNotices.map(n=>n.user_id),[2,4,5]) // selected CEO receives only one notice
   await service.publish(copyDraft.id,copyDraft.version,hr)
-  assert.equal(copies.length,1)
+  assert.equal(copies.length,2);assert.equal(emails.length,5)
   assert.equal((await client.query('SELECT COUNT(*)::integer AS n FROM notifications WHERE target_id=$1',[copyDraft.id])).rows[0].n,3)
   // A draft for a no-login employee still stays private and checks active status again at publish.
   const other=await service.save({...input,clientKey:crypto.randomUUID(),recipientIds:[3],notifyCeo:true},hr)
   await client.query("UPDATE employees SET status='terminated' WHERE id=3")
   await assert.rejects(service.publish(other.id,other.version,hr),error=>error.status===409)
   assert.equal((await service.get(other.id,hr)).status,'draft')
-  assert.equal(copies.length,1)
+  assert.equal(copies.length,2);assert.equal(emails.length,5)
   const security=(await client.query(`SELECT c.relname,c.relrowsecurity,
    has_table_privilege('anon',c.oid,'SELECT') AS anon_read,has_table_privilege('authenticated',c.oid,'SELECT') AS auth_read
    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname IN ('announcements','announcement_recipients')`,[schema])).rows

@@ -24,7 +24,7 @@ function requireManagement(actor) {
   if (!isManagementRole(actor?.role)) fail('Only HR, Admin or CEO can manage announcements', 403)
 }
 
-function createAnnouncementService({ db, sendCeoEmail = async()=>{} }) {
+function createAnnouncementService({ db, sendAnnouncementEmails = async()=>{} }) {
   async function audience() {
     return (await db.query(`SELECT e.id,e.employee_code,e.first_name,e.last_name,
       COALESCE(NULLIF(TRIM(e.department),''),'Unassigned') AS department,
@@ -153,8 +153,8 @@ function createAnnouncementService({ db, sendCeoEmail = async()=>{} }) {
       return {announcement:await getWith(tx,id,actor),newlyPublished:true}
     })
     // Mail scheduling runs after commit; retries of an already-published announcement do not resend.
-    if(result.newlyPublished && result.announcement.notify_ceo){
-      try{await sendCeoEmail(result.announcement)}catch(error){console.error('CEO announcement email scheduling failed:',error.message)}
+    if(result.newlyPublished){
+      try{await sendAnnouncementEmails(result.announcement)}catch(error){console.error('Announcement email scheduling failed:',error.message)}
     }
     return result.announcement
   }
