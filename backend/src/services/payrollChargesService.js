@@ -1,3 +1,4 @@
+const { effectiveEarnings } = require('./payrollNightDifferentialService')
 const CHARGE_TYPES = Object.freeze({
   sss_salary_loan: { label: 'SSS salary loan', direction: 'deduction' },
   sss_calamity_loan: { label: 'SSS calamity loan', direction: 'deduction' },
@@ -56,7 +57,7 @@ function basicAdjustmentTotal(charges = []) {
 
 function draftNetPay(line, { manualEarnings = line.details?.manualEarnings || [],
   charges = line.details?.charges || [], employeeSss = line.employee_sss } = {}) {
-  const manualTotal = manualEarnings.reduce((sum, entry) => sum + Number(entry.amount), 0)
+  const manualTotal = effectiveEarnings(line.details, manualEarnings).reduce((sum, entry) => sum + Number(entry.amount), 0)
   const chargeTotals = summarizeCharges(charges)
   const standardDeductions = ['absence_deduction', 'late_deduction', 'undertime_deduction',
     'employee_philhealth', 'employee_pagibig']

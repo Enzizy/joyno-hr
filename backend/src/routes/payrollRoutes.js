@@ -1,3 +1,5 @@
+const { shiftDefaults } = require('../services/payrollShiftService')
+const { calculateNightDifferential, effectiveEarnings } = require('../services/payrollNightDifferentialService')
 const express = require('express')
 const multer = require('multer')
 const { MANAGEMENT_ROLES } = require('../constants/roles')
@@ -105,7 +107,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       const specialHoliday = calculateWorkedSpecialHoliday({
         monthlyBasicSalary, workedHours: workedSpecialHolidayHours, overtimeHours: specialHolidayOvertimeHours,
       })
-      const employees = await db.query('SELECT id, employee_code, first_name, last_name FROM employees WHERE id = $1', [employeeId])
+      const employees = await db.query('SELECT id, employee_code, first_name, last_name, shift FROM employees WHERE id = $1', [employeeId])
       const employee = employees.rows[0]
       if (!employee) return res.status(404).json({ message: 'Employee not found' })
       const records = readTestCsv(req)
@@ -118,19 +120,14 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       const identityWarning = csvName && normalizeName(csvName) !== normalizeName(employeeName)
         ? `CSV name (${csvName}) differs from the selected employee (${employeeName}). Verify the biometric ID before comparing pay.`
         : null
-      const eventsByDay = new Map()
-      for (const record of matching) {
-        const occurredAt = parseManilaTimestamp(record.timestamp)
-        const date = manilaDateParts(occurredAt).date
-        if (date < periodStart || date > periodEnd) continue
-        const events = eventsByDay.get(date) || []
-        events.push({ occurredAt, eventType: record.eventType })
-        eventsByDay.set(date, events)
-      }
-      const days = scheduledDays.map((date) => computeDailyAttendance({
-        date, events: eventsByDay.get(date) || [],
-        profile: { work_start_time: '09:00', work_end_time: '18:00', unpaid_break_minutes: 60, workdays: [1, 2, 3, 4, 5] },
-      }))
+      const profileRows = (await db.query(`SELECT * FROM payroll_employee_profiles WHERE employee_id=$1 AND effective_from <= $2
+        AND COALESCE(effective_to,'infinity'::date) >= $3 ORDER BY effective_from DESC`,[employeeId,periodEnd,periodStart])).rows
+      const profileForDate = date => ({...shiftDefaults(employee.shift), ...profileRows.find(p => dateKey(p.effective_from) <= date && (!p.effective_to || dateKey(p.effective_to) >= date)), monthly_basic_salary:monthlyBasicSalary})
+      const sourceEvents = matching.filter(record => isAttendanceScan(record.eventType) || record.eventType === null)
+        .map(record => ({ occurredAt: parseManilaTimestamp(record.timestamp), eventType: record.eventType }))
+      const days = scheduledDays.map(date => computeDailyAttendance({date, events:sourceEvents, profile:profileForDate(date)}))
+      const holidays = (await db.query('SELECT holiday_date::text FROM philippine_holidays WHERE holiday_date BETWEEN $1 AND ($2::date + 1) AND is_working_day=FALSE',[periodStart,periodEnd])).rows
+      const night = calculateNightDifferential({attendance:days,employeeId,profiles:scheduledDays.map(date => ({...profileForDate(date),employee_id:employeeId,effective_from:date,effective_to:date})),holidays})
       const manualEarnings = [
         ...(specialHoliday.holidayPremium ? [{ type: 'holiday_premium', amount: specialHoliday.holidayPremium,
           note: `${workedSpecialHolidayHours} approved holiday hour(s) / 8, extra 30% only (test)`,
@@ -141,12 +138,12 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       const base = calculatePayrollLine({ monthlyBasicSalary, monthlyCola, cutoff, attendance: days })
       const sssAssessment = cutoff === 'second' ? calculateSssAssessablePay({
         firstCutoffPay, grossSalary: base.grossSalary, absenceDeduction: base.absenceDeduction,
-        lateDeduction: base.lateDeduction, undertimeDeduction: base.undertimeDeduction, manualEarnings,
+        lateDeduction: base.lateDeduction, undertimeDeduction: base.undertimeDeduction, manualEarnings: effectiveEarnings(night,manualEarnings),
       }) : null
       const calculated = cutoff === 'second'
         ? calculatePayrollLine({ monthlyBasicSalary, monthlyCola, cutoff, includeContributions: true, attendance: days,
           sssCompensation: sssAssessment.monthlyCompensation }) : base
-      const extraTotal = specialHoliday.total
+      const extraTotal = specialHoliday.total + night.nightDifferential.amount
       const line = {
         employee_id: employee.id, employee_code: employee.employee_code,
         employee_name: employeeName,
@@ -158,7 +155,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         employee_sss: calculated.employeeSss, employee_philhealth: calculated.employeePhilhealth,
         employee_pagibig: calculated.employeePagibig,
         net_pay: Math.round(Math.max(0, calculated.grossSalary + calculated.colaPay + extraTotal - calculated.employeeDeductions) * 100) / 100,
-        details: { manualEarnings, contributionBasis: calculated.contributionBasis,
+        details: { ...night, manualEarnings, contributionBasis: calculated.contributionBasis,
           sssAssessment: sssAssessment ? { ...sssAssessment,
             firstCutoffSource: firstCutoffPayInput === undefined || firstCutoffPayInput === '' ? 'assumed-half-basic' : 'entered' } : null },
       }
@@ -295,13 +292,13 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     if(!id||!['register','remittance'].includes(type))return res.status(400).json({message:'Choose payroll register or remittance export'})
     try{
       const run=await payrollService.getRun(id);if(!run)return res.status(404).json({message:'Payroll not found'})
-      const headers=type==='register'?['Status','Payday','Employee ID','Employee','Basic','COLA','Absence deduction','Late deduction','Undertime deduction','SSS employee','PhilHealth employee','Pag-IBIG employee','Manual earnings','Charge deductions','Basic adjustment','Other charge earnings','13th-month basic accrual','Net pay']:
+      const headers=type==='register'?['Status','Payday','Employee ID','Employee','Basic','COLA','Absence deduction','Late deduction','Undertime deduction','SSS employee','PhilHealth employee','Pag-IBIG employee','Extra earnings','Charge deductions','Basic adjustment','Other charge earnings','13th-month basic accrual','Net pay']:
         ['Status','Payday','Employee ID','Employee','SSS employee','SSS employer','EC employer','PhilHealth employee','PhilHealth employer','Pag-IBIG employee','Pag-IBIG employer']
       const rows=run.lines.map(l=>{
         const identity=[run.status,run.payday,l.employee_code,l.employee_name]
         if(type==='remittance')return [...identity,l.employee_sss,l.employer_sss,l.employer_ec,l.employee_philhealth,l.employer_philhealth,l.employee_pagibig,l.employer_pagibig]
         const totals={earning:0,deduction:0,adjustment:0};for(const c of l.details?.charges||[])totals[c.type==='basic_pay_adjustment'?'adjustment':c.type==='other_non_taxable_earning'?'earning':'deduction']+=Number(c.amount||0)
-        return [...identity,l.gross_salary,l.cola_pay,l.absence_deduction,l.late_deduction,l.undertime_deduction,l.employee_sss,l.employee_philhealth,l.employee_pagibig,(l.details?.manualEarnings||[]).reduce((sum,e)=>sum+Number(e.amount),0),totals.deduction,totals.adjustment,totals.earning,l.thirteenth_month_accrual,l.net_pay]
+        return [...identity,l.gross_salary,l.cola_pay,l.absence_deduction,l.late_deduction,l.undertime_deduction,l.employee_sss,l.employee_philhealth,l.employee_pagibig,effectiveEarnings(l.details).reduce((sum,e)=>sum+Number(e.amount),0),totals.deduction,totals.adjustment,totals.earning,l.thirteenth_month_accrual,l.net_pay]
       })
       res.set('Cache-Control','private, no-store').type('text/csv').attachment(`payroll-${id}-${type}-${run.status}.csv`).send(csvRows(headers,rows))
     }catch(e){handlePayrollError(e,res)}

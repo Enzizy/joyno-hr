@@ -1,3 +1,4 @@
+const { shiftWindow, paidShiftOverlap } = require('./payrollShiftService')
 const MANILA_TIME_ZONE = 'Asia/Manila'
 
 function parseCsv(text) {
@@ -187,21 +188,23 @@ function weekday(date) {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay()
 }
 
-function timeToMinutes(value, fallback) {
-  const input = String(value || fallback)
-  const match = input.match(/^(\d{1,2}):(\d{2})/)
-  if (!match) throw new TypeError(`Invalid schedule time: ${input}`)
-  return Number(match[1]) * 60 + Number(match[2])
+function attendanceWorkDate(instant, profile = {}) {
+  const parts = manilaDateParts(instant), shift = shiftWindow(profile)
+  return shift.overnight && parts.hour * 60 + parts.minute < shift.boundary ? addDays(parts.date, -1) : parts.date
+}
+function minutesOnWorkDate(instant, workDate) {
+  const parts = manilaDateParts(instant)
+  return (Date.parse(parts.date) - Date.parse(dateKey(workDate))) / 86400000 * 1440 + parts.hour * 60 + parts.minute + parts.second / 60
+}
+function verifiedShiftTimestamp(workDate, clock, profile = {}) {
+  const { clockMinutes } = require('./payrollShiftService')
+  const shift = shiftWindow(profile)
+  const date = shift.overnight && clockMinutes(clock) < shift.boundary ? addDays(workDate, 1) : workDate
+  return parseManilaTimestamp(`${date} ${clock}`)
 }
 
 function roundMinutes(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100
-}
-
-function paidMinutesBetween(from, to, shiftStart, lunchStart, lunchEnd, shiftEnd) {
-  if (to <= from) return 0
-  const overlap = (start, end) => Math.max(0, Math.min(to, end, shiftEnd) - Math.max(from, start, shiftStart))
-  return overlap(shiftStart, lunchStart) + overlap(lunchEnd, shiftEnd)
 }
 
 function computeDailyAttendance({ date, events = [], profile = {} }) {
@@ -212,7 +215,7 @@ function computeDailyAttendance({ date, events = [], profile = {} }) {
 
   const validEvents = events
     .map((event) => ({ ...event, occurredAt: new Date(event.occurredAt ?? event.occurred_at ?? event.timestamp) }))
-    .filter((event) => !Number.isNaN(event.occurredAt.getTime()) && manilaDateParts(event.occurredAt).date === workDate)
+    .filter((event) => !Number.isNaN(event.occurredAt.getTime()) && attendanceWorkDate(event.occurredAt, profile) === workDate)
   const sorted = [...new Map(validEvents.map((event) => [`${event.occurredAt.getTime()}:${event.eventType ?? event.event_type ?? ''}`, event])).values()]
     .sort((left, right) => left.occurredAt - right.occurredAt)
 
@@ -237,14 +240,9 @@ function computeDailyAttendance({ date, events = [], profile = {} }) {
   const first = arrivals[0]?.occurredAt ?? null
   const last = departures[departures.length - 1]?.occurredAt ?? null
   const complete = first && last && last > first && (hasCheckpointTypes || sorted.length > 1)
-  const startMinutes = timeToMinutes(profile.work_start_time ?? profile.workStartTime, '09:00')
-  const endMinutes = timeToMinutes(profile.work_end_time ?? profile.workEndTime, '18:00')
-  const lunchStart = timeToMinutes(profile.lunch_start_time ?? profile.lunchStartTime, '13:00')
-  const lunchEnd = lunchStart + Number(profile.unpaid_break_minutes ?? profile.unpaidBreakMinutes ?? 60)
-  const firstParts = first ? manilaDateParts(first) : null
-  const lastParts = last ? manilaDateParts(last) : null
-  const firstAt = firstParts ? firstParts.hour * 60 + firstParts.minute + firstParts.second / 60 : null
-  const lastAt = lastParts ? lastParts.hour * 60 + lastParts.minute + lastParts.second / 60 : null
+  const { start: startMinutes, end: endMinutes } = shiftWindow(profile)
+  const firstAt = first ? minutesOnWorkDate(first, workDate) : null
+  const lastAt = last ? minutesOnWorkDate(last, workDate) : null
   const status = complete ? 'present' : 'exception'
   let exceptionReason = null
   if (!complete) {
@@ -261,8 +259,8 @@ function computeDailyAttendance({ date, events = [], profile = {} }) {
     firstScanAt: first?.toISOString() ?? null,
     lastScanAt: last?.toISOString() ?? null,
     scanCount: sorted.length,
-    lateMinutes: complete ? roundMinutes(paidMinutesBetween(startMinutes, firstAt, startMinutes, lunchStart, lunchEnd, endMinutes)) : 0,
-    undertimeMinutes: complete ? roundMinutes(paidMinutesBetween(lastAt, endMinutes, startMinutes, lunchStart, lunchEnd, endMinutes)) : 0,
+    lateMinutes: complete ? roundMinutes(paidShiftOverlap(startMinutes, firstAt, profile)) : 0,
+    undertimeMinutes: complete ? roundMinutes(paidShiftOverlap(lastAt, endMinutes, profile)) : 0,
     exceptionReason,
   }
 }
@@ -280,6 +278,9 @@ function listWeekdays(start, end, workdays = [1, 2, 3, 4, 5]) {
 
 module.exports = {
   MANILA_TIME_ZONE,
+  attendanceWorkDate,
+  minutesOnWorkDate,
+  verifiedShiftTimestamp,
   addDays,
   computeDailyAttendance,
   dateKey,

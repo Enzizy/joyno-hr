@@ -1,3 +1,5 @@
+const { shiftDefaults, shiftWindow } = require('./payrollShiftService')
+const { calculateNightDifferential, effectiveEarnings } = require('./payrollNightDifferentialService')
 const {
   calculateContributions,
   calculatePayrollLine,
@@ -174,7 +176,7 @@ function createPayrollService({ db }) {
     if (dateKey(batch.period_start) > start || dateKey(batch.period_end) < end) throw serviceError('Confirmed attendance does not cover the full payroll period', 409)
     const context = await loadContext(tx, dateKey(batch.period_start), dateKey(batch.period_end))
     if (!batch.context_hash || fingerprint(context) !== batch.context_hash) throw serviceError('Leave, salary, or employee setup changed after attendance confirmation. Create and confirm a replacement review first', 409)
-    return batch
+    return { ...batch, context }
   }
 
   async function profileHistory(employeeId) {
@@ -183,7 +185,7 @@ function createPayrollService({ db }) {
 
   async function listProfiles({ employeeId } = {}) {
     const { rows } = await db.query(
-      `SELECT e.id AS employee_id, e.employee_code, e.first_name, e.last_name, e.department,
+      `SELECT e.id AS employee_id, e.employee_code, e.first_name, e.last_name, e.department, e.shift,
               p.id AS profile_id, p.effective_from, p.effective_to, p.monthly_basic_salary, p.monthly_cola,
               p.daily_fare_rate, p.work_start_time, p.work_end_time, p.unpaid_break_minutes,
               p.workdays, p.daily_rate_divisor, bio.person_id AS biometric_person_id
@@ -239,7 +241,7 @@ function createPayrollService({ db }) {
 
     const fields = actorFields(actor)
     return withTransaction(db, async (tx) => {
-      const employeeResult = await tx.query('SELECT id FROM employees WHERE id = $1 FOR UPDATE', [employeeId])
+      const employeeResult = await tx.query('SELECT id, shift FROM employees WHERE id = $1 FOR UPDATE', [employeeId])
       if (!employeeResult.rows[0]) throw serviceError('Employee was not found', 404)
       const { rows } = await tx.query(
         `SELECT id, effective_from, effective_to, monthly_cola, daily_fare_rate, daily_rate_divisor,
@@ -266,14 +268,17 @@ function createPayrollService({ db }) {
         : Number(suppliedMonthlyCola)
       const dailyRateDivisor = Number(input.dailyRateDivisor ?? input.daily_rate_divisor ?? inheritedProfile?.daily_rate_divisor ?? 261)
       const workdays = (input.workdays ?? inheritedProfile?.workdays ?? [1, 2, 3, 4, 5]).map(Number)
-      const workStart = String(input.workStartTime ?? input.work_start_time ?? inheritedProfile?.work_start_time ?? '09:00')
-      const workEnd = String(input.workEndTime ?? input.work_end_time ?? inheritedProfile?.work_end_time ?? '18:00')
+      const workStart = String(input.workStartTime ?? input.work_start_time ?? inheritedProfile?.work_start_time ?? shiftDefaults(employeeResult.rows[0].shift).work_start_time)
+      const workEnd = String(input.workEndTime ?? input.work_end_time ?? inheritedProfile?.work_end_time ?? shiftDefaults(employeeResult.rows[0].shift).work_end_time)
       const unpaidBreakMinutes = Number(input.unpaidBreakMinutes ?? input.unpaid_break_minutes ?? inheritedProfile?.unpaid_break_minutes ?? 60)
       if (!Number.isFinite(dailyRateDivisor) || dailyRateDivisor <= 0) throw new TypeError('dailyRateDivisor must be positive')
       if (!Number.isInteger(unpaidBreakMinutes) || unpaidBreakMinutes < 0) throw new TypeError('unpaidBreakMinutes must be a non-negative integer')
       if (!workdays.length || workdays.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
         throw new TypeError('workdays must contain weekday numbers from 0 to 6')
       }
+
+      const schedule = shiftWindow({ work_start_time: workStart, work_end_time: workEnd, unpaid_break_minutes: unpaidBreakMinutes })
+      if (schedule.paidMinutes !== 480 || unpaidBreakMinutes !== 60 || schedule.breakStart < schedule.start || schedule.breakEnd > schedule.end) throw new TypeError('Use eight paid hours with the fixed one-hour break: 1–2 PM for day shifts or 1–2 AM for overnight shifts')
 
       for (const previous of rows) {
         if (dateKey(previous.effective_from) < effectiveFrom && (!previous.effective_to || dateKey(previous.effective_to) >= effectiveFrom)) {
@@ -729,11 +734,11 @@ function createPayrollService({ db }) {
       const firstCutoffByEmployee = new Map(firstCutoffRows.map((line) => [Number(line.employee_id), line]))
 
       const ruleSnapshot = {
-        version: 4,
+        version: 5,
         attendanceContextHash: confirmedBatch.context_hash,
         attendanceReviewVersion: confirmedBatch.review_version,
         contributionSchedule: 'PH-2025',
-        sssBasisRule: 'first cutoff eligible pay + second cutoff net basic + approved overtime; WSH/RD premium excluded per workbook Remittance',
+        sssBasisRule: 'first cutoff eligible pay + second cutoff net basic + approved overtime + effective night differential; WSH/RD premium excluded per workbook Remittance',
         payrollFrequency: 'semi-monthly',
         fixedCutoffGrossRule: 'monthly_basic_salary / 2',
         colaRule: 'monthly_cola split across two cutoffs (odd cent to first), separate non-taxable earning; excluded from workbook SSS lookup',
@@ -741,7 +746,9 @@ function createPayrollService({ db }) {
         dailyRateDivisor: 261,
         scheduledHoursPerDay: 8,
         mealBreakMinutes: 60,
-        mealBreakStart: '13:00',
+        mealBreakStart: { day: '13:00', overnight: '01:00' },
+        nightDifferential: { rate: 0.10, window: '22:00–06:00', basis: 'actual scheduled paid hours; effective daily basic salary; unpaid break and overtime excluded; holiday hours require HR multiplier verification' },
+        overnightWorkDate: 'date the shift starts',
         attendanceReaders: {
           'Main_Door_Out_Door1_Entrance Card Reader1': 'time_in',
           'Main_Door_IN_Door1_Entrance Card Reader1': 'time_out',
@@ -804,6 +811,7 @@ function createPayrollService({ db }) {
           includeContributions,
           attendance,
         }
+        const night = calculateNightDifferential({attendance, employeeId: employee.employee_id, fallbackProfile: profile, profiles: confirmedBatch.context.profiles, holidays: confirmedBatch.context.holidays})
         const baseLine = computeLineWithLeave({ ...lineInput, includeContributions: false })
         const firstCutoffLine = firstCutoffByEmployee.get(Number(employee.employee_id))
         const firstCutoffPay = firstCutoffLine
@@ -811,15 +819,16 @@ function createPayrollService({ db }) {
             absenceDeduction: firstCutoffLine.absence_deduction, lateDeduction: firstCutoffLine.late_deduction,
             undertimeDeduction: firstCutoffLine.undertime_deduction,
             basicAdjustment: basicAdjustmentTotal(firstCutoffLine.details?.charges || []),
-            manualEarnings: firstCutoffLine.details?.manualEarnings || [] }).monthlyCompensation
+            manualEarnings: effectiveEarnings(firstCutoffLine.details) }).monthlyCompensation
           : baseLine.grossSalary
         const sssAssessment = cutoff === 'second' && includeContributions
           ? calculateSssAssessablePay({ firstCutoffPay, grossSalary: baseLine.grossSalary,
             absenceDeduction: baseLine.absenceDeduction, lateDeduction: baseLine.lateDeduction,
-            undertimeDeduction: baseLine.undertimeDeduction }) : null
+            undertimeDeduction: baseLine.undertimeDeduction, manualEarnings: night.automaticEarnings }) : null
         const line = sssAssessment
           ? computeLineWithLeave({ ...lineInput, sssCompensation: sssAssessment.monthlyCompensation }) : baseLine
         const details = {
+          ...night,
           payBasisReview: {required:Boolean(employee.date_hired>periodStart || (employee.last_working_date && employee.last_working_date<periodEnd) || dateKey(employee.effective_from)>periodStart),
             reason:'Employment or compensation changed within the cutoff; verify basic pay and COLA proration against company policy',verifiedReason:null},
           contributionBasis: line.contributionBasis,
@@ -857,7 +866,7 @@ function createPayrollService({ db }) {
             line.employeeSss, line.employerSss, line.employerEc,
             line.employeePhilhealth, line.employerPhilhealth,
             line.employeePagibig, line.employerPagibig,
-            line.thirteenthMonthAccrual, line.netPay, JSON.stringify(details), line.colaPay]
+            line.thirteenthMonthAccrual, Math.round(Math.max(0,line.grossSalary + line.colaPay + night.nightDifferential.amount - line.employeeDeductions) * 100) / 100, JSON.stringify(details), line.colaPay]
         )
       }
       const recreated=(await tx.query('SELECT * FROM payroll_run_lines WHERE payroll_run_id = $1',[run.id])).rows
@@ -913,9 +922,9 @@ function createPayrollService({ db }) {
       const type = String(entry?.type || '')
       const amount = Number(entry?.amount)
       const note = String(entry?.note || '').trim()
-      if (!allowedTypes.has(type) || !Number.isFinite(amount) || amount <= 0 || amount > 1000000 ||
+      if (!allowedTypes.has(type) || entry.amount == null || (typeof entry.amount === 'string' && !entry.amount.trim()) || !Number.isFinite(amount) || amount < 0 || (amount === 0 && type !== 'night_differential') || amount > 1000000 ||
           Math.abs(Math.round(amount * 100) - amount * 100) > 0.000001 || note.length < 3 || note.length > 200) {
-        throw serviceError('Each earning needs a valid type, positive peso amount, and a 3–200 character reason', 400)
+        throw serviceError('Each earning needs a valid type, positive peso amount (or explicit zero for a night differential override), and a 3–200 character reason', 400)
       }
       if (type === 'holiday_premium' && entry.approvedHours !== undefined) {
         const approvedHours = Number(entry.approvedHours)
@@ -931,6 +940,7 @@ function createPayrollService({ db }) {
       }
       return { type, amount, note }
     })
+    if (normalized.filter(entry => entry.type === 'night_differential').length > 1) throw serviceError('Enter one total night differential override per employee', 400)
     return withTransaction(db, async (tx) => {
       const { rows } = await tx.query(
         `SELECT line.*, run.status, run.cutoff, run.include_contributions, run.period_start, run.period_end FROM payroll_run_lines line
@@ -965,7 +975,7 @@ function createPayrollService({ db }) {
           grossSalary: line.gross_salary, absenceDeduction: line.absence_deduction,
           lateDeduction: line.late_deduction, undertimeDeduction: line.undertime_deduction,
           basicAdjustment: basicAdjustmentTotal(line.details?.charges || []),
-          manualEarnings: recalculated,
+          manualEarnings: effectiveEarnings(line.details, recalculated),
         }) : null
       const sssContributions = sssAssessment
         ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation }) : null
@@ -1010,7 +1020,7 @@ function createPayrollService({ db }) {
           grossSalary: line.gross_salary, absenceDeduction: line.absence_deduction,
           lateDeduction: line.late_deduction, undertimeDeduction: line.undertime_deduction,
           basicAdjustment: basicAdjustmentTotal(normalized),
-          manualEarnings: line.details?.manualEarnings || [],
+          manualEarnings: effectiveEarnings(line.details),
         }) : null
       const sssContributions = sssAssessment
         ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation }) : null
@@ -1063,7 +1073,7 @@ function createPayrollService({ db }) {
         firstCutoffPay, grossSalary: line.gross_salary, absenceDeduction: line.absence_deduction,
         lateDeduction: line.late_deduction, undertimeDeduction: line.undertime_deduction,
         basicAdjustment: basicAdjustmentTotal(line.details?.charges || []),
-        manualEarnings: line.details?.manualEarnings || [],
+        manualEarnings: effectiveEarnings(line.details),
       })
       const contributions = calculateContributions(line.monthly_basic_salary, {
         sssCompensation: sssAssessment.monthlyCompensation,
@@ -1100,6 +1110,7 @@ function createPayrollService({ db }) {
       const run = runResult.rows[0]
       if (!run) return null
       if (run.status !== 'draft') throw serviceError('Only draft payroll runs can be approved', 409)
+      if (run.rule_snapshot?.version && run.rule_snapshot.version < 5) throw serviceError('Recalculate this draft to apply the night shift and night differential rules before approval',409)
       if (!run.attendance_batch_id) throw serviceError('An attendance import batch is required before approval', 400)
       const batch = await requireConfirmedAttendance(tx,run.attendance_batch_id,dateKey(run.period_start),dateKey(run.period_end))
       if (run.rule_snapshot?.attendanceContextHash !== batch.context_hash || Number(run.rule_snapshot?.attendanceReviewVersion) !== Number(batch.review_version)) throw serviceError('Recalculate this draft from the confirmed attendance version before approval',409)
@@ -1123,6 +1134,10 @@ function createPayrollService({ db }) {
       if (legacyHolidayResult.rows.length) {
         throw serviceError('Replace legacy full-holiday-pay earnings with the 30% WSH/RD premium before approval', 400)
       }
+      const nightReview=await tx.query(`SELECT employee_code FROM payroll_run_lines WHERE payroll_run_id=$1
+        AND details->'nightDifferential'->>'reviewRequired'='true'
+        AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(details->'manualEarnings','[]'::jsonb)) e WHERE e->>'type'='night_differential' AND length(e->>'note')>=3) LIMIT 1`,[runId])
+      if(nightReview.rows.length)throw serviceError(`Verify actual night hours and holiday multipliers for ${nightReview.rows[0].employee_code}; enter the total night differential override before approval`,409)
       const unverifiedBasis=await tx.query(`SELECT employee_code FROM payroll_run_lines WHERE payroll_run_id=$1 AND details->'payBasisReview'->>'required'='true' AND length(COALESCE(details->'payBasisReview'->>'verifiedReason',''))<3 LIMIT 1`,[runId])
       if(unverifiedBasis.rows.length)throw serviceError(`Verify basic pay and COLA proration for ${unverifiedBasis.rows[0].employee_code} before approval`,409)
       if (run.cutoff === 'second' && run.include_contributions) {

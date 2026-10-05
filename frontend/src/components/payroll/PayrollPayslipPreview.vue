@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { effectiveEarnings } from '@/utils/payrollEarnings'
 import AppButton from '@/components/ui/AppButton.vue'
 
 const props = defineProps({
@@ -12,7 +13,7 @@ const props = defineProps({
 defineEmits(['close', 'print', 'download', 'send', 'edit', 'edit-charges'])
 
 const money = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0))
-const earnings = computed(() => Array.isArray(props.line.details?.manualEarnings) ? props.line.details.manualEarnings : [])
+const earnings = computed(() => effectiveEarnings(props.line.details))
 const charges = computed(() => Array.isArray(props.line.charges) ? props.line.charges : Array.isArray(props.line.details?.charges) ? props.line.details.charges : [])
 const colaPay = computed(() => Number(props.line.cola_pay ?? props.line.colaPay ?? props.line.details?.colaPay ?? props.line.details?.cola_pay ?? 0))
 const chargeLabel = (type) => ({
@@ -36,7 +37,7 @@ const deductions = computed(() => [
   ...chargeDeductions.value.map((entry) => [chargeLabel(entry.type), Math.abs(Number(entry.amount || 0)), entry.note || '']),
 ])
 const totalDeductions = computed(() => deductions.value.reduce((sum, [, value]) => sum + Number(value || 0), 0))
-const earningLabel = (type) => ({ overtime: 'Approved overtime', night_differential: 'HR-approved night differential', special_holiday_pay: 'Legacy full holiday pay - review', holiday_premium: 'WSH/RD premium (30%)', other: 'Other earnings' })[type] || 'Other earnings'
+const earningLabel = (type) => ({ overtime: 'Approved overtime', night_differential: 'Night differential', special_holiday_pay: 'Legacy full holiday pay - review', holiday_premium: 'WSH/RD premium (30%)', other: 'Other earnings' })[type] || 'Other earnings'
 const period = computed(() => `${String(props.run.period_start || '').slice(0, 10)} to ${String(props.run.period_end || '').slice(0, 10)}`)
 </script>
 

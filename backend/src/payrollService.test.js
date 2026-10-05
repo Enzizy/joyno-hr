@@ -518,7 +518,7 @@ test('month-end approval rejects an unverified first-cutoff estimate', async () 
     const fixture=reviewFixture(sql);if(fixture)return fixture
     if (sql.includes('FROM payroll_runs')) return { rows: [{ id: 1, status: 'draft', cutoff: 'second',
       rule_snapshot:{attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2},include_contributions: true, attendance_batch_id: 7, period_start: '2026-09-11', period_end: '2026-09-25' }] }
-    if(sql.includes("details->'payBasisReview'"))return {rows:[]}
+    if(sql.includes("details->'payBasisReview'") || sql.includes("details->'nightDifferential'"))return {rows:[]}
     if (sql.includes('FROM payroll_attendance_import_batches')) return { rows: [{ error_count: 0 }] }
     if (sql.includes('FROM payroll_daily_attendance')) return { rows: [{ count: 0 }] }
     if (sql.includes('SELECT 1 FROM payroll_run_lines')) return { rows: [] }
@@ -540,4 +540,21 @@ test('saved draft earnings cannot retain the old full-holiday-pay type', async (
   await assert.rejects(service.updateManualEarnings(1, 2, [
     { type: 'special_holiday_pay', amount: 896.55, note: 'Old holiday calculation' },
   ]), /Remove legacy full-holiday-pay lines/)
+})
+
+test('approval blocks unverified holiday or missing-punch night pay before updating a draft', async () => {
+  const previous=process.env.PAYROLL_FINALIZATION_ENABLED
+  process.env.PAYROLL_FINALIZATION_ENABLED='true'
+  let updated=false
+  const service=createPayrollService({db:{async query(sql){
+    const fixture=reviewFixture(sql);if(fixture)return fixture
+    if(sql.includes('SELECT * FROM payroll_runs'))return {rows:[{id:1,status:'draft',cutoff:'first',attendance_batch_id:7,period_start:'2026-09-11',period_end:'2026-09-25',rule_snapshot:{version:5,attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2}}]}
+    if(sql.includes('FROM payroll_daily_attendance'))return {rows:[{count:0}]}
+    if(sql.includes("details->'nightDifferential'"))return {rows:[{employee_code:'NIGHT-12'}]}
+    if(sql.includes('SELECT 1 FROM payroll_run_lines'))return {rows:[]}
+    if(sql.includes('UPDATE payroll_runs'))updated=true
+    throw Error(`Unexpected query: ${sql}`)
+  }}})
+  try {await assert.rejects(service.approveRun(1),/Verify actual night hours and holiday multipliers for NIGHT-12/);assert.equal(updated,false)}
+  finally {if(previous===undefined)delete process.env.PAYROLL_FINALIZATION_ENABLED;else process.env.PAYROLL_FINALIZATION_ENABLED=previous}
 })

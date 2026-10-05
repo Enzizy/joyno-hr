@@ -1,10 +1,11 @@
+const { effectiveEarnings } = require('./payrollNightDifferentialService')
 const { PDFDocument } = require('pdfkit')
 const { dateKey } = require('./payrollAttendanceService')
 const { CHARGE_TYPES, summarizeCharges } = require('./payrollChargesService')
 
 const LABELS = Object.freeze({
   overtime: 'Approved overtime',
-  night_differential: 'Approved night differential',
+  night_differential: 'Night differential',
   special_holiday_pay: 'Legacy full holiday pay - review',
   holiday_premium: 'WSH/RD premium (30%)',
   other: 'Other earnings',
@@ -19,7 +20,7 @@ function money(value) {
 }
 
 function payrollBreakdown(line) {
-  const earnings = Array.isArray(line.details?.manualEarnings) ? line.details.manualEarnings : []
+  const earnings = effectiveEarnings(line.details)
   const manualTotal = earnings.reduce((total, entry) => total + amount(entry.amount), 0)
   const charges = Array.isArray(line.details?.charges) ? line.details.charges : []
   const chargeTotals = summarizeCharges(charges)

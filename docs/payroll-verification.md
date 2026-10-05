@@ -20,7 +20,7 @@ The importer uses Person ID rather than assuming a biometric identifier is the H
 
 Dates such as `09/01/26 8:46` are interpreted as 1 September 2026 at 08:46 in Asia/Manila (UTC+08:00). Grouping is by employee and local calendar day. Intermediate arrivals/departures do not become separate work periods or additional absence deductions. Repeated identical timestamp/direction events are deduplicated. The first recognized arrival and last recognized departure remain the DTR endpoints.
 
-An incomplete pair, or a departure that is not after arrival, becomes an exception for HR review. No scans is also an exception unless an approved leave record supplies the classification. The code does not silently turn a missing punch into an absence. Default paid time is Monday–Friday, 09:00–18:00 with a 13:00–14:00 unpaid break; effective employee profiles control the schedule inputs. This same-day algorithm does not establish overnight-shift support.
+An incomplete pair, or a departure that is not after arrival, becomes an exception for HR review. No scans is also an exception unless an approved leave record supplies the classification. The code does not silently turn a missing punch into an absence. Default paid time is Monday–Friday, 09:00–18:00 with a 13:00–14:00 unpaid break; effective employee profiles control the schedule inputs. The subsequent 5 October night-shift update supports 21:00–06:00 overnight shifts with a 01:00–02:00 unpaid break and shift-start-date assignment. See `hrms-implementation-progress.md` for current verification.
 
 Primary implementation: `backend/src/services/payrollAttendanceService.js` (checkpointDirection, parseAttendanceCsv, parseManilaTimestamp, computeDailyAttendance) and `backend/src/services/payrollService.js` (importAttendance and attendance corrections).
 
@@ -55,7 +55,7 @@ The export uses Windows-1252 rather than valid UTF-8. Uploads now decode valid U
 | Net pay and accrual | Payroll lines, deductions, net pay, and cutoff 13th-month accrual are calculated and saved. | Annual accrual payout and adjustment-driven accrual parity are not complete. |
 | Review outputs | Saved payroll register, payslip preview, PDF download/print, employee/employer remittance preview and totals. | A workbook-style RFP, bank disbursement export, and complete government submission files were not found in this review. |
 | Finalization/distribution | Approval, locking, employee payslip access, and email code exist, with role/status controls and duplicate-send protection. | Finalization is intentionally disabled in the current local environment. No actual email or approval was performed. |
-| Tax and night differential | Other earnings can be entered manually. | No automatic withholding/MWE/tax-shield engine or full night-differential calculation was found. The UI explicitly states tax withholding is not enabled. |
+| Tax and night differential | Night-shift update calculates ordinary scheduled ND automatically at the user-confirmed 10% for actual paid 22:00–06:00 work. Approved total overrides replace automatic ND. | Tax remains manually verified. Holiday multipliers, night overtime and missing actual punches require HR review and a total ND override; rest-day work is manual. |
 
 The current implementation is broader than a basic net-pay calculator: it already provides setup, import, review, draft payroll, charges, outputs, and controlled distribution. It is not a complete literal replacement for every workbook formula/branch.
 

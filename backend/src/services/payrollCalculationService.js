@@ -53,15 +53,17 @@ function calculateSssAssessablePay({ firstCutoffPay, grossSalary, absenceDeducti
   const overtimePay = manualEarnings
     .filter((entry) => entry.type === 'overtime')
     .reduce((total, entry) => total + finiteNumber(entry.amount, 'overtimePay'), 0)
-  if (overtimePay < 0) throw new RangeError('overtimePay cannot be negative')
+  const nightDifferentialPay = manualEarnings.filter(entry => entry.type === 'night_differential').reduce((total, entry) => total + finiteNumber(entry.amount, 'nightDifferentialPay'), 0)
+  if (overtimePay < 0 || nightDifferentialPay < 0) throw new RangeError('Overtime and night differential cannot be negative')
   // Workbook Remittance: first cutoff + second cutoff net basic including
-  // CHARGES basic-pay adjustments + OT. COLA remains a separate allowance.
+  // CHARGES basic-pay adjustments + OT + ND. COLA remains a separate allowance.
   // WSH/RD premium is a separate register column and is not in this lookup.
   const secondCutoffNetBasic = roundMoney(Math.max(0, gross - timeDeductions + adjustment))
   return {
     firstCutoffPay: roundMoney(first), secondCutoffNetBasic,
     overtimePay: roundMoney(overtimePay),
-    monthlyCompensation: roundMoney(first + secondCutoffNetBasic + overtimePay),
+    ...(nightDifferentialPay ? {nightDifferentialPay:roundMoney(nightDifferentialPay)} : {}),
+    monthlyCompensation: roundMoney(first + secondCutoffNetBasic + overtimePay + nightDifferentialPay),
   }
 }
 

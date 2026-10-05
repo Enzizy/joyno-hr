@@ -19,7 +19,7 @@ function validateHrCalendarEntry(input = {}) {
   const dayFraction = Number(input.day_fraction ?? 1)
   const coverageStart = input.coverage_start || null, coverageEnd = input.coverage_end || null
   if (entryType==='leave' && (![0.5,1].includes(dayFraction) || (dayFraction < 1 && (startDate !== endDate ||
-      !/^([01]\d|2[0-3]):[0-5]\d$/.test(coverageStart || '') || !/^([01]\d|2[0-3]):[0-5]\d$/.test(coverageEnd || '') || coverageEnd <= coverageStart)))) {
+      !/^([01]\d|2[0-3]):[0-5]\d$/.test(coverageStart || '') || !/^([01]\d|2[0-3]):[0-5]\d$/.test(coverageEnd || '') || coverageEnd === coverageStart)))) {
     return { error: 'Half-day leave needs one date and valid covered start/end times' }
   }
 

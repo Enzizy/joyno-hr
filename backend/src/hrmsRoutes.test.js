@@ -34,7 +34,7 @@ test('legacy direct attendance import and payroll-only leave correction are reje
  })
 })
 test('payroll register retains separate signed basic adjustments, earnings and deductions',async()=>{
- const payrollService={getRun:async()=>({status:'draft',payday:'2026-09-30',lines:[{employee_code:'EMP-1',employee_name:'Fixture',details:{charges:[{type:'basic_pay_adjustment',amount:-300},{type:'other_non_taxable_earning',amount:100},{type:'tax_withholding',amount:50}],manualEarnings:[{type:'night_differential',amount:120}]},net_pay:7370}]})}
+ const payrollService={getRun:async()=>({status:'draft',payday:'2026-09-30',lines:[{employee_code:'EMP-1',employee_name:'Fixture',details:{automaticEarnings:[{type:'night_differential',amount:60.34}],charges:[{type:'basic_pay_adjustment',amount:-300},{type:'other_non_taxable_earning',amount:100},{type:'tax_withholding',amount:50}],manualEarnings:[{type:'night_differential',amount:120}]},net_pay:7370}]})}
  await serverFor(createPayrollRouter({db:{},payrollService,authRequired,requireRole}),async url=>{
   assert.equal((await fetch(url+'/api/payroll/runs/1/export/register',{headers:{'x-test-role':'employee'}})).status,403)
   const response=await fetch(url+'/api/payroll/runs/1/export/register');assert.equal(response.status,200)

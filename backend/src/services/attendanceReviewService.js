@@ -1,6 +1,7 @@
+const { shiftWindow, shiftDefaults, paidShiftOverlap, coverageWindow } = require('./payrollShiftService')
 const crypto = require('node:crypto')
 const { parseAttendanceCsv, parseManilaTimestamp, manilaDateParts, dateKey, addDays,
-  computeDailyAttendance, weekday, isAttendanceScan } = require('./payrollAttendanceService')
+  computeDailyAttendance, weekday, isAttendanceScan, attendanceWorkDate, minutesOnWorkDate, verifiedShiftTimestamp } = require('./payrollAttendanceService')
 
 function fail(message, statusCode = 409) { throw Object.assign(new Error(message), { statusCode }) }
 function canonical(value) {
@@ -25,10 +26,8 @@ function employed(employee, date) {
 }
 function minutes(time) { const [h,m] = String(time).split(':').map(Number); return h * 60 + m }
 function paidOverlap(from, to, profile) {
-  const start = minutes(profile.work_start_time || '09:00'), end = minutes(profile.work_end_time || '18:00')
-  const lunch = minutes(profile.lunch_start_time || '13:00'), lunchEnd = lunch + Number(profile.unpaid_break_minutes ?? 60)
-  const overlap = (a,b) => Math.max(0, Math.min(to,b) - Math.max(from,a))
-  return overlap(start, Math.min(lunch,end)) + overlap(Math.max(lunchEnd,start), end)
+  const range = coverageWindow(from, to, profile)
+  return paidShiftOverlap(range.from, range.to, profile)
 }
 
 function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
@@ -45,11 +44,15 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
     catch { addIssue('invalid_timestamp', `Invalid timestamp at source row ${r.sourceRow}`); continue }
     if (!firstDate || date < firstDate) firstDate = date
     if (!lastDate || date > lastDate) lastDate = date
-    if (date < periodStart || date > periodEnd) continue
+    if (date < periodStart || date > addDays(periodEnd, 1)) continue
     if (!isAttendanceScan(r.eventType) && r.eventType !== null) continue
-    includedScans += 1; scanDates.add(date)
     const e = r.identifierType === 'person_id' ? byPerson.get(r.employeeCode) : byCode.get(r.employeeCode.toLowerCase())
-    if (!e) { addIssue('unmapped_id', `Attendance ID ${r.employeeCode} is not mapped to an employee`); continue }
+    if (!e) { if (date <= periodEnd) addIssue('unmapped_id', `Attendance ID ${r.employeeCode} is not mapped to an employee`); continue }
+    const previousDate = addDays(date, -1), previousProfile = profileAt(context.profiles, e.id, previousDate) || shiftDefaults(e.shift)
+    const previousWorkDate = attendanceWorkDate(instant, previousProfile)
+    date = previousWorkDate === previousDate ? previousDate : date
+    if (date < periodStart || date > periodEnd) continue
+    includedScans += 1; scanDates.add(date)
     if (!employed(e, date)) { addIssue('employment_dates', `Employee ${e.employee_code} has scans outside recorded employment dates`); continue }
     const key = `${e.id}:${date}`, events = groups.get(key) || []
     events.push({ occurredAt: instant, eventType: r.eventType }); groups.set(key, events)
@@ -68,12 +71,12 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
       if (holidays.has(date) && !events.length) continue
       const leaveRows = context.leaves.filter(l => Number(l.employee_id) === Number(e.id) && l.start_date <= date && l.end_date >= date)
       const approved = leaveRows.filter(l => l.status === 'approved'), pending = leaveRows.some(l => l.status === 'pending')
-      const attendance = computeDailyAttendance({ date, events, profile: profile || {} })
+      const attendance = computeDailyAttendance({ date, events, profile: profile || shiftDefaults(e.shift) })
       const codes = []
       if (!e.date_hired) codes.push('missing_hire_date')
       if (!profile || Number(profile.monthly_basic_salary) <= 0) codes.push('missing_profile')
       if (!e.person_id) codes.push('missing_attendance_id')
-      if (profile && (String(profile.work_end_time) <= String(profile.work_start_time) || paidOverlap(minutes(profile.work_start_time),minutes(profile.work_end_time),profile)!==480)) codes.push('unsupported_schedule')
+      if (profile && (shiftWindow(profile).paidMinutes !== 480 || Number(profile.unpaid_break_minutes ?? 60) !== 60 || shiftWindow(profile).breakStart < shiftWindow(profile).start || shiftWindow(profile).breakEnd > shiftWindow(profile).end)) codes.push('unsupported_schedule')
       if (pending) codes.push('pending_leave')
       if (approved.length > 1) codes.push('leave_conflict')
       let leaveId = null
@@ -95,7 +98,8 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
         exception_reason: attendance.exceptionReason, leave_deduction_fraction: attendance.leaveDeductionFraction ?? 1,
         leave_request_id: leaveId, leaves: leaveRows, profile, issue_codes: [...new Set(codes)],
         review_state: codes.length ? 'pending' : 'clear', base_hash: baseHash,
-        schedule: profile ? `${profile.work_start_time.slice(0,5)}–${profile.work_end_time.slice(0,5)}` : 'Schedule not configured' })
+        overnight: shiftWindow(profile || shiftDefaults(e.shift)).overnight,
+        schedule: profile ? `${profile.work_start_time.slice(0,5)}–${profile.work_end_time.slice(0,5)}${shiftWindow(profile).overnight ? ' next day' : ''}` : 'Schedule not configured' })
     }
   }
   if (emptyDates.size) addIssue('file_coverage', `No source scans on scheduled dates: ${[...emptyDates].sort().join(', ')}`)
@@ -122,7 +126,7 @@ async function loadContext(db, start, end) {
     leave_pay_type,leave_days,paid_days,unpaid_days,day_fraction,coverage_start::text,coverage_end::text
     FROM leave_requests WHERE status IN ('pending','approved') AND start_date <= $2 AND end_date >= $1 ORDER BY id`, [start,end])).rows
   const holidays = (await db.query(`SELECT holiday_date::text FROM philippine_holidays
-    WHERE holiday_date BETWEEN $1 AND $2 AND is_working_day=FALSE ORDER BY holiday_date`, [start,end])).rows
+    WHERE holiday_date BETWEEN $1 AND $2 AND is_working_day=FALSE ORDER BY holiday_date`, [start,addDays(end,1)])).rows
   return { employees,profiles,leaves,holidays }
 }
 function reviewDecision(day, decision, context) {
@@ -138,7 +142,7 @@ function reviewDecision(day, decision, context) {
   } else if (action === 'actual_times') {
     const officialLeave=context.leaves.find(l=>Number(l.id)===Number(day.leave_request_id))
     if (officialLeave&&Number(officialLeave.day_fraction??1)===1) fail('Full-day leave conflicts with work punches. Correct the official leave record first')
-    const first = parseManilaTimestamp(`${day.work_date} ${decision.timeIn}`), last = parseManilaTimestamp(`${day.work_date} ${decision.timeOut}`)
+    const first = verifiedShiftTimestamp(day.work_date, decision.timeIn, day.profile), last = verifiedShiftTimestamp(day.work_date, decision.timeOut, day.profile)
     const measured = computeDailyAttendance({date:day.work_date,events:[{occurredAt:first},{occurredAt:last}],profile:day.profile})
     if (measured.status !== 'present') fail('Provide verified time-in and time-out in order',400)
     Object.assign(resolved,{status:'present',first_scan_at:measured.firstScanAt,last_scan_at:measured.lastScanAt,
@@ -161,9 +165,8 @@ function reviewDecision(day, decision, context) {
     resolved.review_decision.paidFraction=paidFraction
     if (Number(leave.day_fraction) < 1) {
       if (!leave.coverage_start || !leave.coverage_end || !day.first_scan_at || !day.last_scan_at) fail('Partial-day leave requires its recorded time coverage and verified work punches')
-      const first = manilaDateParts(new Date(day.first_scan_at)), last = manilaDateParts(new Date(day.last_scan_at))
-      const inAt = first.hour*60+first.minute, outAt = last.hour*60+last.minute
-      const begin = minutes(leave.coverage_start), end = minutes(leave.coverage_end)
+      const inAt = minutesOnWorkDate(day.first_scan_at, day.work_date), outAt = minutesOnWorkDate(day.last_scan_at, day.work_date)
+      const {from:begin,to:end} = coverageWindow(minutes(leave.coverage_start), minutes(leave.coverage_end), day.profile)
       if (begin < outAt && end > inAt) fail('Leave coverage overlaps the recorded work period; correct the source record')
       const allowance = paidFraction/fraction
       const before = paidOverlap(begin,Math.min(end,inAt),day.profile), after = paidOverlap(Math.max(begin,outAt),end,day.profile)
@@ -196,7 +199,8 @@ function createAttendanceReviewService({db}) {
     const events=(await tx.query('SELECT * FROM payroll_attendance_review_events WHERE batch_id=$1 ORDER BY id DESC LIMIT 200',[id])).rows
     const context=await loadContext(tx,result.period_start,result.period_end)
     return {...result,daily:days.map(d=>({...d,employee_name:`${d.first_name} ${d.last_name}`,
-      schedule:(()=>{const p=profileAt(context.profiles,d.employee_id,d.work_date);return p?`${p.work_start_time.slice(0,5)}–${p.work_end_time.slice(0,5)}`:'Not configured'})(),
+      schedule:(()=>{const p=profileAt(context.profiles,d.employee_id,d.work_date);return p?`${p.work_start_time.slice(0,5)}–${p.work_end_time.slice(0,5)}${shiftWindow(p).overnight ? ' next day' : ''}`:'Not configured'})(),
+      overnight:shiftWindow(profileAt(context.profiles,d.employee_id,d.work_date) || {}).overnight,
       leaves:context.leaves.filter(l=>Number(l.employee_id)===Number(d.employee_id)&&l.start_date<=d.work_date&&l.end_date>=d.work_date)})),
       employees:context.employees,issues:result.review_issues,events}
   }

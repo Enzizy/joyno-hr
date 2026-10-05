@@ -163,7 +163,8 @@ test('one-employee CSV preview includes manual earnings and does not write to th
   const queries = []
   const db = { async query(sql) {
     queries.push(sql)
-    assert.match(sql, /^SELECT id, employee_code, first_name, last_name FROM employees/)
+    assert.match(sql, /^SELECT/)
+    if (!sql.includes('FROM employees')) return {rows:[]}
     return { rows: [{ id: 12, employee_code: 'IT-12', first_name: 'Sample', last_name: 'Employee' }] }
   } }
   app.use(createPayrollRouter({ db, payrollService: {},
@@ -210,8 +211,32 @@ test('one-employee CSV preview includes manual earnings and does not write to th
     const partial = await partialResponse.json()
     assert.equal(partial.specialHoliday.holidayPremium, 181.03)
     assert.equal(partial.line.details.manualEarnings[0].approvedHours, 7)
-    assert.equal(queries.length, 3)
+    assert.equal(queries.length, 9)
   } finally {
     await new Promise((resolve) => server.close(resolve))
   }
+})
+
+test('one-employee night preview uses Employee Management shift and next-morning checkout without writes', async () => {
+  const app=express(),queries=[]
+  const db={async query(sql){
+    queries.push(sql);assert.match(sql,/^SELECT/)
+    return {rows:sql.includes('FROM employees')?[{id:12,employee_code:'N-12',first_name:'Night',last_name:'Fixture',shift:'night'}]:[]}
+  }}
+  app.use(createPayrollRouter({db,payrollService:{},authRequired:(req,res,next)=>{req.user={id:1,role:'hr'};next()},requireRole:()=> (req,res,next)=>next()}))
+  const server=app.listen(0)
+  try {
+    const body=new FormData()
+    body.append('file',new Blob(['Person ID,Name,Time,Attendance Check Point\n00042,Night Fixture,2026-09-10 21:00,Main_Door_Out_Door1_Entrance Card Reader1\n00042,Night Fixture,2026-09-11 06:00,New Bio_New Office Biometrics_Entrance Card Reader1']), 'night-fixture.csv')
+    for(const [key,value] of Object.entries({employeeId:12,biometricPersonId:'00042',monthlyBasicSalary:15000,periodStart:'2026-08-26',periodEnd:'2026-09-10',payday:'2026-09-15',cutoff:'first'}))body.append(key,String(value))
+    const response=await fetch(`http://127.0.0.1:${server.address().port}/api/payroll/test/employee-preview`,{method:'POST',body})
+    assert.equal(response.status,200)
+    const result=await response.json(),day=result.days.find(d=>d.date==='2026-09-10')
+    assert.equal(day.status,'present');assert.equal(day.lateMinutes,0);assert.equal(day.undertimeMinutes,0)
+    assert.equal(result.line.details.nightDifferential.paidMinutes,420)
+    assert.equal(result.line.details.nightDifferential.amount,60.34);assert.equal(result.line.net_pay,7560.34)
+    assert.equal(result.line.details.nightDifferential.reviewRequired,false)
+    assert.equal(Buffer.from(result.pdfBase64,'base64').subarray(0,5).toString(),'%PDF-')
+    assert.equal(queries.length,3)
+  }finally{await new Promise(resolve=>server.close(resolve))}
 })
