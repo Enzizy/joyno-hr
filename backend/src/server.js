@@ -912,7 +912,16 @@ app.use(createLeaveChangeRequestRouter({
   frontendOrigin: PRIMARY_FRONTEND_ORIGIN,
 }))
 app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
-app.use(createAnnouncementRouter({service:createAnnouncementService({db}),authRequired,requireRole}))
+app.use(createAnnouncementRouter({service:createAnnouncementService({db,sendCeoEmail:async announcement=>{
+  const ceos=await getUserContactsByRole('ceo')
+  for(const ceo of ceos)await sendEmailNotification({
+    to:ceo.email,subject:`Announcement: ${announcement.title}`,category:'system',
+    text:[`Hi ${ceo.name || 'CEO'},`,'','A company announcement has been published.',
+      `Title: ${announcement.title}`,`Priority: ${announcement.priority}`,`Published by: ${announcement.author_name}`,
+      `Recipients: ${announcement.recipients.length}`,'',announcement.body,'',
+      `View announcement: ${PRIMARY_FRONTEND_ORIGIN}/announcements?announcement=${announcement.id}`].join('\n'),
+  })
+}}),authRequired,requireRole}))
 if (PAYROLL_ENABLED) {
   app.use(createAttendanceReviewRouter({service:createAttendanceReviewService({db}),authRequired,requireRole}))
   const payrollService = createPayrollService({ db })

@@ -2,8 +2,15 @@ const test=require('node:test'),assert=require('node:assert/strict')
 const {createAnnouncementService,validateAnnouncement}=require('./services/announcementService')
 
 test('announcement validation requires a useful message and explicit valid recipients',()=>{
- assert.deepEqual(validateAnnouncement({title:' Update ',body:' Details ',recipientIds:[1,'1',2]}),{title:'Update',body:'Details',priority:'normal',recipientIds:[1,2]})
+ assert.deepEqual(validateAnnouncement({title:' Update ',body:' Details ',recipientIds:[1,'1',2]}),{title:'Update',body:'Details',priority:'normal',recipientIds:[1,2],notifyCeo:false})
  for(const input of [{},{title:'',body:'ok',recipientIds:[1]},{title:'Hi',body:' ',recipientIds:[1]},{title:'Hi',body:'ok',recipientIds:[]},{title:'Hi',body:'ok',recipientIds:[0]},{title:'Hi',body:'ok',recipientIds:[1],priority:'urgent'},{title:'Hi',body:'x'.repeat(10001),recipientIds:[1]}])assert.throws(()=>validateAnnouncement(input),error=>error.status===400)
+})
+
+test('CEO copies require an explicit boolean opt-in',()=>{
+ const input={title:'Update',body:'Details',recipientIds:[1]}
+ assert.equal(validateAnnouncement({...input,notifyCeo:true}).notifyCeo,true)
+ assert.equal(validateAnnouncement({...input,notifyCeo:false}).notifyCeo,false)
+ for(const notifyCeo of ['true','false',1,null])assert.throws(()=>validateAnnouncement({...input,notifyCeo}),error=>error.status===400)
 })
 test('employees cannot save, publish or archive announcements even through the service directly',async()=>{
  const service=createAnnouncementService({db:{transaction:()=>{throw Error('Database must not be called')}}}),actor={id:2,role:'employee',employee_id:1}

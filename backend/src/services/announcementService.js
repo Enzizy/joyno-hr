@@ -13,17 +13,18 @@ function validateAnnouncement(input = {}) {
   if (!body || body.length > 10000) fail('Enter a message of up to 10,000 characters')
   const priority = input.priority || 'normal'
   if (!['normal', 'important'].includes(priority)) fail('Invalid announcement priority')
+  if (input.notifyCeo !== undefined && typeof input.notifyCeo !== 'boolean') fail('CEO notification must be on or off')
   if (!Array.isArray(input.recipientIds) || input.recipientIds.length > 5000) fail('Choose announcement recipients')
   if (input.recipientIds.some(value=>!['string','number'].includes(typeof value))) fail('Choose valid employees')
   const recipientIds = [...new Set(input.recipientIds.map(Number))]
   if (!recipientIds.length || recipientIds.some(id => !Number.isSafeInteger(id) || id < 1)) fail('Choose at least one valid employee')
-  return { title, body, priority, recipientIds }
+  return { title, body, priority, recipientIds, notifyCeo:input.notifyCeo===true }
 }
 function requireManagement(actor) {
   if (!isManagementRole(actor?.role)) fail('Only HR, Admin or CEO can manage announcements', 403)
 }
 
-function createAnnouncementService({ db }) {
+function createAnnouncementService({ db, sendCeoEmail = async()=>{} }) {
   async function audience() {
     return (await db.query(`SELECT e.id,e.employee_code,e.first_name,e.last_name,
       COALESCE(NULLIF(TRIM(e.department),''),'Unassigned') AS department,
@@ -113,7 +114,7 @@ function createAnnouncementService({ db }) {
         if (!item) fail('Announcement not found',404)
         if (item.status !== 'draft') fail('Published announcements are retained. Create a new announcement for changes',409)
         if (Number(input.version) !== item.version) fail('This draft changed. Reload it before saving',409)
-        await tx.query('UPDATE announcements SET title=$1,body=$2,priority=$3,version=version+1,updated_at=NOW() WHERE id=$4', [data.title,data.body,data.priority,id])
+        await tx.query('UPDATE announcements SET title=$1,body=$2,priority=$3,notify_ceo=$4,version=version+1,updated_at=NOW() WHERE id=$5', [data.title,data.body,data.priority,data.notifyCeo,id])
       } else {
         // Retry after a network interruption must not create a second draft.
         await tx.query('SELECT pg_advisory_xact_lock(62411,hashtext($1))', [input.clientKey])
@@ -122,11 +123,11 @@ function createAnnouncementService({ db }) {
           if (Number(item.created_by) !== Number(actor.id)) fail('Draft key is already in use',409)
           const existing=await getWith(tx,item.id,actor)
           const sameRecipients=JSON.stringify(existing.recipients.map(p=>p.employee_id).sort((a,b)=>a-b))===JSON.stringify([...data.recipientIds].sort((a,b)=>a-b))
-          if (existing.title!==data.title || existing.body!==data.body || existing.priority!==data.priority || !sameRecipients) fail('This draft was already saved with different details. Open it from Drafts before changing or publishing it',409)
+          if (existing.title!==data.title || existing.body!==data.body || existing.priority!==data.priority || existing.notify_ceo!==data.notifyCeo || !sameRecipients) fail('This draft was already saved with different details. Open it from Drafts before changing or publishing it',409)
           return existing
         }
-        id = (await tx.query(`INSERT INTO announcements(title,body,priority,created_by,client_key) VALUES($1,$2,$3,$4,$5) RETURNING id`,
-          [data.title,data.body,data.priority,actor.id,input.clientKey])).rows[0].id
+        id = (await tx.query(`INSERT INTO announcements(title,body,priority,created_by,client_key,notify_ceo) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`,
+          [data.title,data.body,data.priority,actor.id,input.clientKey,data.notifyCeo])).rows[0].id
       }
       await setRecipients(tx,id,data.recipientIds)
       await audit(tx,actor,item?'update_announcement_draft':'create_announcement_draft',id)
@@ -135,10 +136,10 @@ function createAnnouncementService({ db }) {
   }
   async function publish(id, version, actor) {
     requireManagement(actor); id=positiveId(id)
-    return db.transaction(async tx => {
+    const result=await db.transaction(async tx => {
       const item = (await tx.query('SELECT * FROM announcements WHERE id=$1 FOR UPDATE', [id])).rows[0]
       if (!item) fail('Announcement not found',404)
-      if (item.status === 'published') return getWith(tx,id,actor)
+      if (item.status === 'published') return {announcement:await getWith(tx,id,actor),newlyPublished:false}
       if (item.status !== 'draft' || Number(version) !== item.version) fail('This draft changed. Reload and review before publishing',409)
       const recipients = (await tx.query(`SELECT r.employee_id,e.status FROM announcement_recipients r JOIN employees e ON e.id=r.employee_id
         WHERE r.announcement_id=$1 FOR SHARE OF e`, [id])).rows
@@ -146,10 +147,16 @@ function createAnnouncementService({ db }) {
       await tx.query("UPDATE announcements SET status='published',published_at=NOW(),updated_at=NOW(),version=version+1 WHERE id=$1", [id])
       await tx.query(`INSERT INTO notifications(user_id,type,title,message,target_table,target_id)
         SELECT u.id,'announcement_published',$2,LEFT($3,240),'announcements',$1 FROM users u
-        WHERE EXISTS(SELECT 1 FROM announcement_recipients r WHERE r.announcement_id=$1 AND r.employee_id=u.employee_id)`, [id,item.title,item.body])
+        WHERE EXISTS(SELECT 1 FROM announcement_recipients r WHERE r.announcement_id=$1 AND r.employee_id=u.employee_id)
+          OR ($4::boolean AND LOWER(u.role)='ceo')`, [id,item.title,item.body,item.notify_ceo])
       await audit(tx,actor,'publish_announcement',id)
-      return getWith(tx,id,actor)
+      return {announcement:await getWith(tx,id,actor),newlyPublished:true}
     })
+    // Mail scheduling runs after commit; retries of an already-published announcement do not resend.
+    if(result.newlyPublished && result.announcement.notify_ceo){
+      try{await sendCeoEmail(result.announcement)}catch(error){console.error('CEO announcement email scheduling failed:',error.message)}
+    }
+    return result.announcement
   }
   async function archive(id, version, actor) {
     requireManagement(actor); id=positiveId(id)
