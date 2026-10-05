@@ -63,3 +63,10 @@ test('creates management-only notes by default', () => {
   assert.equal(result.value.is_employee_visible, false)
   assert.equal(result.value.supporting_document_received, false)
 })
+test('half-day official leave requires one date and real time coverage, while notes ignore duration',()=>{
+ const entry={entry_type:'leave',employee_id:7,leave_type_name:'Vacation Leave',start_date:'2026-09-21',end_date:'2026-09-21',description:'Paper request received by HR',day_fraction:.5,coverage_start:'14:00',coverage_end:'18:00'}
+ assert.equal(validateHrCalendarEntry(entry).value.day_fraction,.5)
+ assert.match(validateHrCalendarEntry({...entry,coverage_end:'25:00'}).error,/valid covered/)
+ assert.match(validateHrCalendarEntry({...entry,end_date:'2026-09-22'}).error,/one date/)
+ assert.equal(validateHrCalendarEntry({...entry,entry_type:'note',title:'HR office record'}).value.day_fraction,undefined)
+})

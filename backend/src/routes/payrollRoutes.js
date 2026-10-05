@@ -6,6 +6,7 @@ const { dateKey } = require('../services/payrollAttendanceService')
 const { parseAttendanceCsv, decodeAttendanceCsv, isAttendanceScan, parseManilaTimestamp, manilaDateParts, listWeekdays, computeDailyAttendance } = require('../services/payrollAttendanceService')
 const { calculatePayrollLine, calculateSssAssessablePay, calculateWorkedSpecialHoliday } = require('../services/payrollCalculationService')
 const { validatePayrollPeriod } = require('../services/payrollScheduleService')
+const {csvRows}=require('../services/hrmsCsvService')
 
 const CSV_MAX_BYTES = 10 * 1024 * 1024
 
@@ -176,6 +177,18 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       return handlePayrollError(error, res)
     }
   })
+  router.get('/api/payroll/operations',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    try {
+      const [setup,reviews,runs]=await Promise.all([
+        db.query(`SELECT COUNT(*)::integer AS count FROM employees e WHERE LOWER(e.status) IN ('active','on_leave') AND
+          (e.date_hired IS NULL OR NOT EXISTS(SELECT 1 FROM payroll_biometric_identities b WHERE b.employee_id=e.id) OR
+          NOT EXISTS(SELECT 1 FROM payroll_employee_profiles p WHERE p.employee_id=e.id AND p.effective_from<=(NOW() AT TIME ZONE 'Asia/Manila')::date AND COALESCE(p.effective_to,'infinity'::date)>=(NOW() AT TIME ZONE 'Asia/Manila')::date AND p.monthly_basic_salary>0))`),
+        db.query("SELECT COUNT(*)::integer AS count FROM payroll_attendance_import_batches WHERE review_state='draft'"),
+        db.query("SELECT COUNT(*) FILTER(WHERE r.status='draft')::integer AS drafts,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NULL)::integer AS awaiting_payment,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NOT NULL)::integer AS awaiting_release FROM payroll_runs r LEFT JOIN payroll_payments p ON p.payroll_run_id=r.id")
+      ])
+      res.set('Cache-Control','private, no-store').json({setup:setup.rows[0].count,attendance:reviews.rows[0].count,...runs.rows[0]})
+    }catch(e){handlePayrollError(e,res)}
+  })
 
   router.put('/api/payroll/profiles/:employeeId', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
     const employeeId = positiveId(req.params.employeeId)
@@ -190,6 +203,11 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         dailyFareRate: req.body.dailyFareRate,
         biometricPersonId: req.body.biometricPersonId,
         effectiveFrom: req.body.effectiveFrom,
+        workdays: req.body.workdays,
+        workStartTime: req.body.workStartTime,
+        workEndTime: req.body.workEndTime,
+        unpaidBreakMinutes: req.body.unpaidBreakMinutes,
+        dailyRateDivisor: req.body.dailyRateDivisor,
       }
       for (const key of Object.keys(profileInput)) {
         if (profileInput[key] === undefined) delete profileInput[key]
@@ -222,34 +240,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     }
   })
 
-  router.post('/api/payroll/attendance/import', authRequired, requireRole(MANAGEMENT_ROLES), (req, res, next) => {
-    upload.single('file')(req, res, (error) => {
-      if (!error) return next()
-      if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: 'CSV file exceeds 10 MB' })
-      return res.status(400).json({ message: error.message || 'Invalid file upload' })
-    })
-  }, async (req, res) => {
-    if (!req.file) return res.status(400).json({ message: 'CSV file is required in the file field' })
-    if (!req.file.originalname.toLowerCase().endsWith('.csv') || req.file.buffer.includes(0)) {
-      return res.status(415).json({ message: 'Upload a valid CSV file' })
-    }
-    if (!validDate(req.body.periodStart) || !validDate(req.body.periodEnd) || req.body.periodEnd < req.body.periodStart) {
-      return res.status(400).json({ message: 'A valid attendance periodStart and periodEnd are required' })
-    }
-    try {
-      const result = await payrollService.importAttendance({
-        fileName: req.file.originalname,
-        csvText: decodeAttendanceCsv(req.file.buffer),
-        periodStart: req.body.periodStart,
-        periodEnd: req.body.periodEnd,
-        importedBy: req.user,
-      })
-      await addAuditLog(req.user.id, 'import_payroll_attendance', 'payroll_attendance_batches', result.id)
-      return res.status(201).json(result)
-    } catch (error) {
-      return handlePayrollError(error, res)
-    }
-  })
+  router.post('/api/payroll/attendance/import',authRequired,requireRole(MANAGEMENT_ROLES),(req,res)=>res.status(409).json({message:'Preview and confirm attendance in the Attendance workspace first'}))
 
   router.get('/api/payroll/attendance/batches/:id', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
     const id = positiveId(req.params.id)
@@ -263,52 +254,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     }
   })
 
-  router.patch('/api/payroll/attendance/days/:id', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
-    const dailyAttendanceId = positiveId(req.params.id)
-    if (!dailyAttendanceId) return res.status(400).json({ message: 'Invalid attendance day ID' })
-    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
-      return res.status(400).json({ message: 'Attendance correction details are required' })
-    }
-    const { timeIn, timeOut, status, reason, lateMinutes, undertimeMinutes, adjustmentType } = req.body
-    if (timeIn !== undefined && timeIn !== null && (typeof timeIn !== 'string' || timeIn.length > 64)) {
-      return res.status(400).json({ message: 'timeIn must be a timestamp or null' })
-    }
-    if (timeOut !== undefined && timeOut !== null && (typeof timeOut !== 'string' || timeOut.length > 64)) {
-      return res.status(400).json({ message: 'timeOut must be a timestamp or null' })
-    }
-    if (status !== undefined && (typeof status !== 'string' || !status.trim() || status.length > 32)) {
-      return res.status(400).json({ message: 'Invalid attendance status' })
-    }
-    for (const [field, value] of [['lateMinutes', lateMinutes], ['undertimeMinutes', undertimeMinutes]]) {
-      if (value !== undefined && value !== null && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1440)) {
-        return res.status(400).json({ message: `${field} must be between 0 and 1440` })
-      }
-    }
-    if (adjustmentType !== undefined && (typeof adjustmentType !== 'string' || adjustmentType.length > 40)) {
-      return res.status(400).json({ message: 'Invalid adjustmentType' })
-    }
-    if (typeof reason !== 'string' || reason.trim().length < 3 || reason.length > 500) {
-      return res.status(400).json({ message: 'A correction reason of 3 to 500 characters is required' })
-    }
-    if (timeIn === undefined && timeOut === undefined && status === undefined) {
-      return res.status(400).json({ message: 'At least one attendance field must be corrected' })
-    }
-    try {
-      const result = await payrollService.resolveAttendanceException({
-        dailyAttendanceId,
-        timeIn,
-        timeOut,
-        status,
-        lateMinutes,
-        undertimeMinutes,
-        adjustmentType,
-        reason: reason.trim(),
-      }, req.user)
-      return res.json(result)
-    } catch (error) {
-      return handlePayrollError(error, res)
-    }
-  })
+  router.patch('/api/payroll/attendance/days/:id',authRequired,requireRole(MANAGEMENT_ROLES),(req,res)=>res.status(409).json({message:'Verify attendance in the Attendance workspace; paid leave must use official leave records'}))
 
   router.get('/api/payroll/runs', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
     try {
@@ -316,6 +262,49 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     } catch (error) {
       return handlePayrollError(error, res)
     }
+  })
+
+  router.get('/api/payroll/profiles/:employeeId/history',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    const id=positiveId(req.params.employeeId)
+    if(!id)return res.status(400).json({message:'Invalid employee ID'})
+    try{res.json(await payrollService.profileHistory(id))}catch(e){handlePayrollError(e,res)}
+  })
+  router.post('/api/payroll/runs/:id/payment',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    const id=positiveId(req.params.id)
+    if(!id)return res.status(400).json({message:'Invalid payroll run'})
+    try{res.json(await payrollService.recordPayment(id,req.body,req.user))}catch(e){handlePayrollError(e,res)}
+  })
+  router.post('/api/payroll/runs/:id/lines/:lineId/verify-pay',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    const id=positiveId(req.params.id),lineId=positiveId(req.params.lineId)
+    if(!id||!lineId)return res.status(400).json({message:'Invalid payroll or employee line'})
+    try{const run=await payrollService.verifyPayBasis(id,lineId,req.body?.reason,req.user);if(!run)return res.status(404).json({message:'Payroll line not found'});res.json(run)}catch(e){handlePayrollError(e,res)}
+  })
+  router.get('/api/payroll/runs/:id/payment-export',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    const id=positiveId(req.params.id)
+    if(!id)return res.status(400).json({message:'Invalid payroll run'})
+    try{
+      const run=await payrollService.getRun(id)
+      if(!run)return res.status(404).json({message:'Payroll not found'})
+      if(run.status==='draft')return res.status(409).json({message:'Approve payroll before exporting the payment register'})
+      const csv=csvRows(['Employee ID','Employee name','Net pay'],run.lines.map(l=>[l.employee_code,l.employee_name,Number(l.net_pay).toFixed(2)]))
+      res.set('Cache-Control','private, no-store').type('text/csv').attachment(`payroll-${id}-payment-register.csv`).send(csv)
+    }catch(e){handlePayrollError(e,res)}
+  })
+  router.get('/api/payroll/runs/:id/export/:type',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    const id=positiveId(req.params.id),type=req.params.type
+    if(!id||!['register','remittance'].includes(type))return res.status(400).json({message:'Choose payroll register or remittance export'})
+    try{
+      const run=await payrollService.getRun(id);if(!run)return res.status(404).json({message:'Payroll not found'})
+      const headers=type==='register'?['Status','Payday','Employee ID','Employee','Basic','COLA','Absence deduction','Late deduction','Undertime deduction','SSS employee','PhilHealth employee','Pag-IBIG employee','Manual earnings','Charge deductions','Basic adjustment','Other charge earnings','13th-month basic accrual','Net pay']:
+        ['Status','Payday','Employee ID','Employee','SSS employee','SSS employer','EC employer','PhilHealth employee','PhilHealth employer','Pag-IBIG employee','Pag-IBIG employer']
+      const rows=run.lines.map(l=>{
+        const identity=[run.status,run.payday,l.employee_code,l.employee_name]
+        if(type==='remittance')return [...identity,l.employee_sss,l.employer_sss,l.employer_ec,l.employee_philhealth,l.employer_philhealth,l.employee_pagibig,l.employer_pagibig]
+        const totals={earning:0,deduction:0,adjustment:0};for(const c of l.details?.charges||[])totals[c.type==='basic_pay_adjustment'?'adjustment':c.type==='other_non_taxable_earning'?'earning':'deduction']+=Number(c.amount||0)
+        return [...identity,l.gross_salary,l.cola_pay,l.absence_deduction,l.late_deduction,l.undertime_deduction,l.employee_sss,l.employee_philhealth,l.employee_pagibig,(l.details?.manualEarnings||[]).reduce((sum,e)=>sum+Number(e.amount),0),totals.deduction,totals.adjustment,totals.earning,l.thirteenth_month_accrual,l.net_pay]
+      })
+      res.set('Cache-Control','private, no-store').type('text/csv').attachment(`payroll-${id}-${type}-${run.status}.csv`).send(csvRows(headers,rows))
+    }catch(e){handlePayrollError(e,res)}
   })
 
   router.get('/api/payroll/runs/:id', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
@@ -377,7 +366,8 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
        FROM payroll_run_lines line
        JOIN payroll_runs run ON run.id = line.payroll_run_id
        WHERE line.id = $1 AND ($2::integer IS NULL OR run.id = $2)
-         AND ($3::integer IS NULL OR (line.employee_id = $3 AND run.status IN ('approved', 'locked')))` ,
+         AND ($3::integer IS NULL OR (line.employee_id = $3 AND run.status = 'locked'
+           AND EXISTS(SELECT 1 FROM payroll_payments payment WHERE payment.payroll_run_id=run.id)))` ,
       [lineId, runId, employeeId]
     )
     if (!rows[0]) return null
@@ -423,8 +413,8 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         await tx.query('SELECT pg_advisory_xact_lock($1, $2)', [716211, lineId])
         const payslip = await findPayslip(tx, lineId, runId)
         if (!payslip) return { status: 'not_found' }
-        if (!['approved', 'locked'].includes(payslip.run.status)) {
-          throw Object.assign(new Error('Only approved payslips can be emailed'), { statusCode: 409 })
+        if (payslip.run.status !== 'locked' || !(await tx.query('SELECT 1 FROM payroll_payments WHERE payroll_run_id=$1',[runId])).rows.length) {
+          throw Object.assign(new Error('Record payment and close payroll before emailing payslips'), { statusCode: 409 })
         }
         const sent = await tx.query(
           `SELECT 1 FROM payroll_run_events
@@ -529,6 +519,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
 }
 
 function handlePayrollError(error, res) {
+  if(error?.code==='40001')return res.status(409).json({message:'Payroll inputs changed during this operation. Reload and try again.'})
   const status = error?.statusCode || error?.status
   if (status && status >= 400 && status < 500) {
     return res.status(status).json({ message: error.message })

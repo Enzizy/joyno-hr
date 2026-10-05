@@ -39,19 +39,17 @@ async function runMigrations() {
 
     const fullPath = path.join(migrationsDir, file)
     const sql = fs.readFileSync(fullPath, 'utf8').trim()
-    if (!sql) {
-      await db.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file])
-      continue
-    }
-
     try {
-      await db.query('BEGIN')
-      await db.query(sql)
-      await db.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file])
-      await db.query('COMMIT')
-      console.log(`[migrations] Applied ${file}`)
+      const changed = await db.transaction(async tx => {
+        await tx.query('SELECT pg_advisory_xact_lock(62410,24)')
+        const existing = await tx.query('SELECT 1 FROM schema_migrations WHERE filename=$1', [file])
+        if (existing.rows.length) return false
+        if (sql) await tx.query(sql)
+        await tx.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file])
+        return true
+      })
+      if (changed) console.log(`[migrations] Applied ${file}`)
     } catch (err) {
-      await db.query('ROLLBACK')
       console.error(`[migrations] Failed ${file}`, err)
       throw err
     }

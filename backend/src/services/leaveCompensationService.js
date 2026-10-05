@@ -8,9 +8,11 @@ async function resolveLeaveCompensation(
   startDate,
   endDate,
   hasMedicalAttachment = false,
-  queryDb = db
+  queryDb = db,
+  {dayFraction = 1} = {}
 ) {
-  const leaveDays = await countPhilippineWorkingDays(queryDb, startDate, endDate)
+  if (![0.5,1].includes(Number(dayFraction)) || (Number(dayFraction) < 1 && startDate !== endDate)) throw new TypeError('Half-day leave requires a single date')
+  const leaveDays = (await countPhilippineWorkingDays(queryDb, startDate, endDate)) * Number(dayFraction)
   if (!leaveDays || leaveDays <= 0) return null
 
   const paidDaysCap = Number(leaveType?.paid_days_per_year || 0)

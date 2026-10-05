@@ -14,6 +14,7 @@ export const navGroups = [
     roles: MANAGEMENT_ROLES,
     children: [
       { path: '/employees', name: 'Employees', icon: 'users', roles: MANAGEMENT_ROLES },
+      { path: '/compensation', name: 'Pay & schedules', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
       { path: '/users', name: 'User accounts', icon: 'user-cog', roles: MANAGEMENT_ROLES },
     ],
   },
@@ -40,6 +41,7 @@ export const navGroups = [
       { path: '/leave-approvals', name: 'Approvals', icon: 'check', roles: MANAGEMENT_ROLES },
     ],
   },
+  {name:'Attendance',icon:'chart',path:'/attendance',roles:MANAGEMENT_ROLES,hidden:!payrollEnabled},
   {
     name: 'Pay',
     icon: 'pay',

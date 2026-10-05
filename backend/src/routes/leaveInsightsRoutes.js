@@ -261,7 +261,7 @@ function createLeaveInsightsRouter({
 
     const { rows } = await db.query(
       `SELECT lr.id, lr.id AS record_id, lr.employee_id, lr.employee_name, lr.leave_type_name,
-              lr.start_date, lr.end_date, lr.status, ${payExpression} AS leave_pay_type,
+              lr.start_date, lr.end_date, lr.day_fraction,lr.coverage_start,lr.coverage_end,lr.status, ${payExpression} AS leave_pay_type,
               COALESCE(lr.submission_source, 'employee') AS source,
               'leave' AS entry_type, ${descriptionExpression} AS description,
               COALESCE(e.department, 'Unassigned') AS department

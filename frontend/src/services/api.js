@@ -102,6 +102,23 @@ export async function importPayrollAttendance(file, periodStart, periodEnd) {
   return request('/api/payroll/attendance/import', { method: 'POST', body })
 }
 
+export async function attendanceUpload(action,file,periodStart,periodEnd,previewToken='') {
+  const body=new FormData()
+  body.append('file',file);body.append('periodStart',periodStart);body.append('periodEnd',periodEnd);body.append('previewToken',previewToken)
+  return request(`/api/attendance/${action}`,{method:'POST',body})
+}
+export const listAttendanceReviews=()=>request('/api/attendance/batches')
+export const getAttendanceReview=id=>request(`/api/attendance/batches/${id}`)
+export const attendanceReviewAction=(id,action,data)=>request(`/api/attendance/batches/${id}/${action}`,{method:'POST',body:JSON.stringify(data)})
+export const getPayrollProfileHistory=id=>request(`/api/payroll/profiles/${id}/history`)
+export const recordPayrollPayment=(id,data)=>request(`/api/payroll/runs/${id}/payment`,{method:'POST',body:JSON.stringify(data)})
+export const getPayrollPaymentExport=id=>requestPdf(`/api/payroll/runs/${id}/payment-export`)
+export const verifyPayrollPayBasis=(id,lineId,reason)=>request(`/api/payroll/runs/${id}/lines/${lineId}/verify-pay`,{method:'POST',body:JSON.stringify({reason})})
+export const getHrmsOperations=()=>request('/api/payroll/operations')
+export const getConfirmedAttendanceExport=id=>requestPdf(`/api/attendance/batches/${id}/export`)
+export const getPayrollRegisterExport=(id,type)=>requestPdf(`/api/payroll/runs/${id}/export/${type}`)
+
+
 export async function getPayrollAttendanceBatch(id) {
   return request(`/api/payroll/attendance/batches/${encodeURIComponent(id)}`)
 }

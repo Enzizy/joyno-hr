@@ -182,7 +182,7 @@ function createLeaveChangeRequestRouter({
       const created = await db.transaction(async (tx) => {
         const { rows } = await tx.query(
           `SELECT id, employee_id, employee_name, leave_type_name, start_date, end_date,
-                  status, leave_days, start_date > CURRENT_DATE AS is_future
+                  status, leave_days, day_fraction,start_date > CURRENT_DATE AS is_future
            FROM leave_requests WHERE id = $1 FOR UPDATE`,
           [leaveRequestId]
         )
@@ -208,7 +208,8 @@ function createLeaveChangeRequestRouter({
           throw error
         }
         if (requestType === 'move') {
-          const requestedDays = await calculateLeaveDays(requestedStartDate, requestedEndDate)
+          const requestedDays = (await calculateLeaveDays(requestedStartDate, requestedEndDate))*Number(leave.day_fraction??1)
+          if(Number(leave.day_fraction??1)<1&&requestedStartDate!==requestedEndDate)throw Object.assign(new Error('Half-day leave must remain on a single date'),{status:400})
           const futureDate = await tx.query(
             'SELECT $1::date > CURRENT_DATE AS is_future',
             [requestedStartDate]

@@ -1,5 +1,8 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { listAttendanceReviews, getAttendanceReview, recordPayrollPayment, getPayrollPaymentExport, verifyPayrollPayBasis, getPayrollRegisterExport } from '@/services/api'
+import AppModal from '@/components/ui/AppModal.vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
 import {
@@ -32,6 +35,19 @@ import { payrollFinalizationEnabled } from '@/config/features'
 
 const auth = useAuthStore()
 const toast = useToastStore()
+const route = useRoute()
+const attendanceReviews = ref([])
+const eligibleReviews = computed(() => attendanceReviews.value.filter(b => b.review_state === 'confirmed' && b.period_start <= cutoffStart.value && b.period_end >= cutoffEnd.value))
+const paymentForm = ref(null)
+const payBasisForm = ref(null)
+async function savePayBasis() {
+  busy.value = true
+  try {
+    const updated = await verifyPayrollPayBasis(activeRun.value.id, payBasisForm.value.line.id, payBasisForm.value.reason)
+    activeRun.value = updated; preview.value = updated; payBasisForm.value = null
+    toast.success('Basic pay and COLA verification recorded')
+  } catch (error) { toast.error(error.message) } finally { busy.value = false }
+}
 const canManage = computed(() => isManagementRole(auth.role))
 const isEmployee = computed(() => auth.role === 'employee')
 const busy = ref(false)
@@ -92,7 +108,7 @@ const testHolidayOvertimePay = computed(() => Math.round(testDailyRate.value / 8
 
 const workflowSteps = [
   { id: 1, label: 'Set up payroll', detail: 'Dates & employee pay' },
-  { id: 2, label: 'Review attendance', detail: 'Import & resolve issues' },
+  { id: 2, label: 'Confirm attendance', detail: 'Select HR-reviewed records' },
   { id: 3, label: 'Calculate draft', detail: 'Check calculation inputs' },
   { id: 4, label: 'Review payslips', detail: 'Earnings & net pay' },
 ]
@@ -104,6 +120,7 @@ const chargeTypes = [
   { value: 'pagibig_calamity', label: 'Pag-IBIG calamity loan', kind: 'deduction' },
   { value: 'pagibig_mp2', label: 'Pag-IBIG MP2', kind: 'deduction' },
   { value: 'cash_advance', label: 'Cash advance', kind: 'deduction' },
+  { value: 'tax_withholding', label: 'HR-approved tax withholding', kind: 'deduction' },
   { value: 'other_charge', label: 'Other charge', kind: 'deduction' },
   { value: 'other_non_taxable_earning', label: 'Other non-taxable earning', kind: 'earning' },
   { value: 'basic_pay_adjustment', label: 'Basic pay adjustment (+/-)', kind: 'adjustment' },
@@ -228,12 +245,53 @@ const testValidationError = computed(() => {
   return testHolidayInputError.value
 })
 
-onMounted(loadWorkspace)
+onMounted(async () => {
+  await loadWorkspace()
+  if (canManage.value && route.query.attendanceBatch) {
+    try {
+      const b = await getAttendanceReview(route.query.attendanceBatch)
+      payrollMonth.value = b.period_end.slice(0, 7)
+      cutoffType.value = b.period_end.endsWith('-10') ? 'first' : 'second'
+      await nextTick()
+      await chooseAttendance(b.id)
+      workflowStep.value = 3
+    } catch (error) { toast.error(error.message) }
+  }
+})
+
+async function chooseAttendance(id) {
+  try {
+    attendanceResult.value = await getAttendanceReview(id)
+    runAttendanceBatch.value = attendanceResult.value?.review_state === 'confirmed' ? id : ''
+  } catch (error) { toast.error(error.message) }
+}
+
+function beginPayment() {
+  paymentForm.value = { reference: '', paidOn: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10) }
+}
+async function savePayment() {
+  busy.value = true
+  try {
+    const updated = await recordPayrollPayment(activeRun.value.id, { ...paymentForm.value, expectedTotal: totalNet.value })
+    activeRun.value = updated; preview.value = updated; paymentForm.value = null
+    toast.success('Actual payment recorded. Close payroll to release employee payslips.')
+    await refreshRuns()
+  } catch (error) { toast.error(error.message) } finally { busy.value = false }
+}
+async function exportPayment(type='payment') {
+  busy.value = true
+  try {
+    const url = URL.createObjectURL(type==='payment'?await getPayrollPaymentExport(activeRun.value.id):await getPayrollRegisterExport(activeRun.value.id,type))
+    const link = document.createElement('a'); link.href = url; link.download = `payroll-${type}-${activeRun.value.id}-${activeRun.value.status}.csv`; link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (error) { toast.error(error.message) } finally { busy.value = false }
+}
 
 async function loadWorkspace() {
   loading.value = true
   const tasks = []
   if (canManage.value) {
+    tasks.push(listAttendanceReviews().then(data => { attendanceReviews.value = data }))
     tasks.push(getPayrollProfiles().then((data) => { profiles.value = listFrom(data, 'items') }))
     tasks.push(getPayrollRuns().then((data) => { runs.value = listFrom(data, 'items') }))
   }
@@ -334,7 +392,7 @@ function beginProfileEdit(profile) {
   editingProfile.value = {
     id: profile.employee_id ?? profile.id,
     employee_name: displayName(profile),
-    monthly_basic: Number(profile.monthly_basic ?? profile.monthly_basic_salary ?? profile.monthlyBasicSalary ?? profile.monthly_salary ?? 15000),
+    monthly_basic: Number(profile.monthly_basic ?? profile.monthly_basic_salary ?? profile.monthlyBasicSalary ?? profile.monthly_salary ?? 0),
     monthly_cola: Number(profile.monthly_cola ?? profile.monthlyCola ?? 0),
     biometric_person_id: profile.biometric_person_id || '',
     effective_from: String(profile.effective_from || new Date().toISOString()).slice(0, 10),
@@ -819,7 +877,7 @@ async function emailAllPayslips() {
           <div class="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-gray-800 pt-3 text-xs text-gray-400"><span :class="profileIssueCount || !profiles.length ? 'text-amber-300' : 'text-emerald-300'">{{ profiles.length ? `${profiles.length - profileIssueCount}/${profiles.length} salary + biometric IDs entered` : 'No pay profiles loaded' }}</span><span :class="runAttendanceBatch ? 'text-emerald-300' : 'text-gray-500'">{{ runAttendanceBatch ? `Attendance batch ${runAttendanceBatch}` : 'Attendance not imported' }}</span><span :class="unresolvedScanCount ? 'text-amber-300' : 'text-gray-500'">{{ unresolvedScanCount }} scan exceptions</span><span v-if="activeRun" class="text-primary-300">Open run: {{ activeRun.status || 'draft' }}</span></div>
         </section>
 
-        <p v-if="!payrollFinalizationEnabled" class="rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-200">Local review mode: draft calculation and payslip preview are available. Approval, locking, and email release remain disabled until payroll matches HR's workbook.</p>
+        <p v-if="!payrollFinalizationEnabled" class="rounded-lg border border-amber-800/40 bg-amber-950/20 px-4 py-3 text-xs text-amber-200">Review mode: attendance confirmation, draft calculation, and payslip preview are available. Actual approval, payment recording, and payslip release are currently disabled while HR verifies employee salaries and payroll.</p>
 
         <nav class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="Payroll preparation steps">
           <button v-for="step in workflowSteps" :key="step.id" type="button" class="rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400" :class="workflowStep === step.id ? 'border-primary-500 bg-primary-950/30 text-white' : 'border-gray-800 bg-gray-900 text-gray-300 hover:border-gray-600 hover:bg-gray-800'" :aria-current="workflowStep === step.id ? 'step' : undefined" @click="workflowStep = step.id"><span class="flex items-center gap-2"><span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-current text-xs font-semibold">{{ step.id }}</span><strong class="text-sm">{{ step.label }}</strong></span><span class="mt-1 block pl-8 text-xs opacity-70">{{ step.detail }}</span></button>
@@ -868,62 +926,35 @@ async function emailAllPayslips() {
             <label class="block text-xs font-medium text-gray-400">Pay date<input v-model="payDate" type="date" class="form-control mt-1.5"><span class="mt-1 block font-normal" :class="payDateError ? 'text-amber-300' : 'text-gray-500'">{{ payDateError ? 'Pay date must be after the cutoff.' : 'Suggested date; HR can adjust it.' }}</span></label>
           </div>
           <p v-if="profileIssueCount" class="mb-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">{{ profileIssueCount }} profile(s) are missing a positive salary or biometric ID. Review them before importing scans; unmatched IDs create exceptions.</p>
-          <h3 class="mb-2 text-sm font-semibold text-gray-200">Pay profiles</h3>
-          <label class="mb-4 block max-w-md text-xs text-gray-400">Find employee<input v-model="profileSearch" type="search" class="form-control mt-1" placeholder="Search name, employee no. or biometric ID"></label>
-          <EmptyState v-if="!profiles.length" compact title="No pay profiles loaded" description="Add employees first, then return here to configure payroll." />
-          <div v-else class="space-y-2">
-            <div v-for="profile in filteredProfiles" :key="profile.employee_id ?? profile.id" class="flex flex-col gap-3 rounded-lg border border-gray-800 bg-gray-950/40 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div class="min-w-0"><p class="font-medium text-gray-100">{{ displayName(profile) }}</p><p class="mt-0.5 text-xs text-gray-500">{{ profile.employee_code || `ID ${profile.employee_id ?? profile.id}` }}</p></div>
-              <template v-if="editingProfile && String(editingProfile.id) === String(profile.employee_id ?? profile.id)">
-                <div class="grid flex-1 gap-2 sm:max-w-3xl sm:grid-cols-4">
-                  <label class="text-xs text-gray-500">Monthly basic<input v-model.number="editingProfile.monthly_basic" type="number" min="0.01" step="0.01" class="form-control mt-1"></label>
-                  <label class="text-xs text-gray-500">Monthly COLA<input v-model.number="editingProfile.monthly_cola" type="number" min="0" step="0.01" class="form-control mt-1"></label>
-                  <label class="text-xs text-gray-500">Biometric Person ID<input v-model="editingProfile.biometric_person_id" type="text" maxlength="80" class="form-control mt-1" placeholder="From CSV Person ID"></label>
-                  <label class="text-xs text-gray-500">Effective from<input v-model="editingProfile.effective_from" type="date" class="form-control mt-1"></label>
-                </div>
-                <div class="flex gap-2"><AppButton size="sm" :loading="savingProfile === String(editingProfile.id)" @click="saveProfile">Save</AppButton><AppButton size="sm" variant="secondary" @click="editingProfile = null">Cancel</AppButton></div>
-              </template>
-              <template v-else><div class="flex flex-wrap items-center gap-5 text-sm"><span><span class="block text-[10px] uppercase text-gray-500">Monthly basic</span><strong class="text-gray-200">{{ money(profile.monthly_basic ?? profile.monthly_basic_salary ?? profile.monthly_salary) }}</strong></span><span><span class="block text-[10px] uppercase text-gray-500">Monthly COLA</span><strong class="text-gray-200">{{ money(profile.monthly_cola ?? profile.monthlyCola ?? 0) }}</strong></span><span><span class="block text-[10px] uppercase text-gray-500">Daily rate</span><strong class="text-gray-200">{{ profileDailyRate(profile) == null ? 'Not set' : money(profileDailyRate(profile)) }}</strong></span><span><span class="block text-[10px] uppercase text-gray-500">Biometric ID</span><strong class="text-gray-200">{{ profile.biometric_person_id || 'Not mapped' }}</strong></span><AppButton size="sm" variant="secondary" @click="beginProfileEdit(profile)">Edit</AppButton></div></template>
-            </div>
-            <p v-if="!filteredProfiles.length" class="py-5 text-center text-sm text-gray-500">No matching employee.</p>
-          </div>
+          <div class="rounded-lg border border-gray-800 p-4 text-sm text-gray-300"><p>Employee compensation, Attendance IDs, schedules, and effective history are managed in People.</p><RouterLink to="/compensation" class="mt-2 inline-block font-semibold text-primary-300 underline">Open Pay &amp; schedules</RouterLink><RouterLink to="/employees" class="ml-4 text-primary-300 underline">Employee records</RouterLink></div>
           <div class="mt-5 text-right"><AppButton @click="workflowStep = 2">Continue to timekeeping</AppButton></div>
         </section>
 
         <section v-if="workflowStep === 2" class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <div class="mb-4"><h2 class="font-semibold text-gray-100">2. Review timekeeping</h2><p class="mt-1 text-sm text-gray-400">Import scans for the selected cutoff, then resolve missing scans, leave, undertime and half-days.</p></div>
-          <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-800 bg-gray-950/50 p-3 text-sm text-gray-300"><span>{{ payrollMonth }} {{ cutoffType === 'first' ? '15th' : 'month-end' }} payroll · Attendance cutoff {{ cutoffEnd }} · weekends excluded</span><button type="button" class="text-xs font-semibold text-primary-300 underline underline-offset-2" @click="workflowStep = 1">Change payroll</button></div>
-          <div class="grid gap-3 sm:grid-cols-2">
-            <label class="block text-xs font-medium text-gray-400">CSV file<input type="file" accept=".csv,text/csv" class="mt-1.5 block w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-300 file:mr-3 file:rounded-md file:border-0 file:bg-gray-800 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-gray-200" @change="onFileChange"></label>
+          <h2 class="font-semibold text-gray-100">2. Select confirmed attendance</h2>
+          <p class="mt-2 text-sm text-gray-400">HR previews the CSV and verifies missing records, undertime, and official leave in Attendance. Only confirmed reviews can be used for payroll.</p>
+          <RouterLink to="/attendance" class="mt-3 inline-block font-semibold text-primary-300 underline">Open Attendance workspace</RouterLink>
+          <label class="mt-5 block text-sm text-gray-300">Confirmed review for {{ cutoffStart }} – {{ cutoffEnd }}
+            <select :value="runAttendanceBatch" class="form-control mt-2" @change="chooseAttendance($event.target.value)">
+              <option value="">Choose a confirmed review</option>
+              <option v-for="b in eligibleReviews" :key="b.id" :value="b.id">Review {{ b.id }} · {{ b.period_start }} – {{ b.period_end }} · {{ b.file_name }}</option>
+            </select>
+          </label>
+          <p v-if="!eligibleReviews.length" class="mt-3 text-sm text-amber-300">No confirmed review covers this cutoff. Finish Attendance review first.</p>
+          <div v-if="attendanceResult" class="mt-4 rounded-lg border border-gray-700 p-4 text-sm text-gray-300">
+            Review {{ attendanceResult.id }} · {{ attendanceResult.review_state }} · {{ attendanceResult.daily?.length || 0 }} reviewed employee-days
+            <RouterLink :to="{path:'/attendance',query:{batch:attendanceResult.id}}" class="ml-3 text-primary-300 underline">Inspect records and HR decisions</RouterLink>
           </div>
-          <p v-if="selectedFile" class="mt-2 text-xs text-gray-400">Selected: {{ selectedFile.name }}<span v-if="attendanceFileInfo && attendanceFileWeekdays"> · Recognized door scans found within this cutoff</span></p>
-          <div v-if="attendanceFileInfo && !attendanceFileWeekdays" class="mt-3 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-sm text-amber-200"><p>This CSV has no recognized door scans on the selected payroll's workdays. Import is paused so every employee is not incorrectly shown as absent.</p><div v-if="suggestedFilePeriod" class="mt-2 flex flex-wrap items-center gap-2"><span>Latest scan matches {{ suggestedFilePeriod.label }}.</span><AppButton size="sm" variant="secondary" @click="useSuggestedFilePeriod">Use that payroll</AppButton></div></div>
-          <div class="mt-4 flex flex-wrap items-center gap-3"><AppButton :loading="busy" :disabled="!selectedFile || !attendanceFileInfo || !attendanceFileWeekdays" @click="importAttendance">Import attendance</AppButton><span class="text-xs text-gray-500">Biometric export: Person ID, Time, Attendance Check Point. Map Person IDs in step 1 first.</span></div>
-          <p class="mt-2 text-xs text-gray-500">The reader labelled Out is time-in; the reader labelled IN is time-out. New Bio can supply the first time-in or last time-out; scans in between are ignored. Missing pairs require HR review.</p>
-
-          <div v-if="attendanceResult" class="mt-5 space-y-4">
-            <div class="rounded-lg border border-gray-800 bg-gray-950/50 p-3"><p class="font-medium text-gray-200">Attendance review · Batch {{ attendanceResult.id }}</p><div class="mt-2 flex flex-wrap gap-3 text-xs text-gray-400"><span>{{ attendanceGroups.length }} employees</span><span>{{ attendanceResult.row_count ?? 0 }} rows in uploaded CSV</span><span :class="unresolvedScanCount ? 'text-amber-300' : 'text-emerald-300'">{{ unresolvedScanCount }} unresolved scan exceptions</span><span :class="attendanceResult.errors?.length ? 'text-red-300' : 'text-emerald-300'">{{ attendanceResult.errors?.length ?? 0 }} import errors</span></div></div>
-            <div v-if="attendanceResult.errors?.length" class="rounded-lg border border-red-900/50 bg-red-950/10 p-3 text-xs text-red-200"><p class="font-semibold">Fix the listed CSV or Person ID mapping errors, then re-import:</p><ul class="mt-2 space-y-1"><li v-for="error in attendanceResult.errors" :key="error.id">Row {{ error.source_row }}: {{ error.error }}</li></ul></div>
-            <div class="flex flex-wrap items-center gap-3"><label class="text-xs text-gray-400">Find employee<input v-model="attendanceSearch" type="search" class="form-control mt-1 w-64 max-w-full" placeholder="Name or employee number"></label><label class="mt-4 flex cursor-pointer items-center gap-2 text-xs text-gray-300"><input v-model="onlyAttendanceExceptions" type="checkbox" class="accent-amber-500">Only employees with issues</label></div>
-            <div class="max-h-[650px] space-y-2 overflow-y-auto pr-1">
-              <article v-for="group in visibleAttendanceGroups" :key="group.id" class="rounded-lg border border-gray-800 bg-gray-950/40">
-                <button type="button" class="flex w-full flex-wrap items-center justify-between gap-3 p-3 text-left hover:bg-gray-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400" :aria-expanded="expandedEmployeeId === group.id" @click="expandedEmployeeId = expandedEmployeeId === group.id ? null : group.id"><span><strong class="block text-sm text-gray-100">{{ group.name }}</strong><span class="mt-0.5 block text-xs text-gray-500">{{ group.code || 'No employee number' }} · {{ group.days.length }} attendance days</span></span><span class="flex flex-wrap items-center gap-3 text-xs"><span :class="group.exceptions ? 'text-amber-300' : 'text-emerald-300'">{{ group.exceptions ? `${group.exceptions} need review` : 'No scan issues' }}</span><span class="text-gray-400">Late {{ group.lateMinutes }} min · Undertime {{ group.undertimeMinutes }} min</span><span class="text-primary-300">{{ expandedEmployeeId === group.id ? 'Hide days −' : 'Show days +' }}</span></span></button>
-                <div v-if="expandedEmployeeId === group.id" class="overflow-x-auto border-t border-gray-800"><table class="w-full min-w-[760px] text-left text-sm"><thead class="border-b border-gray-800 text-xs uppercase text-gray-500"><tr><th class="px-3 py-2">Workdate</th><th class="px-3 py-2">Status</th><th class="px-3 py-2">Time in / out</th><th class="px-3 py-2">Late</th><th class="px-3 py-2">Undertime</th><th class="px-3 py-2 text-right">Action</th></tr></thead><tbody class="divide-y divide-gray-800"><tr v-for="day in (onlyAttendanceExceptions ? group.days.filter((item) => item.status === 'exception') : group.days)" :key="day.id" :class="day.status === 'exception' ? 'bg-amber-950/10' : ''"><td class="px-3 py-3 text-gray-400">{{ day.work_date }}</td><td class="px-3 py-3 capitalize" :class="day.status === 'exception' ? 'text-amber-300' : 'text-gray-300'">{{ String(day.status).replaceAll('_', ' ') }}<span v-if="day.exception_reason" class="mt-1 block text-xs normal-case text-amber-200">{{ day.exception_reason }}</span></td><td class="px-3 py-3 text-gray-400">{{ day.timeIn || '—' }} / {{ day.timeOut || '—' }}</td><td class="px-3 py-3 text-gray-400">{{ Number(day.late_minutes || 0) }} min</td><td class="px-3 py-3 text-gray-400">{{ Number(day.undertime_minutes || 0) }} min</td><td class="px-3 py-3 text-right"><AppButton size="sm" variant="secondary" @click="editingAttendanceDay = day">Adjust</AppButton></td></tr></tbody></table></div>
-              </article>
-              <p v-if="!visibleAttendanceGroups.length" class="rounded-lg border border-gray-800 p-4 text-center text-sm text-gray-500">No employees match this filter.</p>
-            </div>
-          </div>
-          <EmptyState v-else class="mt-5" compact title="No attendance batch yet" description="Import the facial-recognition CSV to create daily attendance records." />
-          <div class="mt-5 flex justify-between"><AppButton variant="secondary" @click="workflowStep = 1">Back to setup</AppButton><AppButton :disabled="!attendanceResult" @click="workflowStep = 3">Continue to calculation</AppButton></div>
+          <div class="mt-5 flex justify-between"><AppButton variant="secondary" @click="workflowStep = 1">Back to setup</AppButton><AppButton :disabled="!runAttendanceBatch || attendanceResult?.review_state !== 'confirmed'" @click="workflowStep = 3">Continue to calculation</AppButton></div>
         </section>
 
         <section v-if="workflowStep === 3" class="rounded-xl border border-gray-800 bg-gray-900 p-5">
           <div class="mb-4"><h2 class="font-semibold text-gray-100">3. Calculate a payroll draft</h2><p class="mt-1 text-sm text-gray-400">The system combines employee pay and reviewed attendance into a saved draft for every active employee.</p></div>
           <dl class="grid gap-3 rounded-lg border border-gray-800 bg-gray-950/50 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4"><div><dt class="text-xs text-gray-500">Attendance cutoff</dt><dd class="mt-1 font-medium text-gray-200">{{ cutoffEnd }}</dd></div><div><dt class="text-xs text-gray-500">Pay date</dt><dd class="mt-1 font-medium text-gray-200">{{ payDate }}</dd></div><div><dt class="text-xs text-gray-500">Attendance source</dt><dd class="mt-1 font-medium text-gray-200">{{ runAttendanceBatch ? `Batch ${runAttendanceBatch}` : 'Missing batch' }}</dd></div><div><dt class="text-xs text-gray-500">Statutory deductions</dt><dd class="mt-1 font-medium text-gray-200">{{ cutoffType === 'second' ? 'SSS, PhilHealth, Pag-IBIG' : 'None on 15th payroll' }}</dd></div></dl>
           <p class="mt-4 text-xs leading-5 text-gray-400">Perfect attendance keeps the full half-month basic pay (₱7,500 for a ₱15,000 monthly salary), regardless of how many Monday–Friday dates fall in the cutoff. Only missed scheduled weekdays, lateness, and undertime reduce salary. SSS, PhilHealth, and Pag-IBIG are deducted on the month-end payroll; weekends and fare are excluded.</p>
-          <p v-if="unresolvedScanCount || attendanceResult?.errors?.length" class="mt-3 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">Review {{ unresolvedScanCount }} unresolved scan day(s) and {{ attendanceResult?.errors?.length || 0 }} import error(s). A draft can be calculated for review, but it must not be treated as final until HR resolves them.</p>
+          <p v-if="unresolvedScanCount || attendanceResult?.errors?.length" class="mt-3 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">Review {{ unresolvedScanCount }} unresolved scan day(s) and {{ attendanceResult?.errors?.length || 0 }} import error(s). Payroll requires a confirmed attendance review with every issue resolved.</p>
           <p class="mt-3 text-xs text-gray-500">Creating this draft saves a payroll run in the connected database. It does not approve, email, or pay employees. Use “Test one employee” for a no-save calculation.</p>
-          <div class="mt-5 flex justify-between"><AppButton variant="secondary" @click="workflowStep = 2">Back to timekeeping</AppButton><AppButton :loading="busy" :disabled="!runAttendanceBatch || payDateError" @click="createPreview">Create saved draft</AppButton></div>
+          <div class="mt-5 flex justify-between"><AppButton variant="secondary" @click="workflowStep = 2">Back to timekeeping</AppButton><AppButton :loading="busy" :disabled="!runAttendanceBatch || attendanceResult?.review_state !== 'confirmed' || payDateError" @click="createPreview">Create saved draft</AppButton></div>
         </section>
 
         <section v-if="workflowStep === 6" class="rounded-xl border border-gray-800 bg-gray-900 p-5">
@@ -935,8 +966,13 @@ async function emailAllPayslips() {
         <template v-if="workflowStep === 4">
           <section v-if="!activeRun" class="rounded-xl border border-gray-800 bg-gray-900 p-5"><h2 class="font-semibold text-gray-100">4. Review employee pay</h2><p class="mt-2 text-sm text-gray-400">No draft is open. Create one from the reviewed attendance batch, or open a saved run.</p><div class="mt-4 flex flex-wrap gap-2"><AppButton size="sm" :disabled="!runAttendanceBatch" @click="workflowStep = 3">Calculate draft</AppButton><AppButton size="sm" variant="secondary" @click="workflowStep = 6">Open saved runs</AppButton></div></section>
           <section v-if="activeRun" class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-            <div class="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 class="font-semibold text-gray-100">4. Review employee pay</h2><p class="mt-1 text-sm text-gray-400">Payday {{ activeRun.payday || activeRun.pay_date }} · Attendance cutoff {{ activeRun.period_end }} · {{ activeRun.status || 'preview' }}</p><p v-if="activeRun.status === 'draft'" class="mt-1 text-xs text-amber-300">Check overtime and holiday earnings against approved HR forms. Draft payslips are watermarked; email is disabled.</p></div><div class="flex flex-wrap items-center gap-2"><p class="mr-2 text-lg font-semibold text-emerald-300">{{ money(totalNet) }} net total</p><AppButton v-if="payrollFinalizationEnabled && ['draft', 'preview', 'pending_review'].includes(String(activeRun.status || 'draft').toLowerCase())" size="sm" variant="success" :loading="busy" :disabled="Boolean(reviewExceptionCount || reviewImportErrorCount || legacyHolidayLineCount || unverifiedFirstCutoffCount)" @click="changeRunState('approve', activeRun)">Approve</AppButton><AppButton v-if="payrollFinalizationEnabled && String(activeRun.status || '').toLowerCase() === 'approved'" size="sm" variant="secondary" :loading="busy" @click="changeRunState('lock', activeRun)">Lock</AppButton><AppButton v-if="payrollFinalizationEnabled && ['approved', 'locked'].includes(activeRun.status)" size="sm" :loading="busy" @click="emailAllPayslips">{{ sendProgress ? `Sending ${sendProgress}` : 'Email all payslips' }}</AppButton></div></div>
+            <div class="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 class="font-semibold text-gray-100">4. Review employee pay</h2><p class="mt-1 text-sm text-gray-400">Payday {{ activeRun.payday || activeRun.pay_date }} · Attendance cutoff {{ activeRun.period_end }} · {{ activeRun.status || 'preview' }}</p><p v-if="activeRun.status === 'draft'" class="mt-1 text-xs text-amber-300">Check overtime and holiday earnings against approved HR forms. Draft payslips are watermarked; email is disabled.</p></div><div class="flex flex-wrap items-center gap-2"><p class="mr-2 text-lg font-semibold text-emerald-300">{{ money(totalNet) }} net total</p><AppButton v-if="payrollFinalizationEnabled && ['draft', 'preview', 'pending_review'].includes(String(activeRun.status || 'draft').toLowerCase())" size="sm" variant="success" :loading="busy" :disabled="Boolean(reviewExceptionCount || reviewImportErrorCount || legacyHolidayLineCount || unverifiedFirstCutoffCount || currentLines.some(l => l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason))" @click="changeRunState('approve', activeRun)">Approve</AppButton><AppButton v-if="activeRun.status === 'approved' || activeRun.status === 'locked'" size="sm" variant="secondary" :loading="busy" @click="exportPayment('payment')">Payment register CSV</AppButton><AppButton v-if="payrollFinalizationEnabled && activeRun.status === 'approved' && !activeRun.payment" size="sm" :loading="busy" @click="beginPayment">Record actual payment</AppButton><AppButton v-if="payrollFinalizationEnabled && activeRun.status === 'approved' && activeRun.payment" size="sm" variant="secondary" :loading="busy" @click="changeRunState('lock', activeRun)">Close payroll &amp; release payslips</AppButton><AppButton v-if="payrollFinalizationEnabled && activeRun.status === 'locked' && activeRun.payment" size="sm" :loading="busy" @click="emailAllPayslips">{{ sendProgress ? `Sending ${sendProgress}` : 'Email all payslips' }}</AppButton></div></div>
+            <div class="mb-4 flex flex-wrap gap-3 text-sm"><button class="text-primary-300 underline" :disabled="busy" @click="exportPayment('register')">Export payroll register</button><button class="text-primary-300 underline" :disabled="busy" @click="exportPayment('remittance')">Export contribution report</button><span v-if="activeRun.payment" class="text-gray-400">Payment recorded: {{activeRun.payment.reference}} · {{activeRun.payment.paid_on}}</span></div>
             <p v-if="reviewExceptionCount || reviewImportErrorCount" class="mb-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">Approval is blocked: {{ reviewExceptionCount }} unresolved scan day(s), {{ reviewImportErrorCount }} import error(s). Correct the timekeeping batch and recalculate this draft.</p>
+            <div v-if="activeRun.status==='draft' && currentLines.some(l=>l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason)" class="mb-4 rounded-lg border border-amber-800/40 p-3 text-sm text-amber-200">
+              Employment or compensation changed within this cutoff. Review basic pay and COLA against company policy, enter any needed adjustments under Charges, and verify each affected employee.
+              <button v-for="l in currentLines.filter(l=>l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason)" :key="l.id" class="ml-3 underline" @click="payBasisForm={line:l,reason:''}">Verify {{displayName(l)}}</button>
+            </div>
             <p v-if="legacyHolidayLineCount" class="mb-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">{{ legacyHolidayLineCount }} old full-holiday-pay line(s) need HR review. Open each employee's Earnings, remove the old line, and add only the 30% WSH/RD premium. Existing drafts are not changed automatically.</p>
             <p v-if="unverifiedFirstCutoffCount" class="mb-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">{{ unverifiedFirstCutoffCount }} employee(s) have no approved 15th payroll linked. Their SSS amount is provisional. Enter an HR-confirmed first-cutoff amount and reason before approval.</p>
             <dl class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7"><div v-for="summary in [{ label: 'Basic pay', value: registerTotals.basic }, { label: 'Extra earnings', value: registerTotals.extras }, { label: 'Charge earnings', value: registerTotals.chargeEarnings }, { label: 'Charges', value: registerTotals.charges }, { label: 'Time deductions', value: registerTotals.time }, { label: 'Contributions', value: registerTotals.statutory }, { label: 'Net pay', value: registerTotals.net }]" :key="summary.label" class="rounded-lg border border-gray-800 bg-gray-950/40 p-3"><dt class="text-xs text-gray-500">{{ summary.label }}</dt><dd class="mt-1 text-sm font-semibold text-gray-200">{{ money(summary.value) }}</dd></div></dl>
@@ -962,7 +998,7 @@ async function emailAllPayslips() {
             <p class="mt-3 text-xs text-gray-500">Open a payslip for the full absence, late, undertime, SSS, PhilHealth and Pag-IBIG breakdown.</p>
             <details v-if="activeRun.cutoff === 'second' && activeRun.include_contributions" class="mt-5 rounded-lg border border-gray-800 p-4">
               <summary class="cursor-pointer text-sm font-semibold text-gray-100">Remittance preview · employee and employer shares</summary>
-              <p class="mt-2 text-xs text-gray-400">Calculated from this payroll run. This is a review report, not proof that contributions have been remitted. Tax withholding is not enabled here.</p>
+              <p class="mt-2 text-xs text-gray-400">Calculated from this payroll run. This is a review report, not proof that contributions have been remitted. Automatic tax is not enabled. Enter verified withholding through HR-approved charges.</p>
               <div class="mt-3 overflow-x-auto"><table class="w-full min-w-[850px] text-right text-xs">
                 <thead class="border-b border-gray-700 text-gray-400"><tr><th class="p-2 text-left">Employee</th><th class="p-2">SSS employee</th><th class="p-2">SSS employer</th><th class="p-2">EC employer</th><th class="p-2">PHIC employee</th><th class="p-2">PHIC employer</th><th class="p-2">Pag-IBIG employee</th><th class="p-2">Pag-IBIG employer</th></tr></thead>
                 <tbody class="divide-y divide-gray-800"><tr v-for="line in currentLines" :key="`remit-${line.id}`"><th class="p-2 text-left font-medium text-gray-200">{{ displayName(line) }}</th><td class="p-2">{{ money(line.employee_sss) }}</td><td class="p-2">{{ money(line.employer_sss) }}</td><td class="p-2">{{ money(line.employer_ec) }}</td><td class="p-2">{{ money(line.employee_philhealth) }}</td><td class="p-2">{{ money(line.employer_philhealth) }}</td><td class="p-2">{{ money(line.employee_pagibig) }}</td><td class="p-2">{{ money(line.employer_pagibig) }}</td></tr></tbody>
@@ -990,7 +1026,7 @@ async function emailAllPayslips() {
         <p v-if="editingEarnings.earnings.some((entry) => entry.type === 'special_holiday_pay')" class="mt-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">This draft has an old full-holiday-pay line. Remove it before saving the corrected 30% premium. Do not add the premium on top of the old line.</p>
         <h3 class="mt-5 text-sm font-semibold text-gray-200">Earning lines in this draft</h3>
         <div v-for="(earning, index) in editingEarnings.earnings" :key="index" class="mt-3 grid gap-2 rounded-lg border border-gray-700 p-3 sm:grid-cols-[145px_120px_1fr_auto]">
-          <label class="text-xs text-gray-400">Type<select v-model="earning.type" class="form-control mt-1" @change="onEarningTypeChange(earning)"><option value="overtime">Overtime</option><option value="special_holiday_pay" disabled>Legacy full holiday pay - review</option><option value="holiday_premium">WSH/RD premium (30%)</option><option value="other">Other earning</option></select></label>
+          <label class="text-xs text-gray-400">Type<select v-model="earning.type" class="form-control mt-1" @change="onEarningTypeChange(earning)"><option value="overtime">Overtime</option><option value="night_differential">HR-approved night differential</option><option value="special_holiday_pay" disabled>Legacy full holiday pay - review</option><option value="holiday_premium">WSH/RD premium (30%)</option><option value="other">Other earning</option></select></label>
           <label class="text-xs text-gray-400">Amount (₱)<input v-model.number="earning.amount" type="number" min="0.01" step="0.01" class="form-control mt-1" :readonly="earning.type === 'holiday_premium' && earning.approvedHours != null"><span v-if="earning.approvedHours != null" class="mt-1 block text-[11px] text-gray-500">{{ earning.approvedHours }} approved hours; calculated again when saved.</span></label>
           <label class="text-xs text-gray-400">Reason / date<input v-model="earning.note" type="text" maxlength="200" class="form-control mt-1" placeholder="e.g. approved OT, Sep 22"></label>
           <button type="button" class="self-end rounded-md px-2 py-2 text-xs text-red-300 hover:bg-red-950/30" @click="editingEarnings.earnings.splice(index, 1)">Remove</button>
@@ -1013,6 +1049,18 @@ async function emailAllPayslips() {
         <div class="mt-6 flex justify-end gap-2"><AppButton variant="secondary" @click="editingCharges = null">Cancel</AppButton><AppButton :loading="busy" @click="saveCharges">Save charges</AppButton></div>
       </div>
     </div>
-    <PayrollPayslipPreview v-if="selectedPayslip" :line="selectedPayslip.line" :run="selectedPayslip.run" :busy="busy" :can-edit="canManage && Boolean(selectedPayslip.line.id) && selectedPayslip.run.status === 'draft'" :can-email="canManage && payrollFinalizationEnabled && ['approved', 'locked'].includes(selectedPayslip.run.status)" @close="selectedPayslip = null" @print="payslipPdf(false)" @download="payslipPdf(true)" @send="emailPayslip()" @edit="beginEarningsEdit(selectedPayslip.line)" @edit-charges="beginChargesEdit(selectedPayslip.line)" />
+    <AppModal :show="Boolean(payBasisForm)" title="Verify cutoff pay basis" @close="payBasisForm=null">
+      <div v-if="payBasisForm" class="space-y-4"><p>{{displayName(payBasisForm.line)}} · Basic {{money(payBasisForm.line.gross_salary)}} · COLA {{money(payBasisForm.line.cola_pay)}}</p><p class="text-sm text-gray-400">Confirm the company's treatment for this hire, departure, or mid-cutoff salary change. Save any required adjustments under Charges first.</p><label class="block text-sm">Policy / calculation reference<textarea v-model="payBasisForm.reason" maxlength="500" rows="3" class="form-control mt-1" /></label></div>
+      <template #footer><AppButton variant="secondary" @click="payBasisForm=null">Cancel</AppButton><AppButton :loading="busy" :disabled="payBasisForm?.reason.trim().length<3" @click="savePayBasis">Verify cutoff pay</AppButton></template>
+    </AppModal>
+    <AppModal :show="Boolean(paymentForm)" title="Record actual payroll payment" @close="paymentForm = null">
+      <div v-if="paymentForm" class="space-y-4">
+        <p class="text-sm text-gray-400">Record payment only after the company has actually paid employees. This records evidence; it does not transfer money. Approved net total: {{ money(totalNet) }}.</p>
+        <label class="block text-sm">Bank / payment reference<input v-model="paymentForm.reference" class="form-control mt-1" minlength="3" maxlength="200"></label>
+        <label class="block text-sm">Actual payment date<input v-model="paymentForm.paidOn" type="date" class="form-control mt-1"></label>
+      </div>
+      <template #footer><AppButton variant="secondary" @click="paymentForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="!paymentForm?.paidOn || paymentForm?.reference.trim().length < 3" @click="savePayment">Confirm actual payment</AppButton></template>
+    </AppModal>
+    <PayrollPayslipPreview v-if="selectedPayslip" :line="selectedPayslip.line" :run="selectedPayslip.run" :busy="busy" :can-edit="canManage && Boolean(selectedPayslip.line.id) && selectedPayslip.run.status === 'draft'" :can-email="canManage && payrollFinalizationEnabled && selectedPayslip.run.status === 'locked' && Boolean(selectedPayslip.run.payment)" @close="selectedPayslip = null" @print="payslipPdf(false)" @download="payslipPdf(true)" @send="emailPayslip()" @edit="beginEarningsEdit(selectedPayslip.line)" @edit-charges="beginChargesEdit(selectedPayslip.line)" />
   </div>
 </template>

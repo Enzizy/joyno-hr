@@ -24,6 +24,9 @@ const form = reactive({
   end_date: '',
   description: '',
   supporting_document_received: false,
+  day_fraction: 1,
+  coverage_start: '14:00',
+  coverage_end: '18:00',
 })
 
 const isEditing = computed(() => Boolean(props.entry?.record_id))
@@ -56,6 +59,9 @@ function resetForm() {
   form.end_date = String(entry.end_date || entry.start_date || '').slice(0, 10)
   form.description = entry.description || ''
   form.supporting_document_received = Boolean(entry.offline_document_received)
+  form.day_fraction = Number(entry.day_fraction ?? 1)
+  form.coverage_start = String(entry.coverage_start || '14:00').slice(0,5)
+  form.coverage_end = String(entry.coverage_end || '18:00').slice(0,5)
   error.value = ''
 }
 
@@ -79,6 +85,9 @@ function submit() {
   }
 
   emit('save', {
+    day_fraction: form.day_fraction,
+    coverage_start: Number(form.day_fraction) < 1 ? form.coverage_start : null,
+    coverage_end: Number(form.day_fraction) < 1 ? form.coverage_end : null,
     entry_type: form.entry_type,
     employee_id: form.entry_type === 'leave' ? Number(form.employee_id) : null,
     leave_type_name: form.entry_type === 'leave' ? form.leave_type_name : null,
@@ -159,6 +168,10 @@ watch(() => [props.show, props.entry], ([show]) => {
       <div class="grid gap-4 sm:grid-cols-2">
         <AppDatePicker v-model="form.start_date" label="Start date" name="calendar-entry-start" required />
         <AppDatePicker v-model="form.end_date" label="End date" name="calendar-entry-end" :min="form.start_date" required />
+      </div>
+      <div v-if="form.entry_type === 'leave'" class="grid gap-3 sm:grid-cols-3">
+        <label class="text-sm">Duration<select v-model.number="form.day_fraction" class="form-control mt-1"><option :value="1">Full day / date range</option><option :value="0.5">Half day (one date)</option></select></label>
+        <template v-if="form.day_fraction < 1"><label class="text-sm">Covered from<input v-model="form.coverage_start" type="time" class="form-control mt-1"></label><label class="text-sm">Covered until<input v-model="form.coverage_end" type="time" class="form-control mt-1"></label></template>
       </div>
 
       <label class="block text-sm font-medium text-gray-200">

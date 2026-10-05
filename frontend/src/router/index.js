@@ -112,6 +112,10 @@ const routes = [
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
       ...(payrollEnabled ? [{
+        path: 'attendance', name: 'Attendance', component: () => import('@/views/AttendanceView.vue'), meta: {roles:['admin','hr','ceo']},
+      }, {
+        path: 'compensation', name: 'Compensation', component: () => import('@/views/CompensationView.vue'), meta: {roles:['admin','hr','ceo']},
+      }, {
         path: 'payroll',
         name: 'Payroll',
         component: () => import('@/views/PayrollView.vue'),

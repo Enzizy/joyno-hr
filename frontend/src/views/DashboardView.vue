@@ -5,10 +5,14 @@ import { useLeaveStore } from '@/stores/leaveStore'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { getDashboardOverview } from '@/services/backendService'
+import { getHrmsOperations } from '@/services/api'
+import { payrollEnabled } from '@/config/features'
 
 const authStore = useAuthStore()
 const leaveStore = useLeaveStore()
 const overview = ref({ metrics: {}, pending_leave_requests: [], overdue_tasks_list: [], upcoming_tasks: [] })
+const hrmsOperations = ref(null)
+const hrmsError = ref('')
 
 const isManagement = computed(() => authStore.canAccessHR)
 const firstName = computed(() => authStore.user?.first_name || authStore.user?.email?.split('@')[0] || 'there')
@@ -80,6 +84,7 @@ function initials(name) {
 }
 
 onMounted(async () => {
+  if(isManagement.value && payrollEnabled)getHrmsOperations().then(data=>{hrmsOperations.value=data}).catch(error=>{hrmsError.value=error.message})
   const [, dashboardResult] = await Promise.allSettled([
     leaveStore.fetchRequests(authStore.isEmployee ? { scope: 'mine' } : {}),
     getDashboardOverview(),
@@ -90,6 +95,16 @@ onMounted(async () => {
 
 <template>
   <div class="space-y-5">
+    <section v-if="isManagement && payrollEnabled" class="rounded-xl border border-gray-800 p-4">
+      <h2 class="font-semibold text-gray-100">HR &amp; payroll action queue</h2>
+      <p v-if="hrmsError" role="alert" class="mt-2 text-sm text-amber-300">{{hrmsError}}</p>
+      <div v-if="hrmsOperations" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <RouterLink to="/compensation" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.setup}} employees need pay / ID setup</RouterLink>
+        <RouterLink to="/attendance" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.attendance}} attendance reviews unfinished</RouterLink>
+        <RouterLink to="/payroll" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.drafts}} payroll drafts need review</RouterLink>
+        <RouterLink to="/payroll" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.awaiting_payment}} approved runs await payment · {{hrmsOperations.awaiting_release}} await payslip release</RouterLink>
+      </div>
+    </section>
     <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div>
         <p class="eyebrow">Workspace overview</p>

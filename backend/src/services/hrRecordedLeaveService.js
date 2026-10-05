@@ -52,10 +52,19 @@ async function createHrRecordedLeave({
       entry.start_date,
       entry.end_date,
       entry.supporting_document_received,
-      tx
+      tx,
+      {dayFraction:entry.day_fraction ?? 1}
     )
     if (!compensation) {
       throw httpError(400, 'The selected range has no chargeable working days')
+    }
+    if (Number(entry.day_fraction ?? 1) < 1) {
+      const {paidOverlap}=require('./attendanceReviewService')
+      const profile=(await tx.query(`SELECT * FROM payroll_employee_profiles WHERE employee_id=$1 AND effective_from <= $2
+        AND COALESCE(effective_to,'infinity'::date) >= $2 ORDER BY effective_from DESC LIMIT 1`,[employee.id,entry.start_date])).rows[0]
+      const toMinutes=t=>Number(t.split(':')[0])*60+Number(t.split(':')[1])
+      const covered=paidOverlap(toMinutes(entry.coverage_start),toMinutes(entry.coverage_end),profile || {})
+      if (Math.abs(covered-Number(entry.day_fraction)*480)>0.01) throw httpError(400,'Half-day leave must cover four scheduled paid hours, excluding the unpaid break')
     }
 
     const employeeName = `${employee.first_name || ''} ${employee.last_name || ''}`.trim()
@@ -73,10 +82,10 @@ async function createHrRecordedLeave({
         reason, status, approved_by, approved_by_name, approved_by_role, decided_at,
         leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted,
         submission_source, entered_by, offline_document_received,
-        attachment_review_status, attachment_reviewed_by, attachment_reviewed_at)
+        attachment_review_status, attachment_reviewed_by, attachment_reviewed_at,day_fraction,coverage_start,coverage_end)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9,$10,$11,NOW(),$12,$13,$14,$15,$16,$17,$18::integer,$19,$20,
                CASE WHEN $21::boolean THEN $22::integer ELSE NULL::integer END,
-               CASE WHEN $21::boolean THEN NOW() ELSE NULL END)
+               CASE WHEN $21::boolean THEN NOW() ELSE NULL END,$23,$24,$25)
        RETURNING id`,
       [
         employee.id,
@@ -102,6 +111,7 @@ async function createHrRecordedLeave({
         attachmentReviewStatus,
         attachmentReviewStatus === 'valid',
         user.id,
+        Number(entry.day_fraction ?? 1),entry.coverage_start || null,entry.coverage_end || null,
       ]
     )
     const id = insertResult.rows[0]?.id

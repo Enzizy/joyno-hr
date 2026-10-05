@@ -200,7 +200,7 @@ function roundMinutes(value) {
 
 function paidMinutesBetween(from, to, shiftStart, lunchStart, lunchEnd, shiftEnd) {
   if (to <= from) return 0
-  const overlap = (start, end) => Math.max(0, Math.min(to, end) - Math.max(from, start))
+  const overlap = (start, end) => Math.max(0, Math.min(to, end, shiftEnd) - Math.max(from, start, shiftStart))
   return overlap(shiftStart, lunchStart) + overlap(lunchEnd, shiftEnd)
 }
 

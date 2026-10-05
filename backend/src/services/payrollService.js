@@ -16,6 +16,7 @@ const {
 } = require('./payrollAttendanceService')
 const { validatePayrollPeriod } = require('./payrollScheduleService')
 const { basicAdjustmentTotal, draftNetPay, normalizeCharges } = require('./payrollChargesService')
+const { loadContext, fingerprint } = require('./attendanceReviewService')
 
 const MAX_IMPORT_DAYS = 62
 
@@ -166,6 +167,20 @@ function computeLineWithLeave(input) {
 function createPayrollService({ db }) {
   if (!db || typeof db.query !== 'function') throw new TypeError('createPayrollService requires a database with query()')
 
+  async function requireConfirmedAttendance(tx, batchId, start, end) {
+    if (!batchId) throw serviceError('Confirm an attendance batch before generating payroll', 409)
+    const batch = (await tx.query('SELECT * FROM payroll_attendance_import_batches WHERE id=$1 FOR SHARE', [Number(batchId)])).rows[0]
+    if (!batch || batch.review_state !== 'confirmed') throw serviceError('HR must confirm attendance before generating payroll', 409)
+    if (dateKey(batch.period_start) > start || dateKey(batch.period_end) < end) throw serviceError('Confirmed attendance does not cover the full payroll period', 409)
+    const context = await loadContext(tx, dateKey(batch.period_start), dateKey(batch.period_end))
+    if (!batch.context_hash || fingerprint(context) !== batch.context_hash) throw serviceError('Leave, salary, or employee setup changed after attendance confirmation. Create and confirm a replacement review first', 409)
+    return batch
+  }
+
+  async function profileHistory(employeeId) {
+    return (await db.query('SELECT p.*,p.effective_from::text,p.effective_to::text FROM payroll_employee_profiles p WHERE p.employee_id=$1 ORDER BY p.effective_from DESC',[employeeId])).rows
+  }
+
   async function listProfiles({ employeeId } = {}) {
     const { rows } = await db.query(
       `SELECT e.id AS employee_id, e.employee_code, e.first_name, e.last_name, e.department,
@@ -236,6 +251,9 @@ function createPayrollService({ db }) {
         [employeeId]
       )
       const sameDate = rows.find((row) => dateKey(row.effective_from) === effectiveFrom)
+      const used = await tx.query(`SELECT 1 FROM payroll_runs r JOIN payroll_run_lines l ON l.payroll_run_id=r.id
+        WHERE l.employee_id=$1 AND r.status IN ('approved','locked') AND r.period_end >= $2 LIMIT 1`, [employeeId,effectiveFrom])
+      if (used.rows.length) throw serviceError('This effective date overlaps finalized payroll. Use a future effective date and an audited adjustment for past pay',409)
       const later = rows.find((row) => dateKey(row.effective_from) > effectiveFrom)
       const effectiveTo = later ? dateMinusOne(dateKey(later.effective_from)) : null
       const previousProfile = [...rows].reverse().find((row) => dateKey(row.effective_from) <= effectiveFrom)
@@ -648,6 +666,8 @@ function createPayrollService({ db }) {
     const fields = actorFields(actor)
 
     return withTransaction(db, async (tx) => {
+      if(typeof db.transaction==='function')await tx.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
+      const confirmedBatch = await requireConfirmedAttendance(tx, attendanceBatchId, periodStart, periodEnd)
       if (attendanceBatchId != null) {
         const batchResult = await tx.query(
           `SELECT id, period_start, period_end FROM payroll_attendance_import_batches WHERE id = $1`,
@@ -665,30 +685,18 @@ function createPayrollService({ db }) {
         [periodStart, periodEnd, cutoff]
       )
       let existingRun = null
+      let preservedLines = []
       if (existingResult.rows[0]) {
         const existing = existingResult.rows[0]
         if (existing.status !== 'draft') throw serviceError('A payroll run for this period and cutoff already exists', 409)
-        if (Number(existing.attendance_batch_id || 0) !== Number(attendanceBatchId || 0) ||
-            Boolean(existing.include_contributions) !== includeContributions || dateKey(existing.payday) !== payday) {
-          throw serviceError('A draft payroll run already exists with different inputs', 409)
-        }
         existingRun = existing
-        const adjustments = await tx.query(
-          `SELECT employee_code FROM payroll_run_lines
-           WHERE payroll_run_id = $1 AND (
-             jsonb_array_length(COALESCE(details->'manualEarnings', '[]'::jsonb)) > 0 OR
-             jsonb_array_length(COALESCE(details->'charges', '[]'::jsonb)) > 0)
-           LIMIT 1`,
-          [existing.id]
-        )
-        if (adjustments.rows.length) {
-          throw serviceError('This draft has earnings or charges. Remove them before recreating the preview.', 409)
-        }
+        preservedLines=(await tx.query('SELECT * FROM payroll_run_lines WHERE payroll_run_id = $1',[existing.id])).rows
         await tx.query('DELETE FROM payroll_run_lines WHERE payroll_run_id = $1', [existing.id])
       }
 
       const employeesResult = await tx.query(
         `SELECT employee.id AS employee_id, employee.employee_code, employee.first_name, employee.last_name,
+                employee.date_hired::text,employee.last_working_date::text,
                 profile.id AS profile_id, profile.effective_from, profile.effective_to,
                 profile.monthly_basic_salary, profile.monthly_cola, profile.daily_fare_rate, profile.work_start_time,
                 profile.work_end_time, profile.unpaid_break_minutes, profile.workdays, profile.daily_rate_divisor
@@ -696,16 +704,17 @@ function createPayrollService({ db }) {
          LEFT JOIN LATERAL (
            SELECT payroll_profile.* FROM payroll_employee_profiles payroll_profile
            WHERE payroll_profile.employee_id = employee.id
-             AND payroll_profile.effective_from <= $1
-             AND COALESCE(payroll_profile.effective_to, 'infinity'::date) >= $1
+             AND payroll_profile.effective_from <= LEAST($1::date,COALESCE(employee.last_working_date,$1::date))
+             AND COALESCE(payroll_profile.effective_to, 'infinity'::date) >= LEAST($1::date,COALESCE(employee.last_working_date,$1::date))
            ORDER BY payroll_profile.effective_from DESC
            LIMIT 1
          ) profile ON TRUE
-         WHERE COALESCE(LOWER(employee.status), 'active') IN ('active', 'on_leave')
+         WHERE EXISTS(SELECT 1 FROM payroll_daily_attendance d WHERE d.batch_id=$2 AND d.employee_id=employee.id AND d.review_state<>'excluded' AND d.work_date BETWEEN $3 AND $1)
          ORDER BY employee.last_name, employee.first_name, employee.id`,
-        [periodEnd]
+        [periodEnd,Number(attendanceBatchId),periodStart]
       )
       const missingProfiles = employeesResult.rows.filter((row) => row.profile_id == null)
+      if(!employeesResult.rows.length)throw serviceError('No reviewed employees fall in this payroll cutoff',400)
       if (missingProfiles.length) {
         throw serviceError(`Missing effective payroll profile for: ${missingProfiles.map((row) => row.employee_code).join(', ')}`, 400)
       }
@@ -721,6 +730,8 @@ function createPayrollService({ db }) {
 
       const ruleSnapshot = {
         version: 4,
+        attendanceContextHash: confirmedBatch.context_hash,
+        attendanceReviewVersion: confirmedBatch.review_version,
         contributionSchedule: 'PH-2025',
         sssBasisRule: 'first cutoff eligible pay + second cutoff net basic + approved overtime; WSH/RD premium excluded per workbook Remittance',
         payrollFrequency: 'semi-monthly',
@@ -753,13 +764,14 @@ function createPayrollService({ db }) {
             JSON.stringify(ruleSnapshot), fields.userId]
         )
       const run = runResult.rows[0]
+      if(existingRun)await tx.query(`UPDATE payroll_runs SET attendance_batch_id=$1,include_contributions=$2,payday=$3,rule_snapshot=$4::jsonb WHERE id=$5`,[Number(attendanceBatchId),includeContributions,payday,JSON.stringify(ruleSnapshot),run.id])
       let attendanceRows = []
       let attendanceErrors = []
       if (attendanceBatchId != null) {
         const [dailyResult, errorsResult] = await Promise.all([
           tx.query(
             `SELECT * FROM payroll_daily_attendance
-             WHERE batch_id = $1 AND work_date BETWEEN $2 AND $3 ORDER BY employee_id, work_date`,
+             WHERE batch_id = $1 AND work_date BETWEEN $2 AND $3 AND review_state<>'excluded' ORDER BY employee_id, work_date`,
             [Number(attendanceBatchId), periodStart, periodEnd]
           ),
           tx.query(
@@ -808,6 +820,8 @@ function createPayrollService({ db }) {
         const line = sssAssessment
           ? computeLineWithLeave({ ...lineInput, sssCompensation: sssAssessment.monthlyCompensation }) : baseLine
         const details = {
+          payBasisReview: {required:Boolean(employee.date_hired>periodStart || (employee.last_working_date && employee.last_working_date<periodEnd) || dateKey(employee.effective_from)>periodStart),
+            reason:'Employment or compensation changed within the cutoff; verify basic pay and COLA proration against company policy',verifiedReason:null},
           contributionBasis: line.contributionBasis,
           sssAssessment: sssAssessment ? { ...sssAssessment,
             firstCutoffSource: firstCutoffLine ? `saved-first-cutoff-${firstCutoffLine.first_cutoff_status}` : 'assumed-half-basic',
@@ -846,6 +860,17 @@ function createPayrollService({ db }) {
             line.thirteenthMonthAccrual, line.netPay, JSON.stringify(details), line.colaPay]
         )
       }
+      const recreated=(await tx.query('SELECT * FROM payroll_run_lines WHERE payroll_run_id = $1',[run.id])).rows
+      const nested=createPayrollService({db:{query:(sql,params)=>tx.query(sql,params),transaction:callback=>callback(tx)}})
+      for(const previous of preservedLines){
+        const line=recreated.find(l=>Number(l.employee_id)===Number(previous.employee_id))
+        const adjusted=previous.details?.manualEarnings?.length || previous.details?.charges?.length || previous.details?.sssAssessment?.firstCutoffSource==='hr-override'
+        if(!line&&adjusted)throw serviceError(`Recalculation would omit manually adjusted employee ${previous.employee_code}. Verify employment dates before recreating this draft`,409)
+        if(!line)continue
+        if(previous.details?.manualEarnings?.length)await nested.updateManualEarnings(run.id,line.id,previous.details.manualEarnings,actor)
+        if(previous.details?.charges?.length)await nested.updateCharges(run.id,line.id,previous.details.charges,actor)
+        if(previous.details?.sssAssessment?.firstCutoffSource==='hr-override'&&cutoff==='second'&&includeContributions)await nested.overrideFirstCutoffPay(run.id,line.id,previous.details.sssAssessment.firstCutoffPay,previous.details.sssAssessment.overrideReason||'Retained HR-confirmed first-cutoff pay during recalculation',actor)
+      }
       await appendRunEvent(tx, run.id, existingRun ? 'draft_refreshed' : 'draft_created', actor, {
         employeeCount: employeesResult.rows.length,
         attendanceBatchId: attendanceBatchId == null ? null : Number(attendanceBatchId),
@@ -858,10 +883,11 @@ function createPayrollService({ db }) {
   }
 
   async function getRunWithLines(queryable, runId) {
-    const [runResult, linesResult, eventsResult] = await Promise.all([
+    const [runResult, linesResult, eventsResult, paymentResult] = await Promise.all([
       queryable.query('SELECT * FROM payroll_runs WHERE id = $1', [runId]),
       queryable.query('SELECT * FROM payroll_run_lines WHERE payroll_run_id = $1 ORDER BY employee_name', [runId]),
       queryable.query('SELECT * FROM payroll_run_events WHERE payroll_run_id = $1 ORDER BY created_at', [runId]),
+      queryable.query('SELECT *,paid_on::text FROM payroll_payments WHERE payroll_run_id=$1',[runId]),
     ])
     if (!runResult.rows[0]) return null
     return {
@@ -871,6 +897,7 @@ function createPayrollService({ db }) {
       payday: dateKey(runResult.rows[0].payday),
       lines: linesResult.rows,
       events: eventsResult.rows,
+      payment: paymentResult.rows[0] || null,
     }
   }
 
@@ -881,7 +908,7 @@ function createPayrollService({ db }) {
     if (earnings.some((entry) => entry?.type === 'special_holiday_pay')) {
       throw serviceError('Remove legacy full-holiday-pay lines and add only the 30% WSH/RD premium', 400)
     }
-    const allowedTypes = new Set(['overtime', 'holiday_premium', 'other'])
+    const allowedTypes = new Set(['overtime', 'night_differential', 'holiday_premium', 'other'])
     const normalized = earnings.map((entry) => {
       const type = String(entry?.type || '')
       const amount = Number(entry?.amount)
@@ -991,16 +1018,18 @@ function createPayrollService({ db }) {
       const netPay = draftNetPay(line, { charges: normalized, employeeSss })
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
       const details = { ...line.details, charges: normalized,
+        ...(line.details?.payBasisReview?.required?{payBasisReview:{...line.details.payBasisReview,verifiedReason:null,verifiedBy:null,verifiedAt:null}}:{}),
         ...(sssAssessment ? { sssAssessment: { ...line.details?.sssAssessment, ...sssAssessment,
           firstCutoffSource: line.details?.sssAssessment?.firstCutoffSource || 'assumed-half-basic' },
           contributionBasis: { ...line.details?.contributionBasis,
             sssCompensation: sssAssessment.monthlyCompensation, sssMsc: sssContributions.sssMsc } } : {}) }
       const updated = await tx.query(
         `UPDATE payroll_run_lines SET details = $1::jsonb, net_pay = $2, employee_sss = $3,
-           employer_sss = $4, employer_ec = $5 WHERE id = $6 RETURNING *`,
+           employer_sss = $4, employer_ec = $5, thirteenth_month_accrual = $7 WHERE id = $6 RETURNING *`,
         [JSON.stringify(details), netPay, employeeSss,
           sssContributions?.sssEmployer ?? Number(line.employer_sss || 0),
-          sssContributions?.sssEmployerEc ?? Number(line.employer_ec || 0), lineId]
+          sssContributions?.sssEmployerEc ?? Number(line.employer_ec || 0), lineId,
+          Math.round(Math.max(0,Number(line.gross_salary)-Number(line.absence_deduction||0)-Number(line.late_deduction||0)-Number(line.undertime_deduction||0)+basicAdjustmentTotal(normalized))/12*100)/100]
       )
       await appendRunEvent(tx, runId, 'charges_updated', actor, {
         lineId, employeeId: line.employee_id, previous, current: normalized,
@@ -1066,11 +1095,14 @@ function createPayrollService({ db }) {
       throw serviceError('Payroll approval is disabled until workbook parity is verified', 403)
     }
     return withTransaction(db, async (tx) => {
+      if(typeof db.transaction==='function')await tx.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
       const runResult = await tx.query('SELECT * FROM payroll_runs WHERE id = $1 FOR UPDATE', [Number(runId)])
       const run = runResult.rows[0]
       if (!run) return null
       if (run.status !== 'draft') throw serviceError('Only draft payroll runs can be approved', 409)
       if (!run.attendance_batch_id) throw serviceError('An attendance import batch is required before approval', 400)
+      const batch = await requireConfirmedAttendance(tx,run.attendance_batch_id,dateKey(run.period_start),dateKey(run.period_end))
+      if (run.rule_snapshot?.attendanceContextHash !== batch.context_hash || Number(run.rule_snapshot?.attendanceReviewVersion) !== Number(batch.review_version)) throw serviceError('Recalculate this draft from the confirmed attendance version before approval',409)
       const batchResult = await tx.query(
         'SELECT error_count FROM payroll_attendance_import_batches WHERE id = $1',
         [run.attendance_batch_id]
@@ -1091,6 +1123,8 @@ function createPayrollService({ db }) {
       if (legacyHolidayResult.rows.length) {
         throw serviceError('Replace legacy full-holiday-pay earnings with the 30% WSH/RD premium before approval', 400)
       }
+      const unverifiedBasis=await tx.query(`SELECT employee_code FROM payroll_run_lines WHERE payroll_run_id=$1 AND details->'payBasisReview'->>'required'='true' AND length(COALESCE(details->'payBasisReview'->>'verifiedReason',''))<3 LIMIT 1`,[runId])
+      if(unverifiedBasis.rows.length)throw serviceError(`Verify basic pay and COLA proration for ${unverifiedBasis.rows[0].employee_code} before approval`,409)
       if (run.cutoff === 'second' && run.include_contributions) {
         const unverified = await tx.query(
           `SELECT employee_code FROM payroll_run_lines
@@ -1123,6 +1157,8 @@ function createPayrollService({ db }) {
       const run = runResult.rows[0]
       if (!run) return null
       if (run.status !== 'approved') throw serviceError('Only approved payroll runs can be locked', 409)
+      const payment = await tx.query('SELECT 1 FROM payroll_payments WHERE payroll_run_id=$1',[Number(runId)])
+      if (!payment.rows.length) throw serviceError('Record actual payment before closing payroll',409)
       const fields = actorFields(actor)
       const updated = await tx.query(
         `UPDATE payroll_runs SET status = 'locked', locked_by = $1, locked_at = NOW()
@@ -1134,13 +1170,46 @@ function createPayrollService({ db }) {
     })
   }
 
+  async function recordPayment(runId,input={},actor={}) {
+    if(process.env.PAYROLL_FINALIZATION_ENABLED!=='true')throw serviceError('Payroll payment recording is disabled in review mode',403)
+    const reference=String(input.reference||'').trim(), paidOn=String(input.paidOn||'')
+    const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10)
+    if(reference.length<3||reference.length>200||!/^\d{4}-\d{2}-\d{2}$/.test(paidOn)||Number.isNaN(Date.parse(paidOn))||new Date(paidOn).toISOString().slice(0,10)!==paidOn||paidOn>today)throw serviceError('Enter a payment reference and a valid actual payment date (not in the future)',400)
+    return withTransaction(db,async tx=>{
+      const run=(await tx.query('SELECT * FROM payroll_runs WHERE id=$1 FOR UPDATE',[runId])).rows[0]
+      if(!run)throw serviceError('Payroll run not found',404)
+      const payment=(await tx.query('SELECT * FROM payroll_payments WHERE payroll_run_id=$1',[runId])).rows[0]
+      if(payment){if(payment.reference!==reference||dateKey(payment.paid_on)!==paidOn)throw serviceError('Payment is already recorded with a different reference or date',409);return getRunWithLines(tx,runId)}
+      if(run.status!=='approved')throw serviceError('Approve payroll before recording payment',409)
+      const total=(await tx.query('SELECT COUNT(*)::integer AS count,COALESCE(SUM(net_pay),0)::numeric AS total FROM payroll_run_lines WHERE payroll_run_id=$1',[runId])).rows[0]
+      if(!total.count||Math.abs(Number(input.expectedTotal)-Number(total.total))>0.005||!Number.isFinite(Number(input.expectedTotal)))throw serviceError('Verify the approved net total before recording payment',409)
+      await tx.query('INSERT INTO payroll_payments(payroll_run_id,reference,total_amount,paid_on,recorded_by) VALUES($1,$2,$3,$4,$5)',[runId,reference,total.total,paidOn,actorFields(actor).userId])
+      await appendRunEvent(tx,runId,'payment_recorded',actor,{reference,paidOn,total:total.total})
+      return getRunWithLines(tx,runId)
+    })
+  }
+
+  async function verifyPayBasis(runId,lineId,reason,actor={}){
+    const explanation=String(reason||'').trim()
+    if(explanation.length<3||explanation.length>500)throw serviceError('A 3–500 character pay verification reason is required',400)
+    return withTransaction(db,async tx=>{
+      const line=(await tx.query(`SELECT line.*,run.status FROM payroll_run_lines line JOIN payroll_runs run ON run.id=line.payroll_run_id WHERE line.id=$1 AND run.id=$2 FOR UPDATE OF line,run`,[lineId,runId])).rows[0]
+      if(!line)return null
+      if(line.status!=='draft')throw serviceError('Only draft pay can be verified',409)
+      const details={...line.details,payBasisReview:{...line.details?.payBasisReview,verifiedReason:explanation,verifiedBy:actorFields(actor).userId,verifiedAt:new Date().toISOString()}}
+      await tx.query('UPDATE payroll_run_lines SET details=$1::jsonb WHERE id=$2',[JSON.stringify(details),lineId])
+      await appendRunEvent(tx,runId,'pay_basis_verified',actor,{lineId,employeeId:line.employee_id,reason:explanation})
+      return getRunWithLines(tx,runId)
+    })
+  }
+
   async function listMyLines({ runId = null, employeeId }) {
     const { rows } = await db.query(
       `SELECT line.*, run.period_start, run.period_end, run.payday, run.cutoff, run.status
        FROM payroll_run_lines line
        JOIN payroll_runs run ON run.id = line.payroll_run_id
        WHERE ($1::integer IS NULL OR line.payroll_run_id = $1) AND line.employee_id = $2
-         AND run.status IN ('approved', 'locked')`,
+         AND run.status = 'locked' AND EXISTS(SELECT 1 FROM payroll_payments payment WHERE payment.payroll_run_id=run.id)`,
       [runId == null ? null : Number(runId), Number(employeeId)]
     )
     const normalized = rows.map((line) => ({
@@ -1153,6 +1222,9 @@ function createPayrollService({ db }) {
   }
 
   return {
+    verifyPayBasis,
+    recordPayment,
+    profileHistory,
     listProfiles,
     upsertProfile,
     importAttendance,

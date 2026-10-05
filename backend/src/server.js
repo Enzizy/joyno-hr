@@ -43,6 +43,8 @@ const { createWorkspaceRouter } = require('./routes/workspaceRoutes')
 const { createUserRouter } = require('./routes/userRoutes')
 const { createPayrollRouter } = require('./routes/payrollRoutes')
 const { createPayrollService } = require('./services/payrollService')
+const { createAttendanceReviewService } = require('./services/attendanceReviewService')
+const { createAttendanceReviewRouter } = require('./routes/attendanceReviewRoutes')
 const { isRoleAllowed } = require('./constants/roles')
 const {
   LEAD_STATUSES,
@@ -71,13 +73,13 @@ let backgroundJobsStarted = false
 
 const USER_AUTH_COLUMNS = 'id, email, password_hash, role, employee_id, created_at'
 const EMPLOYEE_COLUMNS =
-  'id, employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_entitlement, date_hired, status, created_at, updated_at'
+  'id, employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_entitlement, date_hired, last_working_date, status, created_at, updated_at'
 const LEAD_COLUMNS =
   'id, company_name, contact_name, email, phone, source, status, interested_services, estimated_value, next_follow_up, notes, converted_client_id, created_at'
 const CLIENT_COLUMNS =
   'id, lead_id, company_name, contact_name, email, phone, package_name, monthly_value, package_details, services, contract_start_date, contract_end_date, address, notes, status, created_at'
 const LEAVE_REQUEST_COLUMNS =
-  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, attachment_review_status, attachment_review_note, attachment_reviewed_by, attachment_reviewed_at, attachment_resubmit_due_at, attachment_replacement_requested_at, attachment_version, attachment_uploaded_at, submission_source, entered_by, offline_document_received, created_at, decided_at'
+  'id, employee_id, employee_code, employee_name, leave_type_id, leave_type_name, start_date, end_date, day_fraction, coverage_start, coverage_end, reason, status, approved_by, approved_by_name, approved_by_role, rejection_comment, leave_pay_type, leave_days, paid_days, unpaid_days, credits_deducted, attachment_name, attachment_type, attachment_data, attachment_review_status, attachment_review_note, attachment_reviewed_by, attachment_reviewed_at, attachment_resubmit_due_at, attachment_replacement_requested_at, attachment_version, attachment_uploaded_at, submission_source, entered_by, offline_document_received, created_at, decided_at'
 const NOTIFICATION_COLUMNS =
   'id, user_id, type, title, message, target_table, target_id, is_read, created_at'
 
@@ -909,6 +911,7 @@ app.use(createLeaveChangeRequestRouter({
 }))
 app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
 if (PAYROLL_ENABLED) {
+  app.use(createAttendanceReviewRouter({service:createAttendanceReviewService({db}),authRequired,requireRole}))
   const payrollService = createPayrollService({ db })
   app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog, deliverPayslipEmail: deliverEmailNotification }))
 }
@@ -1101,12 +1104,13 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const e = req.body || {}
+  if(e.last_working_date && (!/^\d{4}-\d{2}-\d{2}$/.test(e.last_working_date) || !Number.isFinite(Date.parse(e.last_working_date)) || new Date(e.last_working_date).toISOString().slice(0,10)!==e.last_working_date || e.last_working_date<e.date_hired))return res.status(400).json({message:'Last working date must be valid and on or after the hire date'})
   const leaveCredits = await leaveCreditsByTenure(e.date_hired)
   const resetYear = currentCreditYear()
   const { rows } = await db.query(
     `INSERT INTO employees
-     (employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_entitlement, leave_credits_reset_year, date_hired, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     (employee_code, first_name, last_name, department, position, shift, leave_credits, leave_credits_entitlement, leave_credits_reset_year, date_hired, status, last_working_date)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING id`,
     [
       e.employee_code,
@@ -1120,6 +1124,7 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), as
       resetYear,
       e.date_hired,
       e.status || 'active',
+      e.last_working_date || null,
     ]
   )
   const createdId = rows[0]?.id
@@ -1130,8 +1135,9 @@ app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), as
 
 app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const e = req.body || {}
+  if(e.last_working_date && (!/^\d{4}-\d{2}-\d{2}$/.test(e.last_working_date) || !Number.isFinite(Date.parse(e.last_working_date)) || new Date(e.last_working_date).toISOString().slice(0,10)!==e.last_working_date || e.last_working_date<e.date_hired))return res.status(400).json({message:'Last working date must be valid and on or after the hire date'})
   const existingResult = await db.query(
-    'SELECT leave_credits, COALESCE(leave_credits_entitlement, leave_credits) AS leave_credits_entitlement FROM employees WHERE id = $1',
+    'SELECT last_working_date, leave_credits, COALESCE(leave_credits_entitlement, leave_credits) AS leave_credits_entitlement FROM employees WHERE id = $1',
     [req.params.id]
   )
   const existingEmployee = existingResult.rows[0]
@@ -1148,7 +1154,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
   await db.query(
     `UPDATE employees
      SET employee_code=$1, first_name=$2, last_name=$3, department=$4, position=$5, shift=$6,
-         leave_credits=$7, leave_credits_entitlement=$8, date_hired=$9, status=$10
+         leave_credits=$7, leave_credits_entitlement=$8, date_hired=$9, status=$10, last_working_date=$12
      WHERE id=$11`,
     [
       e.employee_code,
@@ -1162,6 +1168,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
       e.date_hired,
       e.status || 'active',
       req.params.id,
+      e.last_working_date === undefined ? existingEmployee.last_working_date : e.last_working_date || null,
     ]
   )
   await resetEmployeeLeaveCreditsIfNeeded(req.params.id)
@@ -2918,7 +2925,9 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
       leaveType,
       leaveRequest.start_date,
       leaveRequest.end_date,
-      Boolean(leaveRequest.attachment_data)
+      Boolean(leaveRequest.attachment_data),
+      undefined,
+      {dayFraction:leaveRequest.day_fraction??1}
     )
   if (!compensation) return res.status(400).json({ message: 'Invalid leave date range' })
 

@@ -53,6 +53,7 @@ const form = ref({
   position: '',
   shift: 'day',
   date_hired: '',
+  last_working_date: '',
   status: 'active',
 })
 
@@ -114,6 +115,7 @@ function openCreate() {
     position: '',
     shift: 'day',
     date_hired: '',
+    last_working_date: '',
     status: 'active',
   }
   showModal.value = true
@@ -136,6 +138,7 @@ async function openEdit(row) {
     position: source.position,
     shift: source.shift || 'day',
     date_hired: source.date_hired?.slice(0, 10) ?? '',
+    last_working_date: source.last_working_date?.slice(0, 10) ?? '',
     status: source.status,
   }
   showModal.value = true
@@ -438,6 +441,7 @@ async function submitAwol() {
           </select>
         </div>
         <AppInput v-model="form.date_hired" type="date" label="Date hired" required />
+        <AppInput v-model="form.last_working_date" type="date" label="Last working date (when leaving the company)" :min="form.date_hired" />
         <div class="rounded-lg border border-gray-800 bg-gray-950/70 px-4 py-3">
           <p class="text-sm font-medium text-gray-200">Auto leave credits</p>
           <p class="mt-1 text-2xl font-bold text-primary-200">{{ computedFormCredits.toFixed(2) }}</p>

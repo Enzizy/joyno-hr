@@ -19,6 +19,7 @@ const chargeLabel = (type) => ({
   sss_salary_loan: 'SSS salary loan', sss_calamity_loan: 'SSS calamity loan',
   pagibig_mpl: 'Pag-IBIG MPL', pagibig_calamity: 'Pag-IBIG calamity loan',
   pagibig_mp2: 'Pag-IBIG MP2', cash_advance: 'Cash advance', other_charge: 'Other charge',
+  tax_withholding: 'HR-approved tax withholding',
   other_non_taxable_earning: 'Other non-taxable earning', basic_pay_adjustment: 'Basic pay adjustment',
 })[type] || 'Payroll charge'
 const isChargeEarning = (entry) => entry.type === 'other_non_taxable_earning' || (entry.type === 'basic_pay_adjustment' && Number(entry.amount) > 0)
@@ -35,7 +36,7 @@ const deductions = computed(() => [
   ...chargeDeductions.value.map((entry) => [chargeLabel(entry.type), Math.abs(Number(entry.amount || 0)), entry.note || '']),
 ])
 const totalDeductions = computed(() => deductions.value.reduce((sum, [, value]) => sum + Number(value || 0), 0))
-const earningLabel = (type) => ({ overtime: 'Approved overtime', special_holiday_pay: 'Legacy full holiday pay - review', holiday_premium: 'WSH/RD premium (30%)', other: 'Other earnings' })[type] || 'Other earnings'
+const earningLabel = (type) => ({ overtime: 'Approved overtime', night_differential: 'HR-approved night differential', special_holiday_pay: 'Legacy full holiday pay - review', holiday_premium: 'WSH/RD premium (30%)', other: 'Other earnings' })[type] || 'Other earnings'
 const period = computed(() => `${String(props.run.period_start || '').slice(0, 10)} to ${String(props.run.period_end || '').slice(0, 10)}`)
 </script>
 

@@ -4,6 +4,7 @@ const { CHARGE_TYPES, summarizeCharges } = require('./payrollChargesService')
 
 const LABELS = Object.freeze({
   overtime: 'Approved overtime',
+  night_differential: 'Approved night differential',
   special_holiday_pay: 'Legacy full holiday pay - review',
   holiday_premium: 'WSH/RD premium (30%)',
   other: 'Other earnings',

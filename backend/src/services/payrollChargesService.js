@@ -6,6 +6,7 @@ const CHARGE_TYPES = Object.freeze({
   pagibig_mp2: { label: 'Pag-IBIG MP2', direction: 'deduction' },
   cash_advance: { label: 'Cash advance', direction: 'deduction' },
   other_charge: { label: 'Other charge', direction: 'deduction' },
+  tax_withholding: { label: 'HR-approved tax withholding', direction: 'deduction' },
   other_non_taxable_earning: { label: 'Other non-taxable earning', direction: 'earning' },
   basic_pay_adjustment: { label: 'Basic pay adjustment', direction: 'signed' },
 })

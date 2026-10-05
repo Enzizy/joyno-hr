@@ -1,5 +1,12 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const {fingerprint}=require('./services/attendanceReviewService')
+const emptyReviewContext={employees:[],profiles:[],leaves:[],holidays:[]}
+const confirmedBatch={id:7,review_state:'confirmed',period_start:'2026-09-11',period_end:'2026-09-25',review_version:2,context_hash:fingerprint(emptyReviewContext),error_count:0}
+function reviewFixture(sql){
+  if(sql.includes('FROM payroll_attendance_import_batches'))return {rows:[confirmedBatch]}
+  if(sql.includes('SELECT e.id,e.employee_code')||sql.includes('SELECT p.id,p.employee_id')||sql.includes('FROM leave_requests WHERE status')||sql.includes('FROM philippine_holidays'))return {rows:[]}
+}
 const {
   calculateContributions,
   calculatePayrollLine,
@@ -116,6 +123,7 @@ test('month-end draft uses saved first-cutoff eligible pay for the SSS bracket',
     payday: '2026-09-30', status: 'draft', cutoff: 'second' }
   let insertedLine
   const service = createPayrollService({ db: { async query(sql, params = []) {
+    const fixture=reviewFixture(sql);if(fixture)return fixture
     if (sql.includes('SELECT * FROM payroll_runs WHERE period_start')) return { rows: [] }
     if (sql.includes('FROM employees employee')) return { rows: [{ employee_id: 12,
       employee_code: 'IT-12', first_name: 'Sample', last_name: 'Employee', profile_id: 1,
@@ -133,10 +141,11 @@ test('month-end draft uses saved first-cutoff eligible pay for the SSS bracket',
     if (sql.includes('SELECT * FROM payroll_runs WHERE id')) return { rows: [run] }
     if (sql.includes('SELECT * FROM payroll_run_lines WHERE payroll_run_id')) return { rows: [] }
     if (sql.includes('SELECT * FROM payroll_run_events')) return { rows: [] }
+    if (sql.includes('FROM payroll_payments') || sql.includes('FROM payroll_daily_attendance') || sql.includes('FROM payroll_attendance_import_errors'))return {rows:[]}
     throw new Error(`Unexpected query: ${sql}`)
   } } })
   await service.previewRun({ periodStart: run.period_start, periodEnd: run.period_end,
-    payday: run.payday, cutoff: 'second', includeContributions: true })
+    payday: run.payday, cutoff: 'second', includeContributions: true,attendanceBatchId:7 })
   assert.equal(insertedLine[16], 775)
   assert.equal(insertedLine[26], 500)
   const details = JSON.parse(insertedLine[25])
@@ -483,8 +492,9 @@ test('approval rejects saved full-holiday-pay lines before updating the run', as
   const service = createPayrollService({ db: {
     async query(sql) {
       queries.push(sql)
+      const fixture=reviewFixture(sql);if(fixture)return fixture
       if (sql.includes('FROM payroll_runs')) return { rows: [{ id: 1, status: 'draft', attendance_batch_id: 7,
-        period_start: '2026-09-11', period_end: '2026-09-25' }] }
+        rule_snapshot:{attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2},period_start: '2026-09-11', period_end: '2026-09-25' }] }
       if (sql.includes('FROM payroll_attendance_import_batches')) return { rows: [{ error_count: 0 }] }
       if (sql.includes('FROM payroll_daily_attendance')) return { rows: [{ count: 0 }] }
       if (sql.includes('FROM payroll_run_lines')) return { rows: [{ '?column?': 1 }] }
@@ -505,8 +515,10 @@ test('month-end approval rejects an unverified first-cutoff estimate', async () 
   process.env.PAYROLL_FINALIZATION_ENABLED = 'true'
   let updated = false
   const service = createPayrollService({ db: { async query(sql) {
+    const fixture=reviewFixture(sql);if(fixture)return fixture
     if (sql.includes('FROM payroll_runs')) return { rows: [{ id: 1, status: 'draft', cutoff: 'second',
-      include_contributions: true, attendance_batch_id: 7, period_start: '2026-09-11', period_end: '2026-09-25' }] }
+      rule_snapshot:{attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2},include_contributions: true, attendance_batch_id: 7, period_start: '2026-09-11', period_end: '2026-09-25' }] }
+    if(sql.includes("details->'payBasisReview'"))return {rows:[]}
     if (sql.includes('FROM payroll_attendance_import_batches')) return { rows: [{ error_count: 0 }] }
     if (sql.includes('FROM payroll_daily_attendance')) return { rows: [{ count: 0 }] }
     if (sql.includes('SELECT 1 FROM payroll_run_lines')) return { rows: [] }

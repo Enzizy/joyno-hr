@@ -76,6 +76,21 @@ test('records an HR-entered leave as approved and deducts paid credits transacti
   assert.ok(calls.some(({ sql }) => sql.includes('leave_credits = GREATEST')))
 })
 
+test('half-day offline leave stores coverage and deducts only half a credit through the policy engine',async()=>{
+ const {calls,dependencies}=createDependencies()
+ Object.assign(dependencies.entry,{day_fraction:.5,coverage_start:'14:00',coverage_end:'18:00'})
+ dependencies.resolveLeaveCompensation=async(employee,type,start,end,document,tx,options)=>{
+  assert.equal(options.dayFraction,.5)
+  return {leavePayType:'paid',leaveDays:.5,paidDays:.5,unpaidDays:0,creditsDeducted:.5,note:'Half paid day'}
+ }
+ const result=await createHrRecordedLeave(dependencies)
+ assert.equal(result.compensation.creditsDeducted,.5)
+ const insert=calls.find(c=>c.sql.includes('INSERT INTO leave_requests'))
+ assert.deepEqual(insert.params.slice(-3),[.5,'14:00','18:00'])
+ const credits=calls.find(c=>c.sql.includes('UPDATE employees'))
+ assert.equal(credits.params[0],.5)
+})
+
 test('records an offline supporting document without reusing the status SQL parameter', async () => {
   const { calls, dependencies } = createDependencies()
   dependencies.entry.leave_type_name = 'Sick Leave'

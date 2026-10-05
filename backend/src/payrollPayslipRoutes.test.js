@@ -110,7 +110,7 @@ test('draft payslip is printable by management but never visible or emailable to
   }
 })
 
-test('approved payslip email uses the linked account and does not resend it', async () => {
+test('paid and closed payslip email uses the linked account and does not resend it', async () => {
   const previous = process.env.PAYROLL_FINALIZATION_ENABLED
   process.env.PAYROLL_FINALIZATION_ENABLED = 'true'
   const app = express()
@@ -123,9 +123,10 @@ test('approved payslip email uses the linked account and does not resend it', as
       if (sql.includes('FROM payroll_run_lines line')) return { rows: [{
         id: 8, employee_id: 12, employee_code: 'IT-12', employee_name: 'Sample Employee',
         gross_salary: 7500, net_pay: 7500, details: {}, payroll_run_id: 4, run_id: 4,
-        period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30', cutoff: 'second', status: 'approved',
+        period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30', cutoff: 'second', status: 'locked',
       }] }
       if (sql.includes('SELECT 1 FROM payroll_run_events')) return { rows: sent ? [{ '?column?': 1 }] : [] }
+      if (sql.includes('FROM payroll_payments'))return {rows:[{'?column?':1}]}
       if (sql.includes('SELECT DISTINCT LOWER(TRIM(email))')) return { rows: [{ email: 'employee@example.test' }] }
       if (sql.includes('INSERT INTO payroll_run_events')) { sent = true; return { rows: [] } }
       throw new Error(`Unexpected query: ${sql}`)
