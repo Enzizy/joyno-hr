@@ -196,6 +196,14 @@ export async function getPayrollProfiles() {
   return api.getPayrollProfiles()
 }
 
+export async function inspectPayrollTestCsv(file) {
+  return api.inspectPayrollTestCsv(file)
+}
+
+export async function previewEmployeePayTest(file, input) {
+  return api.previewEmployeePayTest(file, input)
+}
+
 export async function updatePayrollProfile(employeeId, data) {
   return api.updatePayrollProfile(employeeId, data)
 }
@@ -234,6 +242,26 @@ export async function lockPayrollRun(id) {
 
 export async function getMyPayrollLines() {
   return api.getMyPayrollLines()
+}
+
+export async function updatePayrollManualEarnings(runId, lineId, earnings) {
+  return api.updatePayrollManualEarnings(runId, lineId, earnings)
+}
+
+export async function updatePayrollCharges(runId, lineId, charges) {
+  return api.updatePayrollCharges(runId, lineId, charges)
+}
+
+export async function updatePayrollFirstCutoffPay(runId, lineId, firstCutoffPay, reason) {
+  return api.updatePayrollFirstCutoffPay(runId, lineId, firstCutoffPay, reason)
+}
+
+export async function getPayrollPayslipPdf(runId, lineId) {
+  return api.getPayrollPayslipPdf(runId, lineId)
+}
+
+export async function sendPayrollPayslip(runId, lineId) {
+  return api.sendPayrollPayslip(runId, lineId)
 }
 
 export async function getNotifications(options = {}) {

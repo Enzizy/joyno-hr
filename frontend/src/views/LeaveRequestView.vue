@@ -22,6 +22,7 @@ import LeaveCalendarPanel from '@/components/leave/LeaveCalendarPanel.vue'
 import LeaveAttachmentPreviewModal from '@/components/leave/LeaveAttachmentPreviewModal.vue'
 import LeaveDetailsModal from '@/components/leave/LeaveDetailsModal.vue'
 import LeavePolicyDetails from '@/components/leave/LeavePolicyDetails.vue'
+import { currentManilaDate, isPaidLeaveEligible } from '@/utils/leaveEligibility'
 import { useAttachmentPreview } from '@/composables/useAttachmentPreview'
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 
@@ -59,7 +60,7 @@ const sendingReply = ref(false)
 const replyModal = ref(false)
 const timeline = ref([])
 const timelineLoading = ref(false)
-const policySettings = ref({ probationary_months: 6, probationary_leave_type_id: 'leave_of_absence' })
+const policySettings = ref({ probationary_months: 3, probationary_leave_type_id: 'leave_of_absence' })
 function onAttachmentChange(event) {
   const file = event?.target?.files && event.target.files[0]
   attachment.value = file || null
@@ -73,23 +74,8 @@ const { workingDays: requestedDays } = usePhilippineWorkingDays(
   computed(() => form.value.start_date),
   computed(() => form.value.end_date)
 )
-function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
-  if (!dateHired || !leaveStartDate) return false
-  const hired = new Date(dateHired)
-  const leaveStart = new Date(leaveStartDate)
-  if (Number.isNaN(hired.getTime()) || Number.isNaN(leaveStart.getTime())) return false
-  const minDate = new Date(hired)
-  minDate.setMonth(minDate.getMonth() + Number(minMonths || 0))
-  return leaveStart >= minDate
-}
 function isBelowProbationaryService(dateHired) {
-  if (!dateHired) return true
-  const hired = new Date(dateHired)
-  const today = new Date()
-  if (Number.isNaN(hired.getTime())) return true
-  let months = (today.getFullYear() - hired.getFullYear()) * 12 + (today.getMonth() - hired.getMonth())
-  if (today.getDate() < hired.getDate()) months -= 1
-  return months < Number(policySettings.value.probationary_months ?? 6)
+  return !isPaidLeaveEligible(dateHired, currentManilaDate(), policySettings.value.probationary_months ?? 3)
 }
 const leaveTypeMap = computed(() =>
   leaveStore.leaveTypes.reduce((acc, type) => {
@@ -99,7 +85,7 @@ const leaveTypeMap = computed(() =>
 )
 const selectedLeaveType = computed(() => leaveTypeMap.value[form.value.leave_type_id] || null)
 const selectedEditLeaveType = computed(() => leaveTypeMap.value[editForm.value.leave_type_id] || null)
-const isBelowSixMonths = computed(() => isBelowProbationaryService(authStore.user?.date_hired))
+const isProbationary = computed(() => isBelowProbationaryService(authStore.user?.date_hired))
 const missingRequiredDocumentForPaid = computed(
   () => Boolean(selectedLeaveType.value?.requires_attachment_for_paid) && !attachment.value
 )
@@ -137,7 +123,7 @@ function remainingPaidDays(typeId, date) {
   const type = leaveTypeMap.value[typeId]
   const cap = paidDaysCap(typeId)
   if (!type || cap <= 0) return 0
-  const baseDate = date || new Date().toISOString().slice(0, 10)
+  const baseDate = date || currentManilaDate()
   const year = new Date(baseDate).getFullYear()
   const used = paidDaysUsedForType(type.name, year)
   return Math.max(0, cap - used)
@@ -146,7 +132,7 @@ function remainingPaidDays(typeId, date) {
 const payTypePreview = computed(() => {
   const type = selectedLeaveType.value
   if (!requestedDays.value || !type) return '-'
-  if (isBelowSixMonths.value) return 'unpaid'
+  if (isProbationary.value) return 'unpaid'
   const cap = paidDaysCap(type.id)
   if (!cap) return 'unpaid'
   if (!isPaidLeaveEligible(authStore.user?.date_hired, form.value.start_date, type.min_months_employed || 0)) {
@@ -154,14 +140,14 @@ const payTypePreview = computed(() => {
   }
   if (missingRequiredDocumentForPaid.value) return 'unpaid'
   const remaining = remainingPaidDays(type.id, form.value.start_date)
-  const payableDays = Math.min(remaining, leaveCreditsAvailable.value)
+  const payableDays = remaining
   if (!payableDays) return 'unpaid'
   if (requestedDays.value <= payableDays) return 'paid'
   return 'partial_paid'
 })
 
 const leaveEntitlements = computed(() => {
-  const balanceDate = form.value.start_date || new Date().toISOString().slice(0, 10)
+  const balanceDate = form.value.start_date || currentManilaDate()
   const year = new Date(balanceDate).getFullYear()
   return leaveStore.leaveTypes
     .map((type) => ({
@@ -174,6 +160,7 @@ const leaveEntitlements = computed(() => {
       noticeDays: Number(type.filing_notice_days || 0),
       requiresAttachment: Boolean(type.requires_attachment_for_paid),
       remarks: type.remarks || '',
+      cashConvertible: Boolean(type.cash_convertible),
       year,
     }))
 })
@@ -189,18 +176,18 @@ const todayISO = computed(() => {
 })
 const leaveCreditsAvailable = computed(() => Number(authStore.user?.leave_credits || 0))
 const startMinDate = computed(() =>
-  addDaysToISO(todayISO.value, isBelowSixMonths.value ? 0 : filingNoticeDays(selectedLeaveType.value))
+  addDaysToISO(todayISO.value, isProbationary.value ? 0 : filingNoticeDays(selectedLeaveType.value))
 )
 const editStartMinDate = computed(() =>
-  addDaysToISO(todayISO.value, isBelowSixMonths.value ? 0 : filingNoticeDays(selectedEditLeaveType.value))
+  addDaysToISO(todayISO.value, isProbationary.value ? 0 : filingNoticeDays(selectedEditLeaveType.value))
 )
 const endMinDate = computed(() => form.value.start_date || startMinDate.value)
 const editEndMinDate = computed(() => editForm.value.start_date || editStartMinDate.value)
 const selectedLeaveFilingNoticeDays = computed(() =>
-  isBelowSixMonths.value ? 0 : filingNoticeDays(selectedLeaveType.value)
+  isProbationary.value ? 0 : filingNoticeDays(selectedLeaveType.value)
 )
 const selectedEditLeaveFilingNoticeDays = computed(() =>
-  isBelowSixMonths.value ? 0 : filingNoticeDays(selectedEditLeaveType.value)
+  isProbationary.value ? 0 : filingNoticeDays(selectedEditLeaveType.value)
 )
 
 watch(
@@ -454,12 +441,12 @@ async function sendReply() {
 
     <LeaveBalanceCards :entitlements="leaveEntitlements" :leave-credits="leaveCreditsAvailable" />
 
-    <div v-if="isBelowSixMonths" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-700/40 bg-amber-500/10 px-4 py-3 text-amber-200">
+    <div v-if="isProbationary" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-700/40 bg-amber-500/10 px-4 py-3 text-amber-200">
       <div class="flex min-w-0 items-center gap-3">
         <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 font-bold text-amber-300">!</span>
         <p class="text-sm"><strong>Probationary leave policy applies.</strong> You may file without advance notice; the request will be recorded as unpaid {{ probationaryLeaveName }}.</p>
       </div>
-      <span class="text-xs text-amber-300">First {{ Number(policySettings.probationary_months ?? 6) }} months</span>
+      <span class="text-xs text-amber-300">First {{ Number(policySettings.probationary_months ?? 3) }} months</span>
     </div>
 
     <div class="grid items-start gap-4 xl:grid-cols-[minmax(0,46fr)_minmax(0,54fr)]">
@@ -532,7 +519,7 @@ async function sendReply() {
           <option value="" class="bg-gray-900 text-primary-200">Select type</option>
           <option v-for="t in leaveStore.leaveTypes" :key="t.id" :value="t.id" class="bg-gray-900 text-primary-200">{{ t.name }}</option>
         </select>
-        <p v-if="isBelowSixMonths" class="mt-2 text-xs text-amber-300">
+        <p v-if="isProbationary" class="mt-2 text-xs text-amber-300">
           This request will use the configured probationary unpaid leave policy.
         </p>
         <p

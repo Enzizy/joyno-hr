@@ -1,8 +1,9 @@
 const db = require('../db')
+const { isPaidLeaveEligible } = require('./leaveEligibilityService')
 
 const POLICY_COLUMNS = `
   id, name, paid_days_per_year, min_months_employed, filing_notice_days,
-  requires_attachment_for_paid, remarks, is_employee_requestable, updated_at
+  requires_attachment_for_paid, remarks, is_employee_requestable, is_active, cash_convertible, updated_at
 `
 
 const POLICY_ALIASES = {
@@ -21,6 +22,8 @@ function normalizePolicy(row) {
     filing_notice_days: Number(row.filing_notice_days || 0),
     requires_attachment_for_paid: Boolean(row.requires_attachment_for_paid),
     is_employee_requestable: Boolean(row.is_employee_requestable),
+    is_active: row.is_active !== false,
+    cash_convertible: Boolean(row.cash_convertible),
     aliases: POLICY_ALIASES[row.id] || [],
   }
 }
@@ -34,11 +37,12 @@ function nonNegativeInteger(value, fallback = 0) {
   return Math.trunc(nonNegativeNumber(value, fallback))
 }
 
-async function getLeavePolicies({ includeRestricted = false } = {}) {
+async function getLeavePolicies({ includeRestricted = false, includeRetired = false } = {}) {
   const { rows } = await db.query(
     `SELECT ${POLICY_COLUMNS}
      FROM leave_policies
-     ${includeRestricted ? '' : 'WHERE is_employee_requestable = TRUE'}
+     WHERE ${includeRetired ? 'TRUE' : 'is_active = TRUE'}
+       ${includeRestricted ? '' : 'AND is_employee_requestable = TRUE'}
      ORDER BY name ASC`
   )
   return rows.map(normalizePolicy)
@@ -47,7 +51,7 @@ async function getLeavePolicies({ includeRestricted = false } = {}) {
 async function resolveLeaveType(value) {
   const raw = String(value || '').trim().toLowerCase()
   if (!raw) return null
-  const policies = await getLeavePolicies({ includeRestricted: true })
+  const policies = await getLeavePolicies({ includeRestricted: true, includeRetired: true })
   return policies.find((policy) =>
     policy.id.toLowerCase() === raw ||
     policy.name.toLowerCase() === raw ||
@@ -64,7 +68,7 @@ async function updateLeavePolicy(id, input, userId) {
     `UPDATE leave_policies
      SET paid_days_per_year = $1, min_months_employed = $2, filing_notice_days = $3,
          requires_attachment_for_paid = $4, remarks = $5, updated_by = $6, updated_at = NOW()
-     WHERE id = $7
+     WHERE id = $7 AND is_active = TRUE
      RETURNING ${POLICY_COLUMNS}`,
     [paidDays, minimumMonths, noticeDays, Boolean(input.requires_attachment_for_paid), remarks, userId, id]
   )
@@ -78,7 +82,7 @@ async function getLeavePolicySettings() {
   )
   const row = rows[0] || {}
   return {
-    probationary_months: Number(row.probationary_months ?? 6),
+    probationary_months: Number(row.probationary_months ?? 3),
     probationary_leave_type_id: row.probationary_leave_type_id || 'leave_of_absence',
     availability_warning_threshold: Number(row.availability_warning_threshold ?? 2),
     updated_at: row.updated_at || null,
@@ -86,10 +90,10 @@ async function getLeavePolicySettings() {
 }
 
 async function updateLeavePolicySettings(input, userId) {
-  const months = nonNegativeInteger(input.probationary_months, 6)
+  const months = nonNegativeInteger(input.probationary_months, 3)
   const threshold = Math.max(1, nonNegativeInteger(input.availability_warning_threshold, 2))
   const leaveType = await resolveLeaveType(input.probationary_leave_type_id || 'leave_of_absence')
-  if (!leaveType?.is_employee_requestable) return null
+  if (!leaveType?.is_employee_requestable || leaveType.is_active === false) return null
   const { rows } = await db.query(
     `UPDATE leave_policy_settings
      SET probationary_months = $1, probationary_leave_type_id = $2,
@@ -101,10 +105,9 @@ async function updateLeavePolicySettings(input, userId) {
   return rows[0] || null
 }
 
-async function resolveEffectiveLeaveType(selectedType, dateHired, asOfDate, calculateTenureMonths) {
+async function resolveEffectiveLeaveType(selectedType, dateHired, asOfDate) {
   const settings = await getLeavePolicySettings()
-  const months = calculateTenureMonths(dateHired, asOfDate)
-  if (months >= settings.probationary_months) return selectedType
+  if (isPaidLeaveEligible(dateHired, asOfDate, settings.probationary_months)) return selectedType
   return resolveLeaveType(settings.probationary_leave_type_id)
 }
 

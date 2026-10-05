@@ -14,7 +14,7 @@ const loading = ref(true)
 const saving = ref(false)
 const policies = ref([])
 const settings = ref({
-  probationary_months: 6,
+  probationary_months: 3,
   probationary_leave_type_id: 'leave_of_absence',
   availability_warning_threshold: 2,
 })

@@ -29,7 +29,7 @@ defineProps({
         </article>
       </div>
       <ul class="mt-4 grid gap-2 rounded-lg border border-gray-800 bg-gray-950/55 p-4 text-xs leading-5 text-gray-500 md:grid-cols-2">
-        <li>• Paid credits reset annually based on service tenure.</li>
+        <li>• Sick, vacation, and SIL each have a separate annual allowance.</li>
         <li>• Leave of Absence and Emergency Leave are unpaid by default.</li>
         <li>• Probationary employees are exempt from advance-notice restrictions.</li>
         <li>• AWOL is assigned by Admin or HR and cannot be requested.</li>

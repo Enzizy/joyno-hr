@@ -13,11 +13,10 @@ async function createHrRecordedLeave({
   employeeColumns,
   resolveLeaveType,
   resolveEffectiveLeaveType,
-  calculateTenureMonths,
   resolveLeaveCompensation,
 }) {
   const selectedLeaveType = await resolveLeaveType(entry.leave_type_name)
-  if (!selectedLeaveType || selectedLeaveType.id === 'awol') {
+  if (!selectedLeaveType || selectedLeaveType.is_active === false || selectedLeaveType.id === 'awol') {
     throw httpError(400, 'Invalid leave type')
   }
 
@@ -45,8 +44,7 @@ async function createHrRecordedLeave({
     const effectiveLeaveType = await resolveEffectiveLeaveType(
       selectedLeaveType,
       employee.date_hired,
-      new Date(`${entry.start_date}T00:00:00`),
-      calculateTenureMonths
+      entry.start_date
     )
     const compensation = await resolveLeaveCompensation(
       employee,

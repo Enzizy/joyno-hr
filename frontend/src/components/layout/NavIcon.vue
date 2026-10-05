@@ -44,6 +44,11 @@ defineProps({
       <path d="m10 15 2 2 8-9" />
     </template>
 
+    <template v-else-if="name === 'pay'">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9h10M7 13h4m3 0h3M7 17h10" />
+    </template>
+
     <template v-else-if="name === 'chart'">
       <path d="M4 20V10m5 10V4m6 16v-7m5 7V7" />
       <path d="M2 20h20" />

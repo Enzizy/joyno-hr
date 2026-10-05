@@ -54,6 +54,28 @@ const TIMESTAMP_HEADERS = new Set([
 ])
 const DATE_HEADERS = new Set(['date', 'eventdate', 'punchdate', 'checkdate'])
 const TIME_HEADERS = new Set(['time', 'eventtimeonly', 'punchtime', 'checktimeonly'])
+const CHECKPOINT_HEADERS = new Set(['attendancecheckpoint', 'checkpoint', 'reader'])
+
+function checkpointDirection(value) {
+  const checkpoint = String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+  if (checkpoint === 'main_door_out_door1_entrance card reader1') return 'in'
+  if (checkpoint === 'main_door_in_door1_entrance card reader1') return 'out'
+  if (checkpoint === 'new bio_new office biometrics_entrance card reader1') return 'boundary'
+  return 'ignored'
+}
+
+function decodeAttendanceCsv(buffer) {
+  // The biometric export uses Windows-1252; also accept standard UTF-8 CSVs.
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer)
+  } catch {
+    return new TextDecoder('windows-1252').decode(buffer)
+  }
+}
+
+function isAttendanceScan(eventType) {
+  return eventType === 'in' || eventType === 'out' || eventType === 'boundary'
+}
 
 function parseAttendanceCsv(text) {
   const rows = parseCsv(text)
@@ -61,21 +83,29 @@ function parseAttendanceCsv(text) {
   const headers = rows[0].map((header) => String(header || '').trim())
   const normalized = headers.map(normalizeHeader)
   const employeeCodeIndex = normalized.findIndex((header) => EMPLOYEE_CODE_HEADERS.has(header))
-  const timestampIndex = normalized.findIndex((header) => TIMESTAMP_HEADERS.has(header))
+  let timestampIndex = normalized.findIndex((header) => TIMESTAMP_HEADERS.has(header))
   const dateIndex = normalized.findIndex((header) => DATE_HEADERS.has(header))
   const timeIndex = normalized.findIndex((header) => TIME_HEADERS.has(header))
+  const checkpointIndex = normalized.findIndex((header) => CHECKPOINT_HEADERS.has(header))
+  // The biometric export calls its full date-time column simply "Time".
+  if (timestampIndex < 0 && dateIndex < 0) timestampIndex = timeIndex
   if (employeeCodeIndex < 0) throw new TypeError('CSV needs an employee_code column (or a recognized employee code alias)')
+  const identifierType = normalized[employeeCodeIndex] === 'personid' ? 'person_id' : 'employee_code'
   if (timestampIndex < 0 && (dateIndex < 0 || timeIndex < 0)) {
     throw new TypeError('CSV needs a timestamp column, or separate date and time columns')
   }
 
   return rows.slice(1).map((cells, index) => {
     const raw = Object.fromEntries(headers.map((header, headerIndex) => [header, cells[headerIndex] ?? '']))
-    const employeeCode = String(cells[employeeCodeIndex] || '').trim()
+    const sourceCode = String(cells[employeeCodeIndex] || '').trim()
+    const employeeCode = normalized[employeeCodeIndex] === 'personid'
+      ? sourceCode.replace(/^'/, '')
+      : sourceCode
     const timestamp = timestampIndex >= 0
       ? String(cells[timestampIndex] || '').trim()
       : `${String(cells[dateIndex] || '').trim()} ${String(cells[timeIndex] || '').trim()}`.trim()
-    return { sourceRow: index + 2, employeeCode, timestamp, raw }
+    const eventType = checkpointIndex < 0 ? null : checkpointDirection(cells[checkpointIndex])
+    return { sourceRow: index + 2, employeeCode, identifierType, timestamp, eventType, raw }
   }).filter((record) => record.employeeCode || record.timestamp)
 }
 
@@ -89,10 +119,11 @@ function parseManilaTimestamp(value) {
   const isoMatch = normalized.match(isoLocal)
   if (isoMatch) normalized = `${isoMatch[1]}T${isoMatch[2]}+08:00`
 
-  // Common CSV export format: M/D/YYYY h:mm[:ss] [AM|PM].
-  const usMatch = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i)
+  // Common CSV export format: M/D/YY[YY] h:mm[:ss] [AM|PM].
+  const usMatch = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i)
   if (usMatch) {
-    const [, firstDatePart, secondDatePart, year, hourInput, minute, second = '00', meridiem] = usMatch
+    const [, firstDatePart, secondDatePart, yearInput, hourInput, minute, second = '00', meridiem] = usMatch
+    const year = yearInput.length === 2 ? 2000 + Number(yearInput) : Number(yearInput)
     let month = Number(firstDatePart)
     let day = Number(secondDatePart)
     // Support unambiguous day-first exports such as 21/09/2026; ambiguous dates default to M/D/Y.
@@ -101,6 +132,10 @@ function parseManilaTimestamp(value) {
     if (meridiem) {
       if (hour < 1 || hour > 12) throw new TypeError(`Invalid Manila timestamp: ${input}`)
       hour = (hour % 12) + (meridiem.toUpperCase() === 'PM' ? 12 : 0)
+    }
+    if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate() ||
+        hour > 23 || Number(minute) > 59 || Number(second) > 59) {
+      throw new TypeError(`Invalid Manila timestamp: ${input}`)
     }
     normalized = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${minute}:${second}+08:00`
   }
@@ -132,11 +167,9 @@ function manilaDateParts(value) {
 
 function dateKey(value) {
   if (value instanceof Date) {
-    // PostgreSQL's DATE parser returns midnight UTC; use UTC fields to preserve that date.
-    const year = value.getUTCFullYear()
-    const month = String(value.getUTCMonth() + 1).padStart(2, '0')
-    const day = String(value.getUTCDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
+    // pg parses DATE at local midnight. On a Manila server that instant is still
+    // the previous UTC day, so UTC fields would shift every payroll work date.
+    return manilaDateParts(value).date
   }
   const match = String(value ?? '').match(/^(\d{4}-\d{2}-\d{2})/)
   if (!match) throw new TypeError('Date must use YYYY-MM-DD format')
@@ -165,6 +198,12 @@ function roundMinutes(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
+function paidMinutesBetween(from, to, shiftStart, lunchStart, lunchEnd, shiftEnd) {
+  if (to <= from) return 0
+  const overlap = (start, end) => Math.max(0, Math.min(to, end) - Math.max(from, start))
+  return overlap(shiftStart, lunchStart) + overlap(lunchEnd, shiftEnd)
+}
+
 function computeDailyAttendance({ date, events = [], profile = {} }) {
   const workDate = dateKey(date)
   const workdays = Array.isArray(profile.workdays) ? profile.workdays.map(Number) : [1, 2, 3, 4, 5]
@@ -174,43 +213,57 @@ function computeDailyAttendance({ date, events = [], profile = {} }) {
   const validEvents = events
     .map((event) => ({ ...event, occurredAt: new Date(event.occurredAt ?? event.occurred_at ?? event.timestamp) }))
     .filter((event) => !Number.isNaN(event.occurredAt.getTime()) && manilaDateParts(event.occurredAt).date === workDate)
-  const sorted = [...new Map(validEvents.map((event) => [event.occurredAt.getTime(), event])).values()]
+  const sorted = [...new Map(validEvents.map((event) => [`${event.occurredAt.getTime()}:${event.eventType ?? event.event_type ?? ''}`, event])).values()]
     .sort((left, right) => left.occurredAt - right.occurredAt)
 
   if (sorted.length === 0) {
     return {
       date: workDate,
-      status: 'absent',
+      status: 'exception',
       firstScanAt: null,
       lastScanAt: null,
       scanCount: 0,
       lateMinutes: 0,
       undertimeMinutes: 0,
-      exceptionReason: null,
+      exceptionReason: 'No biometric scans; HR must confirm absence, leave, or offsite work',
     }
   }
 
-  const first = sorted[0].occurredAt
-  const last = sorted[sorted.length - 1].occurredAt
-  const firstParts = manilaDateParts(first)
-  const lastParts = manilaDateParts(last)
+  const hasCheckpointTypes = sorted.some((event) => event.eventType != null || event.event_type != null)
+  // New Bio has no direction. It can extend either daily endpoint; interior
+  // scans never change the first arrival or last departure.
+  const arrivals = hasCheckpointTypes ? sorted.filter((event) => ['in', 'boundary'].includes(event.eventType ?? event.event_type)) : sorted
+  const departures = hasCheckpointTypes ? sorted.filter((event) => ['out', 'boundary'].includes(event.eventType ?? event.event_type)) : sorted
+  const first = arrivals[0]?.occurredAt ?? null
+  const last = departures[departures.length - 1]?.occurredAt ?? null
+  const complete = first && last && last > first && (hasCheckpointTypes || sorted.length > 1)
   const startMinutes = timeToMinutes(profile.work_start_time ?? profile.workStartTime, '09:00')
   const endMinutes = timeToMinutes(profile.work_end_time ?? profile.workEndTime, '18:00')
-  const startAt = startMinutes * 60000
-  const endAt = endMinutes * 60000
-  const firstAt = (firstParts.hour * 60 + firstParts.minute + firstParts.second / 60) * 60000
-  const lastAt = (lastParts.hour * 60 + lastParts.minute + lastParts.second / 60) * 60000
-  const status = sorted.length === 1 ? 'exception' : 'present'
+  const lunchStart = timeToMinutes(profile.lunch_start_time ?? profile.lunchStartTime, '13:00')
+  const lunchEnd = lunchStart + Number(profile.unpaid_break_minutes ?? profile.unpaidBreakMinutes ?? 60)
+  const firstParts = first ? manilaDateParts(first) : null
+  const lastParts = last ? manilaDateParts(last) : null
+  const firstAt = firstParts ? firstParts.hour * 60 + firstParts.minute + firstParts.second / 60 : null
+  const lastAt = lastParts ? lastParts.hour * 60 + lastParts.minute + lastParts.second / 60 : null
+  const status = complete ? 'present' : 'exception'
+  let exceptionReason = null
+  if (!complete) {
+    if (!hasCheckpointTypes) exceptionReason = 'Only one scan was recorded for this workday'
+    else if (!first && !last) exceptionReason = 'No recognized time-in or time-out scan for this workday'
+    else if (!first) exceptionReason = 'No recognized time-in scan for this workday'
+    else if (!last) exceptionReason = 'No recognized time-out scan for this workday'
+    else exceptionReason = 'Time-out scan is not after time-in scan'
+  }
 
   return {
     date: workDate,
     status,
-    firstScanAt: first.toISOString(),
-    lastScanAt: last.toISOString(),
+    firstScanAt: first?.toISOString() ?? null,
+    lastScanAt: last?.toISOString() ?? null,
     scanCount: sorted.length,
-    lateMinutes: status === 'present' ? roundMinutes(Math.max(0, firstAt - startAt) / 60000) : 0,
-    undertimeMinutes: status === 'present' ? roundMinutes(Math.max(0, endAt - lastAt) / 60000) : 0,
-    exceptionReason: status === 'exception' ? 'Only one scan was recorded for this workday' : null,
+    lateMinutes: complete ? roundMinutes(paidMinutesBetween(startMinutes, firstAt, startMinutes, lunchStart, lunchEnd, endMinutes)) : 0,
+    undertimeMinutes: complete ? roundMinutes(paidMinutesBetween(lastAt, endMinutes, startMinutes, lunchStart, lunchEnd, endMinutes)) : 0,
+    exceptionReason,
   }
 }
 
@@ -230,6 +283,8 @@ module.exports = {
   addDays,
   computeDailyAttendance,
   dateKey,
+  decodeAttendanceCsv,
+  isAttendanceScan,
   listWeekdays,
   manilaDateParts,
   parseAttendanceCsv,

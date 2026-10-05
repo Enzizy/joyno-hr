@@ -18,7 +18,9 @@ const { dispatchPreferredEmail, flushDailyEmailDigests } = require('./services/e
 const { countPhilippineWorkingDays } = require('./services/philippineHolidayService')
 const { buildLeavePayrollWorkbook } = require('./services/leavePayrollWorkbookService')
 const { createHrRecordedLeave } = require('./services/hrRecordedLeaveService')
-const { getEmployeeLeaveBalanceBreakdown } = require('./services/employeeLeaveBalanceService')
+const { getEmployeeLeaveBalanceBreakdown, refreshEmployeeLeaveCredits } = require('./services/employeeLeaveBalanceService')
+const { currentManilaDate, isPaidLeaveEligible } = require('./services/leaveEligibilityService')
+const { resolveLeaveCompensation } = require('./services/leaveCompensationService')
 const {
   approvalDocumentDecision,
   claimAttachmentDeadlineReminders,
@@ -64,7 +66,6 @@ const {
 
 const app = express()
 app.set('trust proxy', 1)
-const DEFAULT_LEAVE_CREDITS = 15
 let dbReady = false
 let backgroundJobsStarted = false
 
@@ -272,12 +273,13 @@ function getMailTransport() {
   return mailTransport
 }
 
-async function deliverEmailNotification({ to, subject, text, html = null, linkLabels = {} }) {
+async function deliverEmailNotification({ to, subject, text, html = null, linkLabels = {}, attachments = [], requireDelivery = false }) {
   if (!to || !subject || !text) return
   const finalHtml = html || buildBrandedEmailHtml({ subject, text, linkLabels })
   if (BREVO_API_KEY && BREVO_FROM_EMAIL) {
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
+      ...(requireDelivery ? { signal: AbortSignal.timeout(15000) } : {}),
       headers: { 'api-key': BREVO_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sender: { email: BREVO_FROM_EMAIL, ...(BREVO_FROM_NAME ? { name: BREVO_FROM_NAME } : {}) },
@@ -285,15 +287,19 @@ async function deliverEmailNotification({ to, subject, text, html = null, linkLa
         subject,
         textContent: text,
         htmlContent: finalHtml,
+        ...(attachments.length ? { attachment: attachments.map((item) => ({ name: item.filename, content: item.content.toString('base64') })) } : {}),
       }),
     })
-    if (!response.ok) throw new Error(`Brevo API error ${response.status}: ${await response.text()}`)
+    if (!response.ok) throw new Error(`Email provider returned HTTP ${response.status}`)
     return
   }
 
   const transport = getMailTransport()
-  if (!transport || !SMTP_FROM) return
-  await transport.sendMail({ from: SMTP_FROM, to, subject, text, html: finalHtml })
+  if (!transport || !SMTP_FROM) {
+    if (requireDelivery) throw new Error('Email delivery is not configured')
+    return
+  }
+  await transport.sendMail({ from: SMTP_FROM, to, subject, text, html: finalHtml, attachments })
 }
 
 function sendEmailNotification(message) {
@@ -721,227 +727,26 @@ async function ensureSchemaColumns() {
 }
 
 function currentCreditYear() {
-  return new Date().getFullYear()
+  return Number(currentManilaDate().slice(0, 4))
 }
 
-function calculateTenureMonths(dateValue, asOf = new Date()) {
-  if (!dateValue) return 0
-  const hired = new Date(dateValue)
-  const date = new Date(asOf)
-  if (Number.isNaN(hired.getTime()) || Number.isNaN(date.getTime())) return 0
-  let months = (date.getFullYear() - hired.getFullYear()) * 12 + (date.getMonth() - hired.getMonth())
-  if (date.getDate() < hired.getDate()) months -= 1
-  return Math.max(0, months)
-}
-
-function leaveCreditsByTenure(dateValue, asOf = new Date()) {
-  const months = calculateTenureMonths(dateValue, asOf)
-  if (months >= 12) return DEFAULT_LEAVE_CREDITS
-  if (months >= 6) return 3
-  return 0
-}
-
-function leaveCreditEntitlementExpression() {
-  return `CASE
-           WHEN date_hired IS NULL THEN 0
-           WHEN (
-             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
-             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
-           ) >= 12 THEN 15
-           WHEN (
-             DATE_PART('year', AGE(CURRENT_DATE, date_hired)) * 12 +
-             DATE_PART('month', AGE(CURRENT_DATE, date_hired))
-           ) >= 6 THEN 3
-           ELSE 0
-         END`
+async function leaveCreditsByTenure(dateValue, asOf = currentManilaDate()) {
+  const policies = await getLeavePolicies()
+  return policies.filter((policy) => isPaidLeaveEligible(dateValue, asOf, policy.min_months_employed))
+    .reduce((total, policy) => total + Number(policy.paid_days_per_year || 0), 0)
 }
 
 async function resetEmployeeLeaveCreditsIfNeeded(employeeId) {
   const id = Number(employeeId)
-  if (!id) return
-  const year = currentCreditYear()
-  const entitlementExpression = leaveCreditEntitlementExpression()
-  const usedCreditsExpression = `(SELECT COALESCE(SUM(COALESCE(lr.credits_deducted, 0)), 0)
-    FROM leave_requests lr
-    WHERE lr.employee_id = employees.id
-      AND lr.status = 'approved'
-      AND EXTRACT(YEAR FROM lr.start_date) = ${year})`
-  await db.query(
-    `UPDATE employees
-     SET leave_credits = ${entitlementExpression},
-         leave_credits_entitlement = ${entitlementExpression},
-         leave_credits_reset_year = $1,
-         updated_at = NOW()
-     WHERE id = $2
-       AND COALESCE(leave_credits_reset_year, 0) < $1`,
-    [year, id]
-  )
-  await db.query(
-    `UPDATE employees
-     SET leave_credits = GREATEST(
-           leave_credits,
-           GREATEST(0, ${entitlementExpression} - ${usedCreditsExpression})
-         ),
-         leave_credits_entitlement = ${entitlementExpression},
-         updated_at = NOW()
-     WHERE id = $1
-       AND COALESCE(leave_credits_reset_year, $2) = $2`,
-    [id, year]
-  )
+  if (id) await refreshEmployeeLeaveCredits(db, id)
 }
 
 async function resetAllEmployeeLeaveCreditsIfNeeded() {
-  const year = currentCreditYear()
-  const entitlementExpression = leaveCreditEntitlementExpression()
-  const usedCreditsExpression = `(SELECT COALESCE(SUM(COALESCE(lr.credits_deducted, 0)), 0)
-    FROM leave_requests lr
-    WHERE lr.employee_id = employees.id
-      AND lr.status = 'approved'
-      AND EXTRACT(YEAR FROM lr.start_date) = ${year})`
-  await db.query(
-    `UPDATE employees
-     SET leave_credits = ${entitlementExpression},
-         leave_credits_entitlement = ${entitlementExpression},
-         leave_credits_reset_year = $1,
-         updated_at = NOW()
-     WHERE COALESCE(leave_credits_reset_year, 0) < $1`,
-    [year]
-  )
-  await db.query(
-    `UPDATE employees
-     SET leave_credits = GREATEST(
-           leave_credits,
-           GREATEST(0, ${entitlementExpression} - ${usedCreditsExpression})
-         ),
-         leave_credits_entitlement = ${entitlementExpression},
-         updated_at = NOW()
-     WHERE COALESCE(leave_credits_reset_year, $1) = $1`,
-    [year]
-  )
+  await refreshEmployeeLeaveCredits(db)
 }
 
 async function calculateLeaveDays(startDate, endDate, queryDb = db) {
   return countPhilippineWorkingDays(queryDb, startDate, endDate)
-}
-
-function isPaidLeaveEligible(dateHired, leaveStartDate, minMonths = 0) {
-  if (!dateHired || !leaveStartDate) return false
-  const hired = new Date(dateHired)
-  const leaveStart = new Date(leaveStartDate)
-  if (Number.isNaN(hired.getTime()) || Number.isNaN(leaveStart.getTime())) return false
-  const minDate = new Date(hired)
-  minDate.setMonth(minDate.getMonth() + Number(minMonths || 0))
-  return leaveStart >= minDate
-}
-
-async function resolveLeaveCompensation(
-  employee,
-  leaveType,
-  startDate,
-  endDate,
-  hasMedicalAttachment = false,
-  queryDb = db
-) {
-  const leaveDays = await calculateLeaveDays(startDate, endDate, queryDb)
-  if (!leaveDays || leaveDays <= 0) return null
-
-  const paidDaysCap = Number(leaveType?.paid_days_per_year || 0)
-  if (!leaveType || paidDaysCap <= 0) {
-    return {
-      leaveDays,
-      paidDays: 0,
-      unpaidDays: leaveDays,
-      leavePayType: 'unpaid',
-      creditsDeducted: 0,
-      note: `${leaveType?.name || 'This leave type'} is unpaid by policy.`,
-    }
-  }
-
-  const eligible = isPaidLeaveEligible(employee?.date_hired, startDate, leaveType.min_months_employed || 0)
-  if (!eligible) {
-    return {
-      leaveDays,
-      paidDays: 0,
-      unpaidDays: leaveDays,
-      leavePayType: 'unpaid',
-      creditsDeducted: 0,
-      note: `Paid ${leaveType.name} requires at least ${Number(leaveType.min_months_employed || 0)} month(s) of service.`,
-    }
-  }
-  if (leaveType.requires_attachment_for_paid && !hasMedicalAttachment) {
-    return {
-      leaveDays,
-      paidDays: 0,
-      unpaidDays: leaveDays,
-      leavePayType: 'unpaid',
-      creditsDeducted: 0,
-      note: `${leaveType.name} paid leave requires a supporting document. Without attachment, this request is unpaid.`,
-    }
-  }
-
-  const leaveYear = new Date(startDate).getFullYear()
-  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, null, queryDb)
-  const remainingTypePaidDays = Math.max(0, paidDaysCap - usedDays)
-  const availableCredits = Math.max(0, Number(employee?.leave_credits || 0))
-  const payableDays = Math.min(leaveDays, remainingTypePaidDays, availableCredits)
-  const unpaidDays = Math.max(0, leaveDays - payableDays)
-
-  if (payableDays <= 0) {
-    return {
-      leaveDays,
-      paidDays: 0,
-      unpaidDays: leaveDays,
-      leavePayType: 'unpaid',
-      creditsDeducted: 0,
-      note: `No paid days available. ${leaveType.name} yearly paid limit is already used or credits are insufficient.`,
-    }
-  }
-  if (leaveDays <= payableDays) {
-    return {
-      leaveDays,
-      paidDays: leaveDays,
-      unpaidDays: 0,
-      leavePayType: 'paid',
-      creditsDeducted: leaveDays,
-      note: `All ${leaveDays} day(s) are paid.`,
-    }
-  }
-
-  return {
-    leaveDays,
-    paidDays: payableDays,
-    unpaidDays,
-    leavePayType: 'partial_paid',
-    creditsDeducted: payableDays,
-    note: `${payableDays} day(s) paid and ${unpaidDays} day(s) unpaid based on ${leaveType.name} limits and available credits.`,
-  }
-}
-
-async function getApprovedPaidLeaveDays(employeeId, leaveTypeName, year, excludeRequestId = null, queryDb = db) {
-  const params = [employeeId, leaveTypeName, String(year)]
-  let sql = `
-    SELECT
-      COALESCE(
-        SUM(
-          CASE
-            WHEN leave_pay_type IN ('paid','partial_paid') THEN COALESCE(credits_deducted, leave_days, 0)
-            ELSE 0
-          END
-        ),
-        0
-      )::numeric AS used_days
-    FROM leave_requests
-    WHERE employee_id = $1
-      AND status = 'approved'
-      AND leave_type_name = $2
-      AND EXTRACT(YEAR FROM start_date) = $3::int
-  `
-  if (excludeRequestId) {
-    params.push(excludeRequestId)
-    sql += ` AND id <> $${params.length}`
-  }
-  const { rows } = await queryDb.query(sql, params)
-  return Number(rows[0]?.used_days || 0)
 }
 
 async function addLeaveCommentIndicators(requests, user) {
@@ -1023,7 +828,6 @@ async function createOfficialHrRecordedLeave({ entry, user }) {
     employeeColumns: EMPLOYEE_COLUMNS,
     resolveLeaveType,
     resolveEffectiveLeaveType,
-    calculateTenureMonths,
     resolveLeaveCompensation,
   })
 
@@ -1106,7 +910,7 @@ app.use(createLeaveChangeRequestRouter({
 app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
 if (PAYROLL_ENABLED) {
   const payrollService = createPayrollService({ db })
-  app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog }))
+  app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog, deliverPayslipEmail: deliverEmailNotification }))
 }
 
 async function loadUserProfile(userId) {
@@ -1297,7 +1101,7 @@ app.get('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
 
 app.post('/api/employees', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const e = req.body || {}
-  const leaveCredits = leaveCreditsByTenure(e.date_hired)
+  const leaveCredits = await leaveCreditsByTenure(e.date_hired)
   const resetYear = currentCreditYear()
   const { rows } = await db.query(
     `INSERT INTO employees
@@ -1332,7 +1136,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
   )
   const existingEmployee = existingResult.rows[0]
   if (!existingEmployee) return res.status(404).json({ message: 'Employee not found' })
-  const nextEntitlement = leaveCreditsByTenure(e.date_hired)
+  const nextEntitlement = await leaveCreditsByTenure(e.date_hired)
   const currentCredits = Math.max(0, Number(existingEmployee.leave_credits || 0))
   const currentEntitlement = Math.max(0, Number(existingEmployee.leave_credits_entitlement || 0))
   let nextCredits = currentCredits
@@ -1360,6 +1164,7 @@ app.put('/api/employees/:id', authRequired, requireRole(['admin', 'hr', 'ceo']),
       req.params.id,
     ]
   )
+  await resetEmployeeLeaveCreditsIfNeeded(req.params.id)
   await addAuditLog(req.user.id, 'update_employee', 'employees', req.params.id)
   const updated = await db.query(`SELECT ${EMPLOYEE_COLUMNS} FROM employees WHERE id = $1`, [req.params.id])
   res.json(updated.rows[0] || { id: Number(req.params.id) })
@@ -2841,8 +2646,8 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   }
 
   const selectedLeaveType = await resolveLeaveType(leave_type_id)
-  if (!selectedLeaveType) {
-    return res.status(400).json({ message: 'Invalid leave type' })
+  if (!selectedLeaveType || selectedLeaveType.is_active === false) {
+    return res.status(400).json({ message: 'Invalid or retired leave type' })
   }
   if (selectedLeaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by management from employee management' })
@@ -2850,8 +2655,7 @@ app.post('/api/leave-requests', authRequired, uploadAttachment, async (req, res)
   const leaveType = await resolveEffectiveLeaveType(
     selectedLeaveType,
     emp.date_hired,
-    new Date(),
-    calculateTenureMonths
+    currentManilaDate()
   )
   const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
   if (advanceNoticeError) {
@@ -2992,8 +2796,8 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   }
 
   const selectedLeaveType = await resolveLeaveType(leave_type_id)
-  if (!selectedLeaveType) {
-    return res.status(400).json({ message: 'Invalid leave type' })
+  if (!selectedLeaveType || selectedLeaveType.is_active === false) {
+    return res.status(400).json({ message: 'Invalid or retired leave type' })
   }
   if (selectedLeaveType.id === 'awol') {
     return res.status(403).json({ message: 'AWOL can only be set by management from employee management' })
@@ -3005,8 +2809,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   const leaveType = await resolveEffectiveLeaveType(
     selectedLeaveType,
     emp.date_hired,
-    new Date(),
-    calculateTenureMonths
+    currentManilaDate()
   )
   const advanceNoticeError = validateAdvanceFiling(leaveType, start_date)
   if (advanceNoticeError) {

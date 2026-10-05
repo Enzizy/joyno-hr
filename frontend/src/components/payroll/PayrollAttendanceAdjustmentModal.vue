@@ -101,7 +101,7 @@ function submit() {
       </label>
 
       <div v-if="adjustmentType === 'half_day'" class="rounded-lg border border-amber-900/50 bg-amber-950/15 p-3 text-xs leading-5 text-amber-200">
-        Half-day worked records 240 undertime minutes. It deducts four salary hours but still grants that day’s fare, unless a separate late deduction applies.
+        Half-day worked records 240 undertime minutes and deducts four salary hours. Travel fare is handled outside payroll.
       </div>
 
       <div v-if="['paid_leave', 'unpaid_leave'].includes(adjustmentType)" class="rounded-lg border border-blue-900/50 bg-blue-950/15 p-3 text-xs leading-5 text-blue-200">

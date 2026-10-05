@@ -28,6 +28,19 @@ async function request(path, options = {}) {
   return res.json()
 }
 
+async function requestPdf(path) {
+  const headers = {}
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch(`${API_BASE}${path}`, { headers, cache: 'no-store' })
+  if (!res.ok) {
+    let message = 'Unable to load payslip PDF'
+    try { message = (await res.json()).message || message } catch {}
+    throw new Error(message)
+  }
+  return res.blob()
+}
+
 export async function login(email, password) {
   return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }), skipAuth: true })
 }
@@ -59,6 +72,19 @@ export async function getDashboardOverview() {
 // Runs list via GET /runs; approve/lock are POST actions; employees read GET /my-lines.
 export async function getPayrollProfiles() {
   return request('/api/payroll/profiles')
+}
+
+export async function inspectPayrollTestCsv(file) {
+  const body = new FormData()
+  body.append('file', file)
+  return request('/api/payroll/test/inspect-csv', { method: 'POST', body })
+}
+
+export async function previewEmployeePayTest(file, input) {
+  const body = new FormData()
+  body.append('file', file)
+  for (const [key, value] of Object.entries(input)) body.append(key, String(value ?? ''))
+  return request('/api/payroll/test/employee-preview', { method: 'POST', body })
 }
 
 export async function updatePayrollProfile(employeeId, data) {
@@ -109,6 +135,35 @@ export async function lockPayrollRun(id) {
 
 export async function getMyPayrollLines() {
   return request('/api/payroll/my-lines')
+}
+
+export async function updatePayrollManualEarnings(runId, lineId, earnings) {
+  return request(`/api/payroll/runs/${encodeURIComponent(runId)}/lines/${encodeURIComponent(lineId)}/earnings`, {
+    method: 'PUT', body: JSON.stringify({ earnings }),
+  })
+}
+
+export async function updatePayrollCharges(runId, lineId, charges) {
+  return request(`/api/payroll/runs/${encodeURIComponent(runId)}/lines/${encodeURIComponent(lineId)}/charges`, {
+    method: 'PUT', body: JSON.stringify({ charges }),
+  })
+}
+
+export async function updatePayrollFirstCutoffPay(runId, lineId, firstCutoffPay, reason) {
+  return request(`/api/payroll/runs/${encodeURIComponent(runId)}/lines/${encodeURIComponent(lineId)}/first-cutoff-pay`, {
+    method: 'PUT', body: JSON.stringify({ firstCutoffPay, reason }),
+  })
+}
+
+export async function getPayrollPayslipPdf(runId, lineId) {
+  const path = runId == null
+    ? `/api/payroll/my-payslips/${encodeURIComponent(lineId)}.pdf`
+    : `/api/payroll/runs/${encodeURIComponent(runId)}/payslips/${encodeURIComponent(lineId)}.pdf`
+  return requestPdf(path)
+}
+
+export async function sendPayrollPayslip(runId, lineId) {
+  return request(`/api/payroll/runs/${encodeURIComponent(runId)}/payslips/${encodeURIComponent(lineId)}/send`, { method: 'POST' })
 }
 
 export async function getNotifications(options = {}) {

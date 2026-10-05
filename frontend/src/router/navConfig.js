@@ -41,12 +41,18 @@ export const navGroups = [
     ],
   },
   {
+    name: 'Pay',
+    icon: 'pay',
+    path: '/payroll',
+    roles: ALL_ROLES,
+    hidden: !payrollEnabled,
+  },
+  {
     name: 'Insights',
     icon: 'chart',
     roles: ALL_ROLES,
     children: [
       { path: '/reports', name: 'Leave reports', icon: 'chart', roles: MANAGEMENT_ROLES },
-      { path: '/payroll', name: 'Payroll', icon: 'chart', roles: ALL_ROLES, hidden: !payrollEnabled },
     ],
   },
   {
@@ -66,7 +72,7 @@ function roleAllowed(item, role) {
 
 export function getNavForRole(role) {
   return navGroups
-    .filter((group) => roleAllowed(group, role))
+    .filter((group) => !group.hidden && roleAllowed(group, role))
     .map((group) => ({
       ...group,
       children: group.children?.filter((child) => !child.hidden && roleAllowed(child, role)) || [],

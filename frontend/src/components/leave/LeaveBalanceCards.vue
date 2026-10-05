@@ -29,11 +29,11 @@ function toneFor(index) {
         <p class="mt-0.5 text-xs text-gray-500">Paid leave remaining for {{ policyYear }}.</p>
       </div>
       <p class="rounded-full border border-gray-700 bg-gray-900 px-3 py-1 text-xs text-gray-400">
-        Available credit pool: <strong class="text-primary-200">{{ leaveCredits.toFixed(2) }}</strong>
+        Total available days: <strong class="text-primary-200">{{ leaveCredits.toFixed(2) }}</strong>
       </p>
     </div>
 
-    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
       <article v-for="(item, index) in paidEntitlements" :key="item.id" class="surface-card p-4">
         <div class="flex items-start gap-3">
           <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-lg" :class="[toneFor(index).tint, toneFor(index).color]">{{ toneFor(index).icon }}</span>
@@ -49,6 +49,7 @@ function toneFor(index) {
             <p class="mt-1 text-xs text-gray-500">{{ item.eligible ? `${Math.max(0, Number(item.total) - Number(item.remaining))} used of ${item.total}` : `Available after ${item.minMonths} months` }}</p>
           </div>
         </div>
+        <p v-if="item.cashConvertible" class="mt-3 text-xs text-amber-300">Unused days are convertible to cash.</p>
         <div class="mt-3 h-1 overflow-hidden rounded-full bg-gray-800">
           <div class="h-full rounded-full" :class="item.eligible ? toneFor(index).bar : 'bg-gray-700'" :style="{ width: `${item.eligible && item.total ? Math.min(100, (item.remaining / item.total) * 100) : 100}%` }" />
         </div>

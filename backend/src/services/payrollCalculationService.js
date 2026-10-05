@@ -2,7 +2,6 @@ const DEFAULTS = Object.freeze({
   dailyRateDivisor: 261,
   paidHoursPerDay: 8,
   monthlyWorkdays: 21.75,
-  fareLateDeductionPerMinute: 5,
   sssEmployeeRate: 0.05,
   sssEmployerRate: 0.10,
   philHealthRate: 0.05,
@@ -41,12 +40,38 @@ function getSssMonthlySalaryCredit(monthlyCompensation) {
   return clamp(roundedBracket, 5000, 35000)
 }
 
-function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025 } = {}) {
+function calculateSssAssessablePay({ firstCutoffPay, grossSalary, absenceDeduction = 0,
+  lateDeduction = 0, undertimeDeduction = 0, basicAdjustment = 0, manualEarnings = [] }) {
+  const first = finiteNumber(firstCutoffPay, 'firstCutoffPay')
+  const gross = finiteNumber(grossSalary, 'grossSalary')
+  const timeDeductions = [absenceDeduction, lateDeduction, undertimeDeduction]
+    .reduce((total, value) => total + finiteNumber(value, 'timeDeduction'), 0)
+  const adjustment = finiteNumber(basicAdjustment, 'basicAdjustment')
+  if (first < 0 || gross < 0 || timeDeductions < 0 || !Array.isArray(manualEarnings)) {
+    throw new RangeError('SSS assessable pay inputs are invalid')
+  }
+  const overtimePay = manualEarnings
+    .filter((entry) => entry.type === 'overtime')
+    .reduce((total, entry) => total + finiteNumber(entry.amount, 'overtimePay'), 0)
+  if (overtimePay < 0) throw new RangeError('overtimePay cannot be negative')
+  // Workbook Remittance: first cutoff + second cutoff net basic including
+  // CHARGES basic-pay adjustments + OT. COLA remains a separate allowance.
+  // WSH/RD premium is a separate register column and is not in this lookup.
+  const secondCutoffNetBasic = roundMoney(Math.max(0, gross - timeDeductions + adjustment))
+  return {
+    firstCutoffPay: roundMoney(first), secondCutoffNetBasic,
+    overtimePay: roundMoney(overtimePay),
+    monthlyCompensation: roundMoney(first + secondCutoffNetBasic + overtimePay),
+  }
+}
+
+function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025, sssCompensation } = {}) {
   const salary = finiteNumber(monthlyBasicSalary, 'monthlyBasicSalary')
   if (salary < 0) throw new RangeError('monthlyBasicSalary cannot be negative')
   if (effectiveYear < 2025) throw new RangeError('Only the 2025+ SSS contribution schedule is implemented')
 
-  const sssMsc = getSssMonthlySalaryCredit(salary)
+  const sssBasis = sssCompensation === undefined ? salary : finiteNumber(sssCompensation, 'sssCompensation')
+  const sssMsc = getSssMonthlySalaryCredit(sssBasis)
   const sssEmployee = roundMoney(sssMsc * DEFAULTS.sssEmployeeRate)
   const sssEmployer = roundMoney(sssMsc * DEFAULTS.sssEmployerRate)
   const sssEmployerEc = sssMsc <= 14500 ? 10 : 30
@@ -59,6 +84,7 @@ function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025 } = {
 
   return {
     schedule: DEFAULTS.contributionSchedule,
+    sssCompensation: roundMoney(sssBasis),
     sssMsc,
     sssEmployee,
     sssEmployer,
@@ -72,19 +98,47 @@ function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025 } = {
   }
 }
 
-function calculateAttendanceTotals(attendance, { dailyRate, hourlyRate, dailyFareRate }) {
+function calculateWorkedSpecialHoliday({ monthlyBasicSalary, dailyRate: suppliedDailyRate, workedDays = 0,
+  workedHours, overtimeHours = 0 }) {
+  const salary = finiteNumber(monthlyBasicSalary, 'monthlyBasicSalary')
+  const days = finiteNumber(workedDays, 'workedDays')
+  const hoursWorked = workedHours === undefined
+    ? days * DEFAULTS.paidHoursPerDay : finiteNumber(workedHours, 'workedHours')
+  const hours = finiteNumber(overtimeHours, 'overtimeHours')
+  const dailyRate = suppliedDailyRate === undefined
+    ? salary * 12 / DEFAULTS.dailyRateDivisor : finiteNumber(suppliedDailyRate, 'dailyRate')
+  if (salary < 0 || dailyRate < 0 || !Number.isInteger(days) || days < 0 || days > 31 ||
+      hoursWorked < 0 || hoursWorked > 31 * DEFAULTS.paidHoursPerDay ||
+      Math.abs(Math.round(hoursWorked * 100) - hoursWorked * 100) > 0.000001 ||
+      hours < 0 || hours > 31 * 24 || (hours > 0 && hoursWorked === 0) ||
+      Math.abs(Math.round(hours * 100) - hours * 100) > 0.000001) {
+    throw new RangeError('Special-holiday days or overtime hours are invalid')
+  }
+  // Semi-monthly basic already includes the ordinary 100% day rate. Only the
+  // extra 30% WSH/RD premium belongs in manual earnings for this pay model.
+  // Approved WSH/RD overtime retains the 130% x 130% hourly multiplier.
+  const holidayPremium = roundMoney(hoursWorked / DEFAULTS.paidHoursPerDay * dailyRate * 0.3)
+  const overtimePay = roundMoney(hours * dailyRate / DEFAULTS.paidHoursPerDay * 1.3 * 1.3)
+  return { holidayPremium, overtimePay, total: roundMoney(holidayPremium + overtimePay) }
+}
+
+function calculateAttendanceTotals(attendance, { dailyRate, hourlyRate, workdays = [1, 2, 3, 4, 5] }) {
   const daily = finiteNumber(dailyRate, 'dailyRate')
   const hourly = finiteNumber(hourlyRate, 'hourlyRate')
-  const fare = finiteNumber(dailyFareRate || 0, 'dailyFareRate')
   let absenceDays = 0
   let paidLeaveDays = 0
   let unpaidLeaveDays = 0
   let absenceDeduction = 0
+  let lateMinutes = 0
   let undertimeMinutes = 0
-  let undertimeDeduction = 0
-  let weeklyFareAllowance = 0
 
   for (const record of attendance || []) {
+    const workDate = record.date ?? record.work_date
+    if (workDate) {
+      const date = new Date(`${workDate}T00:00:00Z`)
+      if (Number.isNaN(date.getTime())) throw new TypeError('Attendance date must use YYYY-MM-DD format')
+      if (!workdays.includes(date.getUTCDay())) continue
+    }
     if (record.status === 'absent') {
       absenceDays += 1
       absenceDeduction += daily
@@ -105,38 +159,47 @@ function calculateAttendanceTotals(attendance, { dailyRate, hourlyRate, dailyFar
     // Incomplete scans require HR review and must not be guessed into a deduction.
     if (record.status !== 'present') continue
 
-    const lateMinutes = Math.max(0, finiteNumber(record.lateMinutes ?? record.late_minutes ?? 0, 'lateMinutes'))
+    const missedLateMinutes = Math.max(0, finiteNumber(record.lateMinutes ?? record.late_minutes ?? 0, 'lateMinutes'))
     const missedMinutes = Math.max(0, finiteNumber(record.undertimeMinutes ?? record.undertime_minutes ?? 0, 'undertimeMinutes'))
+    lateMinutes += missedLateMinutes
     undertimeMinutes += missedMinutes
-    undertimeDeduction += missedMinutes * hourly / 60
-    weeklyFareAllowance += Math.max(0, fare - lateMinutes * DEFAULTS.fareLateDeductionPerMinute)
   }
+
+  // The workbook applies one missed-time rate to total late and undertime minutes.
+  const timeDeduction = roundMoney((lateMinutes + undertimeMinutes) * hourly / 60)
+  const lateDeduction = roundMoney(lateMinutes * hourly / 60)
 
   return {
     absenceDays: roundMinutes(absenceDays),
     paidLeaveDays: roundMinutes(paidLeaveDays),
     unpaidLeaveDays: roundMinutes(unpaidLeaveDays),
     absenceDeduction: roundMoney(absenceDeduction),
+    lateMinutes: roundMinutes(lateMinutes),
+    lateDeduction,
     undertimeMinutes: roundMinutes(undertimeMinutes),
-    undertimeDeduction: roundMoney(undertimeDeduction),
-    weeklyFareAllowance: roundMoney(weeklyFareAllowance),
+    undertimeDeduction: roundMoney(timeDeduction - lateDeduction),
+    // Legacy column retained for existing payroll rows; fare is outside salary payroll.
+    weeklyFareAllowance: 0,
   }
 }
 
 function calculatePayrollLine({
   monthlyBasicSalary,
-  dailyFareRate = 0,
+  monthlyCola = 0,
   cutoff = 'first',
   includeContributions = false,
   attendance = [],
   dailyRateDivisor = DEFAULTS.dailyRateDivisor,
   paidHoursPerDay = DEFAULTS.paidHoursPerDay,
+  workdays = [1, 2, 3, 4, 5],
   effectiveYear = 2025,
+  sssCompensation,
 }) {
   const monthlySalary = finiteNumber(monthlyBasicSalary, 'monthlyBasicSalary')
+  const cola = finiteNumber(monthlyCola, 'monthlyCola')
   const divisor = finiteNumber(dailyRateDivisor, 'dailyRateDivisor')
   const paidHours = finiteNumber(paidHoursPerDay, 'paidHoursPerDay')
-  if (monthlySalary < 0 || divisor <= 0 || paidHours <= 0) {
+  if (monthlySalary < 0 || cola < 0 || divisor <= 0 || paidHours <= 0) {
     throw new RangeError('Salary must be non-negative and work-rate divisors must be positive')
   }
   if (!['first', 'second'].includes(cutoff)) throw new TypeError('cutoff must be first or second')
@@ -144,16 +207,23 @@ function calculatePayrollLine({
   const dailyRate = monthlySalary * 12 / divisor
   const hourlyRate = dailyRate / paidHours
   const grossSalary = roundMoney(monthlySalary / 2)
+  // Allocate the odd cent to the first cutoff so both payslips total the
+  // configured monthly COLA exactly.
+  const firstColaPay = roundMoney(cola / 2)
+  const colaPay = cutoff === 'first' ? firstColaPay : roundMoney(cola - firstColaPay)
   const attendanceTotals = calculateAttendanceTotals(attendance, {
     dailyRate,
     hourlyRate,
-    dailyFareRate,
+    workdays,
   })
-  const earnedBasic = Math.max(0, grossSalary - attendanceTotals.absenceDeduction - attendanceTotals.undertimeDeduction)
+  // The workbook's 13th-month base subtracts absences from basic pay, but not
+  // the separate tardiness/undertime deduction.
+  const earnedBasic = Math.max(0, grossSalary - attendanceTotals.absenceDeduction)
   const contributionValues = cutoff === 'second' && includeContributions
-    ? calculateContributions(monthlySalary, { effectiveYear })
+    ? calculateContributions(monthlySalary, { effectiveYear, sssCompensation })
     : {
       schedule: DEFAULTS.contributionSchedule,
+      sssCompensation: 0,
       sssMsc: 0,
       sssEmployee: 0,
       sssEmployer: 0,
@@ -166,12 +236,14 @@ function calculatePayrollLine({
       pagIbigEmployer: 0,
     }
   const employeeDeductions = roundMoney(
-    attendanceTotals.absenceDeduction + attendanceTotals.undertimeDeduction +
+    attendanceTotals.absenceDeduction + attendanceTotals.lateDeduction + attendanceTotals.undertimeDeduction +
     contributionValues.sssEmployee + contributionValues.philHealthEmployee + contributionValues.pagIbigEmployee
   )
 
   return {
     monthlyBasicSalary: roundMoney(monthlySalary),
+    monthlyCola: roundMoney(cola),
+    colaPay,
     dailyRate: roundMoney(dailyRate),
     hourlyRate: roundMoney(hourlyRate),
     grossSalary,
@@ -184,6 +256,7 @@ function calculatePayrollLine({
     employeePagibig: contributionValues.pagIbigEmployee,
     employerPagibig: contributionValues.pagIbigEmployer,
     contributionBasis: {
+      sssCompensation: contributionValues.sssCompensation,
       sssMsc: contributionValues.sssMsc,
       philHealth: contributionValues.philHealthBasis,
       pagIbig: contributionValues.pagIbigBasis,
@@ -191,7 +264,7 @@ function calculatePayrollLine({
     },
     thirteenthMonthAccrual: roundMoney(earnedBasic / 12),
     employeeDeductions,
-    netPay: roundMoney(Math.max(0, grossSalary - employeeDeductions)),
+    netPay: roundMoney(Math.max(0, grossSalary + colaPay - employeeDeductions)),
   }
 }
 
@@ -199,6 +272,8 @@ module.exports = {
   DEFAULTS,
   calculateAttendanceTotals,
   calculateContributions,
+  calculateSssAssessablePay,
+  calculateWorkedSpecialHoliday,
   calculatePayrollLine,
   getSssMonthlySalaryCredit,
   roundMoney,
