@@ -25,7 +25,7 @@ export function coversWorkDates(review, start, end) {
 }
 
 export function matchingAttendanceReviews(reviews, start, end, confirmed = true) {
-  return reviews.filter(review => (review.review_state === 'confirmed') === confirmed && coversWorkDates(review, start, end))
+  return reviews.filter(review => (review.review_state === 'confirmed') === confirmed && (!confirmed || !review.scope_needs_refresh) && coversWorkDates(review, start, end))
     .sort((a, b) => Number(b.id) - Number(a.id))
 }
 

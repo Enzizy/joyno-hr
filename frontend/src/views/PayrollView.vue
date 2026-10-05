@@ -3,7 +3,7 @@ import { effectiveEarnings, needsNightReview } from '@/utils/payrollEarnings'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { standardPeriod, formatWorkDate, formatWorkRange, coversWorkDates, matchingAttendanceReviews } from '@/utils/payrollPeriods'
-import { listAttendanceReviews, getAttendanceReview, recordPayrollPayment, getPayrollPaymentExport, verifyPayrollPayBasis, getPayrollRegisterExport } from '@/services/api'
+import { getPayrollScope, listAttendanceReviews, getAttendanceReview, recordPayrollPayment, getPayrollPaymentExport, verifyPayrollPayBasis, getPayrollRegisterExport } from '@/services/api'
 import AppModal from '@/components/ui/AppModal.vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
@@ -62,6 +62,7 @@ const busy = ref(false)
 const loadingRun = ref(false)
 const loading = ref(true)
 const profiles = ref([])
+const dayShiftOnly = ref(false)
 const runs = ref([])
 const myLines = ref([])
 const preview = ref(null)
@@ -308,6 +309,7 @@ async function loadWorkspace() {
   loading.value = true
   const tasks = []
   if (canManage.value) {
+    tasks.push(getPayrollScope().then(scope => {dayShiftOnly.value=scope.dayShiftOnly}))
     tasks.push(listAttendanceReviews().then(data => { attendanceReviews.value = data }))
     tasks.push(getPayrollProfiles().then((data) => { profiles.value = listFrom(data, 'items') }))
     tasks.push(getPayrollRuns().then((data) => { runs.value = listFrom(data, 'items') }))
@@ -869,6 +871,7 @@ async function emailAllPayslips() {
     <PageHeader :title="isEmployee ? 'My payslips' : 'Payroll'" :description="isEmployee ? 'View and save your released payslips.' : 'Choose a payday, check attendance, and prepare employee pay.'" eyebrow="People operations">
       <template v-if="canManage" #actions><span v-if="!payrollFinalizationEnabled" class="rounded-full border border-gray-700 px-3 py-1 text-xs text-gray-400" title="Approval, payment recording, and payslip release are disabled.">Draft mode</span><AppButton variant="ghost" size="sm" @click="workflowStep=5">Test a calculation</AppButton></template>
     </PageHeader>
+    <p v-if="canManage && dayShiftOnly" class="rounded-lg border border-primary-800/40 bg-primary-950/20 p-3 text-sm text-primary-200">Day-shift payroll testing · Night-shift employees are temporarily excluded from setup, attendance checks, and new payroll drafts.</p>
 
     <div v-if="loading" class="rounded-xl border border-gray-800 bg-gray-900 p-6 text-sm text-gray-400" role="status">Loading payroll workspace…</div>
 

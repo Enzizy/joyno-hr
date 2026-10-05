@@ -1,3 +1,4 @@
+const { dayShiftOnly, payrollEmployeeIncluded } = require('./payrollScopeService')
 const { shiftDefaults, shiftWindow } = require('./payrollShiftService')
 const { calculateNightDifferential, effectiveEarnings } = require('./payrollNightDifferentialService')
 const {
@@ -202,7 +203,7 @@ function createPayrollService({ db }) {
        ORDER BY e.last_name, e.first_name, e.id`,
       [employeeId == null ? null : Number(employeeId)]
     )
-    return rows.map((row) => ({
+    return rows.filter(row => payrollEmployeeIncluded(row)).map((row) => ({
       ...row,
       employee_id: Number(row.employee_id),
       profile_id: row.profile_id == null ? null : Number(row.profile_id),
@@ -714,9 +715,10 @@ function createPayrollService({ db }) {
            ORDER BY payroll_profile.effective_from DESC
            LIMIT 1
          ) profile ON TRUE
-         WHERE EXISTS(SELECT 1 FROM payroll_daily_attendance d WHERE d.batch_id=$2 AND d.employee_id=employee.id AND d.review_state<>'excluded' AND d.work_date BETWEEN $3 AND $1)
+         WHERE ($4::boolean=FALSE OR (LOWER(COALESCE(employee.shift,'day')) <> 'night' AND (profile.id IS NULL OR profile.work_end_time > profile.work_start_time)))
+           AND EXISTS(SELECT 1 FROM payroll_daily_attendance d WHERE d.batch_id=$2 AND d.employee_id=employee.id AND d.review_state<>'excluded' AND d.work_date BETWEEN $3 AND $1)
          ORDER BY employee.last_name, employee.first_name, employee.id`,
-        [periodEnd,Number(attendanceBatchId),periodStart]
+        [periodEnd,Number(attendanceBatchId),periodStart,dayShiftOnly()]
       )
       const missingProfiles = employeesResult.rows.filter((row) => row.profile_id == null)
       if(!employeesResult.rows.length)throw serviceError('No reviewed employees fall in this payroll cutoff',400)
@@ -735,6 +737,7 @@ function createPayrollService({ db }) {
 
       const ruleSnapshot = {
         version: 5,
+        payrollScope: dayShiftOnly() ? 'day' : 'all',
         attendanceContextHash: confirmedBatch.context_hash,
         attendanceReviewVersion: confirmedBatch.review_version,
         contributionSchedule: 'PH-2025',

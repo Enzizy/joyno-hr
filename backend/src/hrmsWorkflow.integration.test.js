@@ -12,7 +12,9 @@ test('HRMS database workflow: preview, official leave, immutable confirmation, r
  const pool=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.PGSSLMODE==='disable'?false:{rejectUnauthorized:false}})
  const client=await pool.connect(),schema=`hrms_test_${Date.now()}`
  const previousFinalization=process.env.PAYROLL_FINALIZATION_ENABLED
+ const previousDayScope=process.env.PAYROLL_DAY_SHIFT_ONLY
  process.env.PAYROLL_FINALIZATION_ENABLED='true'
+ process.env.PAYROLL_DAY_SHIFT_ONLY='false'
  try {
   await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE')
   await client.query(`CREATE SCHEMA ${schema}`)
@@ -132,8 +134,30 @@ test('HRMS database workflow: preview, official leave, immutable confirmation, r
   assert.equal(Number(nightLine.employee_sss),775)
   await payroll.overrideFirstCutoffPay(nightRun.id,nightLine.id,7500,'Verified first cutoff paid compensation',actor)
   await payroll.approveRun(nightRun.id,actor)
+  process.env.PAYROLL_DAY_SHIFT_ONLY='true'
+  assert.ok((await payroll.listProfiles()).every(p=>p.shift!=='night'))
+  assert.equal((await review.preview(nightInput)).daily.length,0)
+  assert.equal((await review.list()).find(b=>b.id===nightBatch.id).scope_needs_refresh,true)
+  await assert.rejects(payroll.previewRun(nightRunInput,actor),/changed after attendance confirmation/)
+  const dayRecords=[]
+  for(let date=new Date('2026-08-26T00:00:00Z');date<=new Date('2026-09-10T00:00:00Z');date.setUTCDate(date.getUTCDate()+1)){
+   if([0,6].includes(date.getUTCDay()))continue
+   const key=date.toISOString().slice(0,10)
+   dayRecords.push(`00042,${key} 09:00,Main_Door_Out_Door1_Entrance Card Reader1`,`00042,${key} 18:00,Main_Door_IN_Door1_Entrance Card Reader1`)
+  }
+  const dayInput={fileName:'day-only-fixture.csv',periodStart:'2026-08-26',periodEnd:'2026-09-10',csvText:'Person ID,Time,Attendance Check Point\n'+dayRecords.join('\n')}
+  const dayPreview=await review.preview(dayInput)
+  assert.equal(dayPreview.summary.flaggedDays,0);assert.ok(dayPreview.daily.every(d=>d.employee_id===2))
+  let dayBatch=await review.save({...dayInput,previewToken:dayPreview.preview_token},actor)
+  dayBatch=await review.confirm(dayBatch.id,dayBatch.review_version,'',actor)
+  const dayHistory=(await review.list()).find(b=>b.id===dayBatch.id)
+  assert.equal(dayHistory.payroll_scope,'day');assert.equal(dayHistory.scope_needs_refresh,false)
+  const dayRun=await payroll.previewRun({...dayInput,payday:'2026-09-15',cutoff:'first',includeContributions:false,attendanceBatchId:dayBatch.id},actor)
+  assert.equal(dayRun.lines.length,1);assert.equal(dayRun.lines[0].employee_id,2)
+  assert.equal(Number(dayRun.lines[0].net_pay),7500);assert.equal(dayRun.rule_snapshot.payrollScope,'day')
  }finally{
   await client.query('ROLLBACK');client.release();await pool.end()
   if(previousFinalization===undefined)delete process.env.PAYROLL_FINALIZATION_ENABLED;else process.env.PAYROLL_FINALIZATION_ENABLED=previousFinalization
+  if(previousDayScope===undefined)delete process.env.PAYROLL_DAY_SHIFT_ONLY;else process.env.PAYROLL_DAY_SHIFT_ONLY=previousDayScope
  }
 })

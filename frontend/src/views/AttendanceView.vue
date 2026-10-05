@@ -3,13 +3,14 @@ import {computed,nextTick,onMounted,ref,watch} from 'vue'
 import {standardPeriod,formatWorkRange,coversWorkDates,attendanceSelection} from '@/utils/payrollPeriods'
 import {useRoute,useRouter} from 'vue-router'
 import {useToastStore} from '@/stores/toastStore'
-import {attendanceUpload,listAttendanceReviews,getAttendanceReview,attendanceReviewAction,createHrCalendarEntry,getLeaveTypes,getConfirmedAttendanceExport} from '@/services/api'
+import {getPayrollScope,attendanceUpload,listAttendanceReviews,getAttendanceReview,attendanceReviewAction,createHrCalendarEntry,getLeaveTypes,getConfirmedAttendanceExport} from '@/services/api'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import HrCalendarEntryModal from '@/components/leave/HrCalendarEntryModal.vue'
 
 const route=useRoute(),router=useRouter(),toast=useToastStore()
+const dayShiftOnly=ref(false)
 const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10)
 const initialPeriod=attendanceSelection(route.query,today.slice(0,7))
 const attendanceMonth=ref(initialPeriod.month),cycle=ref(initialPeriod.cycle)
@@ -76,13 +77,14 @@ async function confirm(){await run(async()=>{batch.value=await attendanceReviewA
 async function exportDtr(){await run(async()=>{const url=URL.createObjectURL(await getConfirmedAttendanceExport(batch.value.id));const a=document.createElement('a');a.href=url;a.download=`attendance-${batch.value.id}-confirmed.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)})}
 function recordLeave(day){reviewing.value=null;leaveEntry.value={entry_type:'leave',employee_id:day.employee_id,start_date:day.work_date,end_date:day.work_date,coverage_start:day.overnight?'02:00':'14:00',coverage_end:day.overnight?'06:00':'18:00'}}
 async function saveLeave(entry){await run(async()=>{await createHrCalendarEntry(entry);leaveEntry.value=null;batch.value=await attendanceReviewAction(batch.value.id,'refresh',{version:batch.value.review_version});await reload();toast.success('Official leave recorded; attendance refreshed')})}
-onMounted(()=>run(async()=>{await reload();leaveTypes.value=await getLeaveTypes();if(route.query.batch)await open(route.query.batch)}))
+onMounted(()=>run(async()=>{dayShiftOnly.value=(await getPayrollScope()).dayShiftOnly;await reload();leaveTypes.value=await getLeaveTypes();if(route.query.batch)await open(route.query.batch)}))
 watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!busy.value)open(id)})
 </script>
 
 <template>
  <div class="space-y-6">
   <PageHeader title="Attendance" description="Check the biometric export, resolve missing scans and leave, then confirm it for payroll." eyebrow="HR workspace"><template #actions><AppButton v-if="batch" variant="secondary" size="sm" @click="newImport">New import</AppButton><RouterLink v-if="route.query.payrollMonth" :to="payrollTarget" class="text-sm font-semibold text-primary-300 hover:underline">Back to payroll →</RouterLink></template></PageHeader>
+  <p v-if="dayShiftOnly" class="rounded-lg border border-primary-800/40 bg-primary-950/20 p-3 text-sm text-primary-200">Day-shift DTR testing · Night-shift employees are excluded from new previews.<span v-if="batch?.scopeNeedsRefresh && batch.review_state!=='confirmed'"> Refresh this review to apply the current employee scope.</span><span v-else-if="batch?.scopeNeedsRefresh"> Create a new review for the current employee scope; confirmed attendance is retained.</span></p>
   <p v-if="error" role="alert" class="rounded-xl border border-red-800 bg-red-950/20 p-4 text-red-200">{{error}}</p>
   <section v-if="showImport" class="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
    <div class="border-b border-gray-800 px-5 py-4"><h2 class="font-semibold text-gray-100">{{batch?.needs_reimport?'Re-upload the original attendance file':'Import biometric attendance'}}</h2><p class="mt-1 text-sm text-gray-400">{{batch?.needs_reimport?'The older import needs a fresh HR review. Its work dates are already selected below.':'Choose the payroll cutoff that this export belongs to.'}}</p></div>

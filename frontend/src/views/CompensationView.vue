@@ -1,24 +1,26 @@
 <script setup>
 import {computed,onMounted,ref} from 'vue'
 import {useRoute} from 'vue-router'
-import {getPayrollProfiles,getPayrollProfileHistory,updatePayrollProfile} from '@/services/api'
+import {getPayrollScope,getPayrollProfiles,getPayrollProfileHistory,updatePayrollProfile} from '@/services/api'
 import {useToastStore} from '@/stores/toastStore'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 const route=useRoute(),toast=useToastStore(),profiles=ref([]),selected=ref(null),history=ref([]),search=ref(''),busy=ref(false),error=ref('')
+const dayShiftOnly=ref(false)
 const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10)
 const form=ref({monthlyBasicSalary:'',monthlyCola:0,biometricPersonId:'',effectiveFrom:today,workStartTime:'09:00',workEndTime:'18:00',workdays:[1,2,3,4,5]})
 const overnight=computed(()=>form.value.workEndTime<form.value.workStartTime)
 function useEmployeeShift(){const night=String(selected.value?.shift).toLowerCase()==='night';form.value.workStartTime=night?'21:00':'09:00';form.value.workEndTime=night?'06:00':'18:00'}
 const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 const filtered=computed(()=>profiles.value.filter(p=>`${p.first_name} ${p.last_name} ${p.employee_code} ${p.biometric_person_id}`.toLowerCase().includes(search.value.toLowerCase())))
-async function load(){profiles.value=await getPayrollProfiles()}
+async function load(){const [people,scope]=await Promise.all([getPayrollProfiles(),getPayrollScope()]);profiles.value=people;dayShiftOnly.value=scope.dayShiftOnly}
 async function choose(p){error.value='';history.value=[];selected.value=p;form.value={monthlyBasicSalary:p.monthly_basic_salary??'',monthlyCola:p.monthly_cola??0,biometricPersonId:p.biometric_person_id||'',effectiveFrom:today,workStartTime:String(p.work_start_time||(String(p.shift).toLowerCase()==='night'?'21:00':'09:00')).slice(0,5),workEndTime:String(p.work_end_time||(String(p.shift).toLowerCase()==='night'?'06:00':'18:00')).slice(0,5),workdays:[...(p.workdays||[1,2,3,4,5])]};try{history.value=await getPayrollProfileHistory(p.employee_id)}catch(e){error.value=e.message}}
-async function save(){busy.value=true;error.value='';try{await updatePayrollProfile(selected.value.employee_id,{...form.value,unpaidBreakMinutes:60,dailyRateDivisor:261});await load();await choose(profiles.value.find(p=>p.employee_id===selected.value.employee_id));toast.success('Effective-dated pay and schedule saved')}catch(e){error.value=e.message}finally{busy.value=false}}
+async function save(){busy.value=true;error.value='';try{await updatePayrollProfile(selected.value.employee_id,{...form.value,unpaidBreakMinutes:60,dailyRateDivisor:261});await load();const updated=profiles.value.find(p=>p.employee_id===selected.value.employee_id);if(updated)await choose(updated);else{selected.value=null;history.value=[]}toast.success('Effective-dated pay and schedule saved')}catch(e){error.value=e.message}finally{busy.value=false}}
 onMounted(async()=>{try{await load();if(route.query.employee){const p=profiles.value.find(p=>String(p.employee_id)===String(route.query.employee));if(p)await choose(p)}}catch(e){error.value=e.message}})
 </script>
 <template>
  <div class="space-y-6"><PageHeader title="Pay & schedules" description="Enter actual compensation, link the biometric ID, and retain effective-dated changes." eyebrow="People" />
+  <p v-if="dayShiftOnly" class="rounded-lg border border-primary-800/40 bg-primary-950/20 p-3 text-sm text-primary-200">Day-shift payroll testing · Night-shift employees are temporarily hidden.</p>
   <p v-if="error" role="alert" class="rounded-lg border border-red-800 p-3 text-red-200">{{error}}</p>
   <div class="grid gap-6 lg:grid-cols-3"><section class="rounded-xl border border-gray-800 p-4"><input v-model="search" class="form-control" placeholder="Name, Employee ID, Attendance ID" aria-label="Search pay profiles"><div class="mt-3 max-h-[36rem] overflow-auto"><button v-for="p in filtered" :key="p.employee_id" class="block w-full rounded-lg border-b border-gray-800 p-3 text-left" :class="selected?.employee_id===p.employee_id?'bg-primary-950/40':''" @click="choose(p)"><p class="font-medium">{{p.first_name}} {{p.last_name}}</p><p class="text-xs text-gray-400">Employee ID {{p.employee_code}} · Attendance ID {{p.biometric_person_id||'Not mapped'}}</p><p class="mt-1 text-xs" :class="p.profile_id?'text-emerald-300':'text-amber-300'">{{p.profile_id?'Compensation configured':'Salary / schedule needed'}}</p></button></div></section>
   <section v-if="selected" class="space-y-5 rounded-xl border border-gray-800 p-5 lg:col-span-2"><div><h2 class="font-semibold">{{selected.first_name}} {{selected.last_name}}</h2><p class="text-sm text-gray-400">Employee ID: {{selected.employee_code}} · {{String(selected.shift).toLowerCase()==='night'?'Night':'Day'}} shift in Employee Management</p></div>

@@ -70,6 +70,8 @@ export async function getDashboardOverview() {
 // a batch with exceptions/days; attendance corrections PATCH {timeIn,timeOut,status,reason}.
 // Preview POST accepts {periodStart,periodEnd,payday,cutoff,includeContributions,attendanceBatchId}.
 // Runs list via GET /runs; approve/lock are POST actions; employees read GET /my-lines.
+export const getPayrollScope=()=>request('/api/payroll/scope')
+
 export async function getPayrollProfiles() {
   return request('/api/payroll/profiles')
 }

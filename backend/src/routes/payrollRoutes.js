@@ -1,3 +1,4 @@
+const { dayShiftOnly, payrollEmployeeIncluded } = require('../services/payrollScopeService')
 const { shiftDefaults } = require('../services/payrollShiftService')
 const { calculateNightDifferential, effectiveEarnings } = require('../services/payrollNightDifferentialService')
 const express = require('express')
@@ -67,6 +68,8 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     } catch (error) { return handlePayrollError(error, res) }
   })
 
+  router.get('/api/payroll/scope',authRequired,requireRole(MANAGEMENT_ROLES),(req,res)=>res.set('Cache-Control','private, no-store').json({dayShiftOnly:dayShiftOnly()}))
+
   router.post('/api/payroll/test/employee-preview', authRequired, requireRole(MANAGEMENT_ROLES), uploadCsv, async (req, res) => {
     const employeeId = positiveId(req.body?.employeeId)
     const monthlyBasicSalary = Number(req.body?.monthlyBasicSalary)
@@ -110,6 +113,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       const employees = await db.query('SELECT id, employee_code, first_name, last_name, shift FROM employees WHERE id = $1', [employeeId])
       const employee = employees.rows[0]
       if (!employee) return res.status(404).json({ message: 'Employee not found' })
+      if (!payrollEmployeeIncluded(employee)) return res.status(409).json({message:'Night-shift payroll is temporarily hidden while the day-shift DTR is being tested'})
       const records = readTestCsv(req)
       const matching = records.filter((record) => record.employeeCode === biometricPersonId &&
         (record.identifierType === 'person_id' || biometricPersonId === employee.employee_code))
@@ -122,6 +126,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         : null
       const profileRows = (await db.query(`SELECT * FROM payroll_employee_profiles WHERE employee_id=$1 AND effective_from <= $2
         AND COALESCE(effective_to,'infinity'::date) >= $3 ORDER BY effective_from DESC`,[employeeId,periodEnd,periodStart])).rows
+      if (!payrollEmployeeIncluded(employee,profileRows)) return res.status(409).json({message:'Overnight payroll is temporarily hidden while the day-shift DTR is being tested'})
       const profileForDate = date => ({...shiftDefaults(employee.shift), ...profileRows.find(p => dateKey(p.effective_from) <= date && (!p.effective_to || dateKey(p.effective_to) >= date)), monthly_basic_salary:monthlyBasicSalary})
       const sourceEvents = matching.filter(record => isAttendanceScan(record.eventType) || record.eventType === null)
         .map(record => ({ occurredAt: parseManilaTimestamp(record.timestamp), eventType: record.eventType }))
@@ -177,9 +182,9 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
   router.get('/api/payroll/operations',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
     try {
       const [setup,reviews,runs]=await Promise.all([
-        db.query(`SELECT COUNT(*)::integer AS count FROM employees e WHERE LOWER(e.status) IN ('active','on_leave') AND
+        db.query(`SELECT COUNT(*)::integer AS count FROM employees e WHERE LOWER(e.status) IN ('active','on_leave') AND ($1::boolean=FALSE OR (LOWER(COALESCE(e.shift,'day'))<>'night' AND NOT EXISTS(SELECT 1 FROM payroll_employee_profiles n WHERE n.employee_id=e.id AND n.effective_from<=(NOW() AT TIME ZONE 'Asia/Manila')::date AND COALESCE(n.effective_to,'infinity'::date)>=(NOW() AT TIME ZONE 'Asia/Manila')::date AND n.work_end_time<n.work_start_time))) AND
           (e.date_hired IS NULL OR NOT EXISTS(SELECT 1 FROM payroll_biometric_identities b WHERE b.employee_id=e.id) OR
-          NOT EXISTS(SELECT 1 FROM payroll_employee_profiles p WHERE p.employee_id=e.id AND p.effective_from<=(NOW() AT TIME ZONE 'Asia/Manila')::date AND COALESCE(p.effective_to,'infinity'::date)>=(NOW() AT TIME ZONE 'Asia/Manila')::date AND p.monthly_basic_salary>0))`),
+          NOT EXISTS(SELECT 1 FROM payroll_employee_profiles p WHERE p.employee_id=e.id AND p.effective_from<=(NOW() AT TIME ZONE 'Asia/Manila')::date AND COALESCE(p.effective_to,'infinity'::date)>=(NOW() AT TIME ZONE 'Asia/Manila')::date AND p.monthly_basic_salary>0))`,[dayShiftOnly()]),
         db.query("SELECT COUNT(*)::integer AS count FROM payroll_attendance_import_batches WHERE review_state='draft'"),
         db.query("SELECT COUNT(*) FILTER(WHERE r.status='draft')::integer AS drafts,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NULL)::integer AS awaiting_payment,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NOT NULL)::integer AS awaiting_release FROM payroll_runs r LEFT JOIN payroll_payments p ON p.payroll_run_id=r.id")
       ])

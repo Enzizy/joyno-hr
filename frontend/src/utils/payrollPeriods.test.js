@@ -32,3 +32,13 @@ test('an attendance review must cover the whole payroll cutoff', () => {
   assert.equal(coversWorkDates({ period_start: '2026-10-01', period_end: '2026-10-31' }, '2026-10-11', '2026-10-25'), true)
   assert.match(formatWorkRange('2026-10-11', '2026-10-25'), /Oct 11, 2026.*Oct 25, 2026/)
 })
+
+test('confirmed attendance from an earlier employee scope is not selected for a new payroll draft', () => {
+  const reviews = [
+    { id: 1, period_start: '2026-10-11', period_end: '2026-10-25', review_state: 'confirmed', scope_needs_refresh: false },
+    { id: 2, period_start: '2026-10-11', period_end: '2026-10-25', review_state: 'confirmed', scope_needs_refresh: true },
+    { id: 3, period_start: '2026-10-11', period_end: '2026-10-25', review_state: 'draft', scope_needs_refresh: true },
+  ]
+  assert.deepEqual(matchingAttendanceReviews(reviews, '2026-10-11', '2026-10-25').map(r => r.id), [1])
+  assert.deepEqual(matchingAttendanceReviews(reviews, '2026-10-11', '2026-10-25', false).map(r => r.id), [3])
+})

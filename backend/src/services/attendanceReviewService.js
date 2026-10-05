@@ -1,3 +1,4 @@
+const { dayShiftOnly, payrollEmployeeIncluded } = require('./payrollScopeService')
 const { shiftWindow, shiftDefaults, paidShiftOverlap, coverageWindow } = require('./payrollShiftService')
 const crypto = require('node:crypto')
 const { parseAttendanceCsv, parseManilaTimestamp, manilaDateParts, dateKey, addDays,
@@ -38,7 +39,10 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
   const issueKeys = new Set()
   const addIssue = (code, message) => { if (!issueKeys.has(`${code}:${message}`)) { issues.push({ code, message }); issueKeys.add(`${code}:${message}`) } }
   let firstDate = null, lastDate = null, includedScans = 0
+  const restrictToDay = context.payrollScope === 'day'
   for (const r of records) {
+    const e = r.identifierType === 'person_id' ? byPerson.get(r.employeeCode) : byCode.get(r.employeeCode.toLowerCase())
+    if (e && !payrollEmployeeIncluded(e, context.profiles, restrictToDay)) continue
     let instant, date
     try { instant = parseManilaTimestamp(r.timestamp); date = manilaDateParts(instant).date }
     catch { addIssue('invalid_timestamp', `Invalid timestamp at source row ${r.sourceRow}`); continue }
@@ -46,7 +50,6 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
     if (!lastDate || date > lastDate) lastDate = date
     if (date < periodStart || date > addDays(periodEnd, 1)) continue
     if (!isAttendanceScan(r.eventType) && r.eventType !== null) continue
-    const e = r.identifierType === 'person_id' ? byPerson.get(r.employeeCode) : byCode.get(r.employeeCode.toLowerCase())
     if (!e) { if (date <= periodEnd) addIssue('unmapped_id', `Attendance ID ${r.employeeCode} is not mapped to an employee`); continue }
     const previousDate = addDays(date, -1), previousProfile = profileAt(context.profiles, e.id, previousDate) || shiftDefaults(e.shift)
     const previousWorkDate = attendanceWorkDate(instant, previousProfile)
@@ -61,6 +64,7 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
   if (!firstDate || firstDate > periodStart || lastDate < periodEnd) addIssue('file_coverage', 'The file may not cover the full selected period. Verify its export range.')
   const holidays = new Set(context.holidays.map(h => h.holiday_date)), days = [], emptyDates = new Set()
   for (const e of context.employees) {
+    if (!payrollEmployeeIncluded(e, context.profiles, restrictToDay)) continue
     if (!['active','on_leave'].includes(String(e.status || 'active').toLowerCase()) && !e.last_working_date) continue
     for (let date = periodStart; date <= periodEnd; date = addDays(date, 1)) {
       if (!employed(e, date)) continue
@@ -110,7 +114,7 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
     missingRecords: days.filter(d => d.issue_codes.includes('no_record')).length,
     missingPunches: days.filter(d => d.issue_codes.includes('missing_punch')).length }
   return { period_start: periodStart, period_end: periodEnd, first_date: firstDate, last_date: lastDate, daily: days,
-    issues, summary, source_hash: sourceHash, context_hash: contextHash,
+    issues, summary, payroll_scope: context.payrollScope || 'all', source_hash: sourceHash, context_hash: contextHash,
     preview_token: fingerprint({ sourceHash, contextHash, periodStart, periodEnd }), review_state: 'draft' }
 }
 
@@ -127,7 +131,7 @@ async function loadContext(db, start, end) {
     FROM leave_requests WHERE status IN ('pending','approved') AND start_date <= $2 AND end_date >= $1 ORDER BY id`, [start,end])).rows
   const holidays = (await db.query(`SELECT holiday_date::text FROM philippine_holidays
     WHERE holiday_date BETWEEN $1 AND $2 AND is_working_day=FALSE ORDER BY holiday_date`, [start,addDays(end,1)])).rows
-  return { employees,profiles,leaves,holidays }
+  return { employees,profiles,leaves,holidays, ...(dayShiftOnly() ? {payrollScope:'day'} : {}) }
 }
 function reviewDecision(day, decision, context) {
   const action = String(decision.action || ''), reason = String(decision.reason || '').trim()
@@ -198,7 +202,7 @@ function createAttendanceReviewService({db}) {
       WHERE d.batch_id=$1 AND d.review_state<>'excluded' ORDER BY d.work_date,e.last_name,e.first_name`,[id])).rows
     const events=(await tx.query('SELECT * FROM payroll_attendance_review_events WHERE batch_id=$1 ORDER BY id DESC LIMIT 200',[id])).rows
     const context=await loadContext(tx,result.period_start,result.period_end)
-    return {...result,daily:days.map(d=>({...d,employee_name:`${d.first_name} ${d.last_name}`,
+    return {...result,payrollScope:context.payrollScope || 'all',scopeNeedsRefresh:result.context_hash !== fingerprint(context),daily:days.map(d=>({...d,employee_name:`${d.first_name} ${d.last_name}`,
       schedule:(()=>{const p=profileAt(context.profiles,d.employee_id,d.work_date);return p?`${p.work_start_time.slice(0,5)}–${p.work_end_time.slice(0,5)}${shiftWindow(p).overnight ? ' next day' : ''}`:'Not configured'})(),
       overnight:shiftWindow(profileAt(context.profiles,d.employee_id,d.work_date) || {}).overnight,
       leaves:context.leaves.filter(l=>Number(l.employee_id)===Number(d.employee_id)&&l.start_date<=d.work_date&&l.end_date>=d.work_date)})),
@@ -232,7 +236,7 @@ function createAttendanceReviewService({db}) {
       source_hash,context_hash,source_csv,review_issues) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) RETURNING id`,
       [input.fileName,input.periodStart,input.periodEnd,actor.id,p.summary.sourceRows,p.source_hash,p.context_hash,input.csvText,JSON.stringify(p.issues)])).rows[0]
     await persistDays(tx,b.id,p.daily)
-    await event(tx,b.id,actor,'draft_saved','Attendance saved for HR review',null,{sourceHash:p.source_hash})
+    await event(tx,b.id,actor,'draft_saved','Attendance saved for HR review',null,{sourceHash:p.source_hash,payrollScope:p.payroll_scope})
     return batchWith(tx,b.id)
   })}
   async function locked(tx,id,version){
@@ -249,7 +253,7 @@ function createAttendanceReviewService({db}) {
     const p=await preview({csvText:b.source_csv,periodStart:dateKey(b.period_start),periodEnd:dateKey(b.period_end)},tx)
     await persistDays(tx,id,p.daily,previous.daily)
     await tx.query('UPDATE payroll_attendance_import_batches SET context_hash=$1,review_issues=$2::jsonb,review_version=review_version+1 WHERE id=$3',[p.context_hash,JSON.stringify(p.issues),id])
-    await event(tx,id,actor,'refreshed','Refreshed after employee setup or leave changes',{contextHash:b.context_hash},{contextHash:p.context_hash})
+    await event(tx,id,actor,'refreshed','Refreshed after employee setup or leave changes',{contextHash:b.context_hash},{contextHash:p.context_hash,payrollScope:p.payroll_scope})
     return batchWith(tx,id)
   })}
   async function resolve(id,version,employeeId,date,decision,actor){return db.transaction(async tx=>{
@@ -286,7 +290,7 @@ function createAttendanceReviewService({db}) {
     if(p.daily.some(d=>!batch.daily.some(s=>Number(s.employee_id)===Number(d.employee_id)&&s.work_date===d.work_date&&s.base_hash===d.base_hash)))fail('Review population changed. Refresh attendance first')
     await validateLeaveAllocation(tx,id,context,batch.daily)
     await tx.query("UPDATE payroll_attendance_import_batches SET review_state='confirmed',confirmed_by=$1,confirmed_at=NOW(),review_version=review_version+1 WHERE id=$2",[actor.id,id])
-    await event(tx,id,actor,'confirmed',String(coverageReason||'HR verified all flagged attendance').trim(),null,{contextHash:b.context_hash})
+    await event(tx,id,actor,'confirmed',String(coverageReason||'HR verified all flagged attendance').trim(),null,{contextHash:b.context_hash,payrollScope:context.payrollScope || 'all'})
     return batchWith(tx,id)
   })}
   async function revokeLeave(id,version,leaveId,reason,actor){return db.transaction(async tx=>{
@@ -309,12 +313,19 @@ function createAttendanceReviewService({db}) {
     const p=await preview({csvText:b.source_csv,periodStart:dateKey(b.period_start),periodEnd:dateKey(b.period_end)},tx)
     await persistDays(tx,id,p.daily,previous.daily)
     await tx.query('UPDATE payroll_attendance_import_batches SET context_hash=$1,review_issues=$2::jsonb,review_version=review_version+1 WHERE id=$3',[p.context_hash,JSON.stringify(p.issues),id])
-    await event(tx,id,actor,'official_leave_corrected',explanation,leave,{id:leaveId,status:'cancelled',currentYearCreditsRefunded:refunded})
+    await event(tx,id,actor,'official_leave_corrected',explanation,leave,{id:leaveId,status:'cancelled',currentYearCreditsRefunded:refunded,payrollScope:p.payroll_scope})
     return batchWith(tx,id)
   })}
   async function list(){return (await db.query(`SELECT b.id,b.file_name,b.period_start::text,b.period_end::text,b.review_state,b.review_version,b.created_at,(b.source_csv IS NULL) AS needs_reimport,
-    COUNT(d.id) FILTER(WHERE d.review_state='pending')::integer AS pending_days FROM payroll_attendance_import_batches b
-    LEFT JOIN payroll_daily_attendance d ON d.batch_id=b.id GROUP BY b.id ORDER BY b.id DESC LIMIT 100`)).rows}
+    COUNT(d.id) FILTER(WHERE d.review_state='pending')::integer AS pending_days,
+    COALESCE(scope.payroll_scope,'all') AS payroll_scope,
+    (COALESCE(scope.payroll_scope,'all') <> $1::text) AS scope_needs_refresh
+    FROM payroll_attendance_import_batches b
+    LEFT JOIN payroll_daily_attendance d ON d.batch_id=b.id
+    LEFT JOIN LATERAL (SELECT ev.current_value->>'payrollScope' AS payroll_scope
+      FROM payroll_attendance_review_events ev WHERE ev.batch_id=b.id AND ev.current_value ? 'payrollScope'
+      ORDER BY ev.id DESC LIMIT 1) scope ON TRUE
+    GROUP BY b.id,scope.payroll_scope ORDER BY b.id DESC LIMIT 100`,[dayShiftOnly()?'day':'all'])).rows}
   async function validateLeaveAllocation(tx,id,context,changes){
     for(const leaveId of new Set(changes.map(d=>d.leave_request_id).filter(Boolean))){
       const leave=context.leaves.find(l=>Number(l.id)===Number(leaveId));if(!leave)fail('Official leave is no longer available')
