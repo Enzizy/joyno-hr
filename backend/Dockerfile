@@ -10,6 +10,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
 COPY migrations ./migrations
 
+# A restricted checkout umask must not make application files unreadable to node.
+RUN chmod -R a+rX ./src ./migrations && chmod a+r package.json package-lock.json
+
 USER node
 
 EXPOSE 3000
