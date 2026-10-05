@@ -34,6 +34,7 @@ const categories = [
   { value: '', label: 'All updates' },
   { value: 'leave', label: 'Leave' },
   { value: 'task', label: 'Tasks & meetings' },
+  { value: 'announcement', label: 'Announcements' },
   { value: 'system', label: 'System' },
 ]
 const totalPages = computed(() => Math.max(1, Math.ceil(store.total / pageSize)))
@@ -50,6 +51,7 @@ function categoryLabel(item) {
 }
 
 function resolveLink(item) {
+  if (item.target_table === 'announcements') return `/announcements?announcement=${item.target_id}`
   if (item.target_table === 'tasks') return authStore.role === 'employee' ? '/my-tasks' : '/tasks'
   if (item.target_table === 'leave_requests') return authStore.role === 'employee' ? '/leave-request' : '/leave-approvals'
   return item.target_table ? `/${item.target_table.replaceAll('_', '-')}` : null

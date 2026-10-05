@@ -40,6 +40,8 @@ const { createLeaveInsightsRouter } = require('./routes/leaveInsightsRoutes')
 const { createLeaveChangeRequestRouter } = require('./routes/leaveChangeRequestRoutes')
 const { createLeaveAttachmentReviewRouter } = require('./routes/leaveAttachmentReviewRoutes')
 const { createWorkspaceRouter } = require('./routes/workspaceRoutes')
+const { createAnnouncementRouter } = require('./routes/announcementRoutes')
+const { createAnnouncementService } = require('./services/announcementService')
 const { createUserRouter } = require('./routes/userRoutes')
 const { createPayrollRouter } = require('./routes/payrollRoutes')
 const { createPayrollService } = require('./services/payrollService')
@@ -910,6 +912,7 @@ app.use(createLeaveChangeRequestRouter({
   frontendOrigin: PRIMARY_FRONTEND_ORIGIN,
 }))
 app.use(createWorkspaceRouter({ db, authRequired, requireRole }))
+app.use(createAnnouncementRouter({service:createAnnouncementService({db}),authRequired,requireRole}))
 if (PAYROLL_ENABLED) {
   app.use(createAttendanceReviewRouter({service:createAttendanceReviewService({db}),authRequired,requireRole}))
   const payrollService = createPayrollService({ db })

@@ -2,7 +2,7 @@ const express = require('express')
 const { MANAGEMENT_ROLES, isManagementRole } = require('../constants/roles')
 
 const EMAIL_DELIVERY_OPTIONS = ['immediate', 'daily', 'off']
-const NOTIFICATION_CATEGORIES = ['leave', 'task', 'system']
+const NOTIFICATION_CATEGORIES = ['leave', 'task', 'announcement', 'system']
 
 function isManagement(user) {
   return isManagementRole(user?.role)
@@ -16,6 +16,7 @@ function notificationCategorySql(alias = 'n') {
   return `CASE
     WHEN ${alias}.type LIKE 'leave_%' THEN 'leave'
     WHEN ${alias}.type LIKE 'task_%' THEN 'task'
+    WHEN ${alias}.type LIKE 'announcement_%' THEN 'announcement'
     ELSE 'system'
   END`
 }

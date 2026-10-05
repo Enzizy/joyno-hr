@@ -32,6 +32,12 @@ export const navGroups = [
     ],
   },
   {
+    name: 'Announcements',
+    icon: 'announcement',
+    path: '/announcements',
+    roles: ALL_ROLES,
+  },
+  {
     name: 'Leave',
     icon: 'leave',
     roles: ALL_ROLES,

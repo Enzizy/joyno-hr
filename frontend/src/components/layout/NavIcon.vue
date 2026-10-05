@@ -32,6 +32,10 @@ defineProps({
       <path d="m15 16 1.5 1.5L20 14" />
     </template>
 
+    <template v-else-if="name === 'announcement'">
+      <path d="m4 10 13-5v14L4 14zM17 9h2a2 2 0 0 1 0 4h-2M6 15l1 5h4l-2-4" />
+    </template>
+
     <template v-else-if="name === 'leave'">
       <rect x="3" y="5" width="18" height="16" rx="3" />
       <path d="M8 3v4m8-4v4M3 10h18" />

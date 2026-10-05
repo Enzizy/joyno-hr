@@ -75,6 +75,12 @@ const routes = [
         meta: { roles: ['employee'] },
       },
       {
+        path: 'announcements',
+        name: 'Announcements',
+        component: () => import('@/views/AnnouncementsView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
+      },
+      {
         path: 'automation',
         name: 'Automation',
         component: () => import('@/views/AutomationView.vue'),

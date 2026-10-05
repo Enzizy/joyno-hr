@@ -72,6 +72,14 @@ export async function getDashboardOverview() {
 // Runs list via GET /runs; approve/lock are POST actions; employees read GET /my-lines.
 export const getPayrollScope=()=>request('/api/payroll/scope')
 
+export const getAnnouncementAudience=()=>request('/api/announcements/audience')
+export const listAnnouncements=(filters={})=>request(`/api/announcements?${new URLSearchParams(Object.entries(filters).filter(([,value])=>value!==undefined && value!==''))}`)
+export const getAnnouncement=id=>request(`/api/announcements/${id}`)
+export const saveAnnouncement=(payload,id=null)=>request(id?`/api/announcements/${id}`:'/api/announcements',{method:id?'PUT':'POST',body:JSON.stringify(payload)})
+export const publishAnnouncement=(id,version)=>request(`/api/announcements/${id}/publish`,{method:'POST',body:JSON.stringify({version})})
+export const archiveAnnouncement=(id,version)=>request(`/api/announcements/${id}/archive`,{method:'POST',body:JSON.stringify({version})})
+export const readAnnouncement=id=>request(`/api/announcements/${id}/read`,{method:'POST',body:'{}'})
+
 export async function getPayrollProfiles() {
   return request('/api/payroll/profiles')
 }

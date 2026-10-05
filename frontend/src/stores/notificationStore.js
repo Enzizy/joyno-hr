@@ -13,6 +13,7 @@ import {
 
 function resolveNotificationLink(item, role) {
   if (!item) return null
+  if (item.target_table === 'announcements') return `/announcements?announcement=${item.target_id}`
   if (item.target_table === 'tasks') return '/tasks'
   if (item.target_table === 'leave_requests') {
     return role === 'employee' ? '/leave-request' : '/leave-approvals'
