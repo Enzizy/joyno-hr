@@ -5,6 +5,8 @@ const props = defineProps({
   show: Boolean,
   title: { type: String, default: '' },
   size: { type: String, default: 'md' },
+  // Opt in when the content owns its scrolling region (for example an audience list).
+  contained: Boolean,
 })
 
 const emit = defineEmits(['close'])
@@ -38,13 +40,13 @@ onBeforeUnmount(() => {
       <div class="fixed inset-0 bg-black/85 backdrop-blur-sm" @click="emit('close')" />
       <div
         class="relative z-10 flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl shadow-black/70"
-        :class="widthClass"
+        :class="[widthClass, contained && 'h-[calc(100dvh-2rem)]']"
         role="dialog"
         aria-modal="true"
         :aria-label="title || 'Dialog'"
         @click.stop
       >
-        <div class="flex items-center justify-between border-b border-gray-800 px-6 py-4">
+        <div class="flex shrink-0 items-center justify-between border-b border-gray-800 px-6 py-4">
           <h3 class="text-lg font-semibold text-gray-100">{{ title }}</h3>
           <button
             type="button"
@@ -57,7 +59,7 @@ onBeforeUnmount(() => {
             </svg>
           </button>
         </div>
-        <div class="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+        <div class="min-h-0 flex-1 px-5 sm:px-6" :class="contained ? 'flex flex-col overflow-hidden py-3' : 'overflow-y-auto py-5'">
           <slot />
         </div>
         <div v-if="$slots.footer" class="flex shrink-0 justify-end gap-2 border-t border-gray-800 bg-gray-900 px-5 py-4 sm:px-6">
