@@ -10,17 +10,16 @@ export function formatPriority(value) {
 }
 
 export function statusTone(value) {
-  if (value === 'completed') return 'bg-emerald-900/60 text-emerald-200'
-  if (value === 'in_progress') return 'bg-amber-900/60 text-amber-200'
-  if (value === 'cancelled') return 'bg-gray-800 text-gray-300'
-  return 'bg-sky-900/60 text-sky-200'
+  if (value === 'completed') return 'border status-badge--success'
+  if (['pending', 'in_progress'].includes(value)) return 'border status-badge--warning'
+  return 'border status-badge--neutral'
 }
 
 export function priorityTone(value) {
-  if (value === 'urgent') return 'bg-red-900/70 text-red-200'
-  if (value === 'high') return 'bg-orange-900/70 text-orange-200'
-  if (value === 'medium') return 'bg-amber-900/70 text-amber-200'
-  return 'bg-gray-800 text-gray-300'
+  if (value === 'urgent') return 'border status-badge--danger'
+  if (value === 'high') return 'border status-badge--orange'
+  if (value === 'medium') return 'border status-badge--warning'
+  return 'border status-badge--neutral'
 }
 
 export function serviceCardClass(row) {
@@ -30,9 +29,9 @@ export function serviceCardClass(row) {
 }
 
 export function serviceBadgeClass(serviceType) {
-  if (serviceType === 'website_development') return 'border-cyan-600/60 bg-cyan-900/30 text-cyan-200'
-  if (serviceType === 'social_media_management') return 'border-violet-600/60 bg-violet-900/30 text-violet-200'
-  return 'border-gray-700 text-gray-300'
+  if (serviceType === 'website_development') return 'status-badge--info'
+  if (serviceType === 'social_media_management') return 'status-badge--violet'
+  return 'status-badge--neutral'
 }
 
 export function serviceBadgeLabel(serviceType) {
@@ -53,8 +52,8 @@ export function taskTypeLabel(value) {
 
 export function taskTypeBadgeClass(value) {
   return value === 'meeting'
-    ? 'border-indigo-600/60 bg-indigo-900/30 text-indigo-200'
-    : 'border-emerald-600/60 bg-emerald-900/30 text-emerald-200'
+    ? 'status-badge--violet'
+    : 'status-badge--info'
 }
 
 export function workAccentClass(row) {
@@ -65,8 +64,8 @@ export function workAccentClass(row) {
 }
 
 export function workIconClass(row) {
-  if (resolveTaskType(row) === 'meeting') return 'border-violet-800/60 bg-violet-950/40 text-violet-300'
-  if (row?.service_type === 'website_development') return 'border-sky-800/60 bg-sky-950/40 text-sky-300'
-  if (row?.service_type === 'social_media_management') return 'border-emerald-800/60 bg-emerald-950/40 text-emerald-300'
-  return 'border-amber-800/60 bg-amber-950/40 text-amber-300'
+  if (resolveTaskType(row) === 'meeting') return 'status-badge--violet'
+  if (row?.service_type === 'website_development') return 'tone-mark--info'
+  if (row?.service_type === 'social_media_management') return 'tone-mark--success'
+  return 'tone-mark--warning'
 }

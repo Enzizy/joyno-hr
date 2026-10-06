@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
 
 const props = defineProps({
   entitlements: { type: Array, default: () => [] },
@@ -40,7 +41,7 @@ function toneFor(index) {
           <div class="min-w-0 flex-1">
             <div class="flex items-start justify-between gap-2">
               <p class="truncate text-xs font-medium text-gray-400" :title="item.name">{{ item.name }}</p>
-              <span v-if="!item.eligible" class="shrink-0 rounded-full bg-amber-950/40 px-2 py-0.5 text-[10px] font-medium text-amber-300">Not eligible</span>
+              <StatusBadge v-if="!item.eligible" class="shrink-0 text-[10px]" status="Not eligible" variant="warning" />
             </div>
             <p class="mt-1 text-xl font-semibold" :class="item.eligible ? 'text-gray-100' : 'text-gray-300'">
               {{ item.eligible ? item.remaining : item.total }}

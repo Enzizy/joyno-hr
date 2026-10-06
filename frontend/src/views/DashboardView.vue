@@ -44,23 +44,20 @@ const managementKpis = computed(() => [
   { label: 'Pending approvals', value: metrics.value.approvals_backlog ?? pendingLeaves.value.length, note: 'Requests waiting for review', tone: 'gold', route: '/leave-approvals' },
   { label: 'Away today', value: awayToday.value.length, note: 'Approved absences today', tone: 'green', route: '/leave-calendar' },
   { label: 'Overdue tasks', value: metrics.value.overdue_tasks ?? overdueTasks.value.length, note: 'Work requiring attention', tone: 'red', route: '/tasks' },
-  { label: 'Upcoming leave', value: upcomingLeave.value.length, note: 'Future approved or pending', tone: 'neutral', route: '/leave-calendar' },
+  { label: 'Upcoming leave', value: upcomingLeave.value.length, note: 'Future approved or pending', tone: 'blue', route: '/leave-calendar' },
 ])
 
 const employeeKpis = computed(() => [
   { label: 'Due today', value: metrics.value.tasks_due_today ?? 0, note: 'Assigned tasks due today', tone: 'gold', route: '/my-tasks' },
   { label: 'Overdue tasks', value: metrics.value.overdue_tasks ?? 0, note: 'Work past its due date', tone: 'red', route: '/my-tasks' },
   { label: 'Leave credits', value: Number(authStore.user?.leave_credits || metrics.value.leave_credits || 0).toFixed(2), note: 'Current available credit pool', tone: 'green', route: '/leave-request' },
-  { label: 'Upcoming deadlines', value: metrics.value.upcoming_deadlines ?? employeeUpcomingTasks.value.length, note: 'Due within the next 7 days', tone: 'neutral', route: '/my-tasks' },
+  { label: 'Upcoming deadlines', value: metrics.value.upcoming_deadlines ?? employeeUpcomingTasks.value.length, note: 'Due within the next 7 days', tone: 'blue', route: '/my-tasks' },
 ])
 
 const kpis = computed(() => isManagement.value ? managementKpis.value : employeeKpis.value)
 
 function toneClasses(tone) {
-  if (tone === 'green') return 'border-emerald-900/60 bg-emerald-950/25 text-emerald-300'
-  if (tone === 'red') return 'border-red-900/60 bg-red-950/25 text-red-300'
-  if (tone === 'gold') return 'border-primary-900/60 bg-primary-950/25 text-primary-300'
-  return 'border-gray-700 bg-gray-800/70 text-gray-300'
+  return `tone-mark--${({green:'success', red:'danger', gold:'warning', blue:'info'})[tone] || 'neutral'}`
 }
 
 function formatDate(value) {
@@ -120,7 +117,7 @@ onMounted(async () => {
     <section aria-labelledby="attention-heading">
       <h2 id="attention-heading" class="mb-2.5 text-sm font-semibold text-gray-200">Needs attention</h2>
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <RouterLink v-for="item in kpis" :key="item.label" :to="item.route" class="stat-card group flex items-center gap-4">
+        <RouterLink v-for="item in kpis" :key="item.label" :to="item.route" :data-tone="item.tone" class="stat-card group flex items-center gap-4">
           <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border text-lg font-semibold" :class="toneClasses(item.tone)">{{ item.value }}</span>
           <span class="min-w-0 flex-1"><span class="block text-sm font-medium text-gray-200">{{ item.label }}</span><span class="mt-1 block truncate text-xs text-gray-500">{{ item.note }}</span></span>
           <span class="text-lg text-gray-600 transition group-hover:translate-x-0.5 group-hover:text-primary-300">›</span>
@@ -132,10 +129,10 @@ onMounted(async () => {
       <section class="surface-card">
         <div class="surface-header"><div><h2 class="font-semibold text-gray-100">Approval queue</h2><p class="mt-1 text-xs text-gray-500">Oldest pending leave requests first</p></div><RouterLink to="/leave-approvals" class="text-xs font-medium text-primary-300 hover:text-primary-200">Review all</RouterLink></div>
         <div v-if="pendingLeaves.length" class="divide-y divide-gray-800">
-          <RouterLink v-for="leave in pendingLeaves" :key="leave.id" to="/leave-approvals" class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3.5 transition hover:bg-black/25 sm:flex sm:px-5">
+          <RouterLink v-for="leave in pendingLeaves" :key="leave.id" to="/leave-approvals" class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3.5 transition hover:bg-gray-950 sm:flex sm:px-5">
             <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary-500/25 bg-primary-500/10 text-xs font-semibold text-primary-300">{{ initials(leave.employee_name) }}</span>
             <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium text-gray-200">{{ leave.employee_name || 'Employee' }}</span><span class="mt-0.5 block text-xs text-gray-500">{{ leave.leave_type_name || 'Leave' }} · {{ formatRange(leave.start_date, leave.end_date) }}</span></span>
-            <span class="col-start-2 justify-self-start rounded-full border border-amber-800/60 bg-amber-950/30 px-2.5 py-1 text-[11px] font-medium text-amber-300 sm:ml-auto">Pending</span>
+            <StatusBadge class="col-start-2 justify-self-start sm:ml-auto" status="pending" />
           </RouterLink>
         </div>
         <div v-else class="p-5"><EmptyState compact title="Approval queue is clear" description="New leave requests will appear here." /></div>
@@ -144,7 +141,7 @@ onMounted(async () => {
       <section class="surface-card">
         <div class="surface-header"><div><h2 class="font-semibold text-gray-100">Priority work</h2><p class="mt-1 text-xs text-gray-500">Overdue tasks requiring follow-up</p></div><RouterLink to="/tasks" class="text-xs font-medium text-primary-300 hover:text-primary-200">View tasks</RouterLink></div>
         <div v-if="overdueTasks.length" class="divide-y divide-gray-800">
-          <RouterLink v-for="task in overdueTasks" :key="task.id" to="/tasks" class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3.5 transition hover:bg-black/25 sm:flex sm:px-5">
+          <RouterLink v-for="task in overdueTasks" :key="task.id" to="/tasks" class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3.5 transition hover:bg-gray-950 sm:flex sm:px-5">
             <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-900/60 bg-red-950/25 text-red-300">!</span>
             <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium text-gray-200">{{ task.title }}</span><span class="mt-0.5 block text-xs text-gray-500">Due {{ formatDate(task.due_date) }} · {{ task.company_name || task.assigned_email || 'Internal' }}</span></span>
             <span class="col-start-2 justify-self-start text-[11px] font-medium text-red-300 sm:ml-auto">{{ formatLabel(task.priority) }}</span>

@@ -35,18 +35,21 @@ function badgeHtml(value) {
   const normalized = String(value || '').trim().toLowerCase()
   let background = '#e5e7eb'
   let color = '#374151'
-  if (['approved', 'completed', 'paid', 'low'].includes(normalized)) {
+  if (['approved', 'completed', 'paid', 'published', 'low'].includes(normalized)) {
     background = '#dcfce7'
     color = '#166534'
   } else if (['rejected', 'cancelled', 'urgent', 'unpaid'].includes(normalized)) {
     background = '#fee2e2'
     color = '#991b1b'
-  } else if (['pending', 'in progress', 'in_progress', 'medium'].includes(normalized)) {
+  } else if (['pending', 'in progress', 'in_progress', 'medium', 'important'].includes(normalized)) {
     background = '#fef3c7'
     color = '#92400e'
   } else if (normalized === 'high') {
     background = '#ffedd5'
     color = '#9a3412'
+  } else if (['normal', 'scheduled', 'on leave', 'on_leave'].includes(normalized)) {
+    background = '#dbeafe'
+    color = '#1e40af'
   }
   return `<span style="display:inline-block;background:${background};color:${color};font-size:12px;font-weight:700;text-transform:capitalize;padding:4px 9px;border-radius:999px;">${escapeHtml(value)}</span>`
 }

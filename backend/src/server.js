@@ -177,7 +177,7 @@ function buildBrandedEmailHtml({ subject, text, linkLabels = {} }) {
         <td align="center">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
             <tr>
-              <td style="background:#111827;padding:18px 22px;">
+              <td style="background:#111827;padding:18px 22px;border-bottom:3px solid #d8aa24;">
                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                   <tr>
                     <td style="vertical-align:top;">
