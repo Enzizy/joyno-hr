@@ -256,7 +256,7 @@ async function submitAwol() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Employee Management" description="Search your workforce, update employee records, and manage employment status." eyebrow="Management">
+    <PageHeader title="Employee Management">
       <template #actions><AppButton @click="openCreate">Add employee</AppButton></template>
     </PageHeader>
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-4">

@@ -106,7 +106,7 @@ async function prevPage() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Audit Logs" description="Review system activity, important changes, and accountable actions." eyebrow="Administration" />
+    <PageHeader title="Audit Logs" />
     <div class="space-y-3 md:hidden">
       <div v-if="loading" class="space-y-3"><div v-for="item in 4" :key="item" class="h-32 animate-pulse rounded-xl bg-gray-800" /></div>
       <div v-else-if="!rows.length" class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-8 text-center text-sm text-gray-500">No audit logs.</div>

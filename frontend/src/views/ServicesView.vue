@@ -162,7 +162,7 @@ async function saveService() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Services" description="Track delivery status, ownership, and progress for every client service." eyebrow="Work" />
+    <PageHeader title="Services" />
 
     <div class="filter-panel grid gap-3 sm:grid-cols-4">
       <div class="sm:col-span-2">

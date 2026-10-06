@@ -335,7 +335,7 @@ async function confirmConvert() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Leads" description="Track opportunities, follow-ups, and conversations before they convert." eyebrow="Work">
+    <PageHeader title="Leads">
       <template #actions><AppButton @click="openCreate">Add lead</AppButton></template>
     </PageHeader>
 

@@ -310,7 +310,7 @@ async function confirmRemoveRule() {
       Automation rules create tasks automatically based on your schedule. Rules should usually end on the client's contract end date.
     </div>
 
-    <PageHeader title="Automation" description="Create recurring rules that generate tasks and keep routine work moving." eyebrow="Work">
+    <PageHeader title="Automation">
       <template #actions><AppButton @click="openCreate">Create rule</AppButton></template>
     </PageHeader>
 

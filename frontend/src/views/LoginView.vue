@@ -40,12 +40,12 @@ async function onSubmit() {
 </script>
 
 <template>
-  <div class="relative flex min-h-screen items-center justify-center bg-gray-800 px-4">
+  <div class="relative isolate flex min-h-screen items-center justify-center bg-gray-800 px-4">
     <div
-      class="pointer-events-none absolute inset-0 bg-center bg-no-repeat opacity-15"
+      class="pointer-events-none absolute inset-0 z-0 bg-center bg-no-repeat opacity-[0.07]"
       :style="{ backgroundImage: `url(${logoBg})`, backgroundSize: '520px auto' }"
     />
-    <div class="w-full max-w-md">
+    <div class="relative z-10 w-full max-w-md">
       <div class="rounded-2xl border border-gray-800 bg-gray-900 p-8 shadow-lg">
         <div class="mb-8 text-center">
           <h1 class="text-2xl font-bold text-primary-200">Joyno HR</h1>

@@ -437,7 +437,7 @@ async function sendReply() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Leave" description="Plan time away, understand your balance, and track every request." eyebrow="My workspace" />
+    <PageHeader title="Leave" />
 
     <LeaveBalanceCards :entitlements="leaveEntitlements" :leave-credits="leaveCreditsAvailable" />
 

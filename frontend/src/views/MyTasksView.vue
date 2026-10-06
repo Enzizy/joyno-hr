@@ -235,7 +235,7 @@ function proofUrl(taskId) {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="My Tasks" description="Review assigned work, upcoming deadlines, and completion requirements." eyebrow="Work" />
+    <PageHeader title="My Tasks" />
 
     <div class="flex flex-wrap gap-2">
       <button v-for="item in tabOptions" :key="item.value" type="button" class="rounded-lg px-3 py-2 text-sm font-medium" :class="tab === item.value ? 'bg-primary-500 text-black' : 'bg-gray-800 text-gray-200 hover:bg-gray-700'" @click="tab = item.value; applyFilters()">

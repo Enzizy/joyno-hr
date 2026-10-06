@@ -170,7 +170,7 @@ onMounted(loadLeave)
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Leave Reports" description="Review approved leave, payroll impact, department patterns, and attendance risks." eyebrow="Analytics" />
+    <PageHeader title="Leave Reports" />
 
     <section class="rounded-xl border border-gray-800 bg-gray-900 p-5 shadow-sm">
       <div class="grid gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">

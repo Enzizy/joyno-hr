@@ -5,7 +5,7 @@ import PageHeader from '@/components/ui/PageHeader.vue'
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="System Settings" description="Manage company-wide rules that control leave eligibility and approvals." eyebrow="Administration" />
+    <PageHeader title="System Settings" />
     <LeavePolicySettingsPanel />
   </div>
 </template>

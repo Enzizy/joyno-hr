@@ -150,7 +150,7 @@ onMounted(load)
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Notification center" description="Keep track of leave, work, and system activity without losing context." eyebrow="Workspace">
+    <PageHeader title="Notification center">
       <template #actions>
         <AppButton variant="secondary" @click="openPreferences">Email preferences</AppButton>
         <AppButton variant="secondary" @click="store.markAllRead">Mark all read</AppButton>

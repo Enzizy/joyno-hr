@@ -339,7 +339,7 @@ async function saveConversation() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Clients" description="Manage client relationships, contracts, services, and ongoing communication." eyebrow="Work">
+    <PageHeader title="Clients">
       <template #actions><AppButton @click="openCreate">Add client</AppButton></template>
     </PageHeader>
 

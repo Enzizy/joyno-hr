@@ -157,7 +157,7 @@ async function removeUser() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="User Accounts" description="Manage access, roles, and employee account connections." eyebrow="People">
+    <PageHeader title="User Accounts">
       <template #actions><AppButton @click="openAdd">Add user</AppButton></template>
     </PageHeader>
     <section class="filter-panel" aria-label="User filters">

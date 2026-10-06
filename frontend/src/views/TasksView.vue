@@ -309,7 +309,7 @@ async function cancelTaskAction(row) {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Tasks & Meetings" description="Plan work, coordinate meetings, and follow progress across the team." eyebrow="CRM workspace">
+    <PageHeader title="Tasks & Meetings">
       <template #actions>
         <div class="relative" data-create-menu="tasks-create">
           <AppButton @click.stop="toggleCreateMenu">

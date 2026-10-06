@@ -48,7 +48,7 @@ async function changePassword() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Profile" description="Review your account information and manage sign-in security." eyebrow="Account" />
+    <PageHeader title="Profile" />
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-6 shadow-sm">
       <dl class="grid gap-4 sm:grid-cols-2">
         <div>

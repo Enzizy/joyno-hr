@@ -119,8 +119,6 @@ onMounted(async () => {
   <div class="space-y-5">
     <PageHeader
       title="Leave approvals"
-      description="Review requests, documents, and team availability."
-      eyebrow="Leave management"
     />
 
     <details class="group surface-card-muted">
