@@ -21,6 +21,7 @@ const { createHrRecordedLeave } = require('./services/hrRecordedLeaveService')
 const { getEmployeeLeaveBalanceBreakdown, refreshEmployeeLeaveCredits } = require('./services/employeeLeaveBalanceService')
 const { currentManilaDate, isPaidLeaveEligible } = require('./services/leaveEligibilityService')
 const { resolveLeaveCompensation } = require('./services/leaveCompensationService')
+const { asyncRoute } = require('./routes/asyncRoute')
 const {
   approvalDocumentDecision,
   claimAttachmentDeadlineReminders,
@@ -2902,7 +2903,7 @@ app.put('/api/leave-requests/:id', authRequired, uploadAttachment, async (req, r
   res.json({ ...(updated.rows[0] || { id }), compensation_message: compensation.note || null })
 })
 
-app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
+app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 'hr', 'ceo']), asyncRoute(async (req, res) => {
   const id = Number(req.params.id)
   if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
   const { rows } = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
@@ -3000,7 +3001,7 @@ app.post('/api/leave-requests/:id/approve', authRequired, requireRole(['admin', 
   await addAuditLog(req.user.id, 'approve_leave_request', 'leave_requests', id)
   const updated = await db.query(`SELECT ${LEAVE_REQUEST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
   res.json({ ...(updated.rows[0] || { id }), compensation_message: compensation.note || null })
-})
+}, 'Unable to approve leave. Please refresh the request and try again.'))
 
 app.post('/api/leave-requests/:id/reject', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const id = req.params.id

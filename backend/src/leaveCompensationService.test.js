@@ -10,6 +10,52 @@ function database(used = 0) {
   return { async query(sql) { return { rows: sql.includes('philippine_holidays') ? [] : [{ used_days: used }] } } }
 }
 
+test('database DATE objects use the correct allowance year when approving leave', async () => {
+  const parseDate = require('pg').types.getTypeParser(1082)
+  const calls = []
+  const queryDb = { async query(sql, params) {
+    calls.push({ sql, params })
+    return { rows: sql.includes('philippine_holidays') ? [] : [{ used_days: 2 }] }
+  } }
+  const result = await resolveLeaveCompensation(
+    { id: 1, date_hired: parseDate('2024-01-01') }, vacation,
+    parseDate('2026-10-06'), parseDate('2026-10-06'), false, queryDb
+  )
+  assert.equal(result.leavePayType, 'paid')
+  assert.equal(result.creditsDeducted, 1)
+  assert.deepEqual(calls.find(call => call.sql.includes('FROM leave_requests')).params, [1, 'Vacation Leave', '2026'])
+})
+
+test('half-day approval accepts distinct database DATE objects for the same day', async () => {
+  const parseDate = require('pg').types.getTypeParser(1082)
+  const result = await resolveLeaveCompensation(
+    { id: 1, date_hired: parseDate('2024-01-01') }, vacation,
+    parseDate('2026-10-06'), parseDate('2026-10-06'), false, database(), { dayFraction: 0.5 }
+  )
+  assert.equal(result.leaveDays, 0.5)
+  assert.equal(result.creditsDeducted, 0.5)
+})
+
+test('the database DATE allowance year is preserved at New Year', async () => {
+  const parseDate = require('pg').types.getTypeParser(1082)
+  const queryDb = { async query(sql, params) {
+    if (sql.includes('FROM leave_requests')) assert.equal(params[2], '2027')
+    return { rows: sql.includes('philippine_holidays') ? [] : [{ used_days: 0 }] }
+  } }
+  const result = await resolveLeaveCompensation(
+    { id: 1, date_hired: '2024-01-01' }, vacation,
+    parseDate('2027-01-01'), parseDate('2027-01-01'), false, queryDb
+  )
+  assert.equal(result.paidDays, 1)
+})
+
+test('invalid dates return an invalid range without querying allowances', async () => {
+  const queryDb = { async query() { assert.fail('Invalid dates must not query the database') } }
+  for (const invalid of [new Date(NaN), '2026-02-30', null]) {
+    assert.equal(await resolveLeaveCompensation({ id: 1 }, vacation, invalid, invalid, false, queryDb), null)
+  }
+})
+
 test('sick and vacation become paid on the three-month eligibility date', async () => {
   const employee = { id: 1, date_hired: '2026-01-15', leave_credits: 0 }
   for (const policy of [sick, vacation]) {

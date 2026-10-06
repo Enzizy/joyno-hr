@@ -1,5 +1,5 @@
 const db = require('../db')
-const { countPhilippineWorkingDays } = require('./philippineHolidayService')
+const { countPhilippineWorkingDays, normalizeDateOnly } = require('./philippineHolidayService')
 const { isPaidLeaveEligible } = require('./leaveEligibilityService')
 
 async function resolveLeaveCompensation(
@@ -11,8 +11,12 @@ async function resolveLeaveCompensation(
   queryDb = db,
   {dayFraction = 1} = {}
 ) {
-  if (![0.5,1].includes(Number(dayFraction)) || (Number(dayFraction) < 1 && startDate !== endDate)) throw new TypeError('Half-day leave requires a single date')
-  const leaveDays = (await countPhilippineWorkingDays(queryDb, startDate, endDate)) * Number(dayFraction)
+  // pg returns DATE columns as Date objects when an existing request is approved.
+  const normalizedStart = normalizeDateOnly(startDate)
+  const normalizedEnd = normalizeDateOnly(endDate)
+  if (!normalizedStart || !normalizedEnd) return null
+  if (![0.5,1].includes(Number(dayFraction)) || (Number(dayFraction) < 1 && normalizedStart !== normalizedEnd)) throw new TypeError('Half-day leave requires a single date')
+  const leaveDays = (await countPhilippineWorkingDays(queryDb, normalizedStart, normalizedEnd)) * Number(dayFraction)
   if (!leaveDays || leaveDays <= 0) return null
 
   const paidDaysCap = Number(leaveType?.paid_days_per_year || 0)
@@ -27,7 +31,7 @@ async function resolveLeaveCompensation(
     }
   }
 
-  const eligible = isPaidLeaveEligible(employee?.date_hired, startDate, leaveType.min_months_employed || 0)
+  const eligible = isPaidLeaveEligible(employee?.date_hired, normalizedStart, leaveType.min_months_employed || 0)
   if (!eligible) {
     return {
       leaveDays,
@@ -49,7 +53,7 @@ async function resolveLeaveCompensation(
     }
   }
 
-  const leaveYear = Number(String(startDate).slice(0, 4))
+  const leaveYear = Number(normalizedStart.slice(0, 4))
   const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, null, queryDb)
   const remainingTypePaidDays = Math.max(0, paidDaysCap - usedDays)
   const payableDays = Math.min(leaveDays, remainingTypePaidDays)
