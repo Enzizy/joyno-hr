@@ -1,10 +1,10 @@
-const { dayShiftOnly, payrollEmployeeIncluded } = require('../services/payrollScopeService')
+const { dayShiftOnly, payrollEmployeeIncluded, normalizePayrollScope, assertPracticeAllowed } = require('../services/payrollScopeService')
 const { shiftDefaults } = require('../services/payrollShiftService')
 const { calculateNightDifferential, effectiveEarnings } = require('../services/payrollNightDifferentialService')
 const express = require('express')
 const multer = require('multer')
 const { MANAGEMENT_ROLES } = require('../constants/roles')
-const { payslipFilename, renderPayslipPdf } = require('../services/payrollPayslipService')
+const { RELEASED_PAYSLIP_SQL, payslipEmail, payslipFilename, renderPayslipPdf, renderPayslipsPdf } = require('../services/payrollPayslipService')
 const { dateKey } = require('../services/payrollAttendanceService')
 const { parseAttendanceCsv, decodeAttendanceCsv, isAttendanceScan, parseManilaTimestamp, manilaDateParts, listWeekdays, computeDailyAttendance } = require('../services/payrollAttendanceService')
 const { calculatePayrollLine, calculateSssAssessablePay, calculateWorkedSpecialHoliday } = require('../services/payrollCalculationService')
@@ -24,7 +24,7 @@ function validDate(value) {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
 }
 
-function createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog, deliverPayslipEmail }) {
+function createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog, deliverPayslipEmail, payslipsUrl = '' }) {
   if (!payrollService) throw new Error('Payroll routes require payrollService')
   const router = express.Router()
   const upload = multer({
@@ -113,7 +113,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       const employees = await db.query('SELECT id, employee_code, first_name, last_name, shift FROM employees WHERE id = $1', [employeeId])
       const employee = employees.rows[0]
       if (!employee) return res.status(404).json({ message: 'Employee not found' })
-      if (!payrollEmployeeIncluded(employee)) return res.status(409).json({message:'Night-shift payroll is temporarily hidden while the day-shift DTR is being tested'})
+      if (!payrollEmployeeIncluded(employee,[],normalizePayrollScope(req.body.shift))) return res.status(409).json({message:'Night-shift payroll is temporarily hidden while the day-shift DTR is being tested'})
       const records = readTestCsv(req)
       const matching = records.filter((record) => record.employeeCode === biometricPersonId &&
         (record.identifierType === 'person_id' || biometricPersonId === employee.employee_code))
@@ -126,7 +126,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         : null
       const profileRows = (await db.query(`SELECT * FROM payroll_employee_profiles WHERE employee_id=$1 AND effective_from <= $2
         AND COALESCE(effective_to,'infinity'::date) >= $3 ORDER BY effective_from DESC`,[employeeId,periodEnd,periodStart])).rows
-      if (!payrollEmployeeIncluded(employee,profileRows)) return res.status(409).json({message:'Overnight payroll is temporarily hidden while the day-shift DTR is being tested'})
+      if (!payrollEmployeeIncluded(employee,profileRows,normalizePayrollScope(req.body.shift))) return res.status(409).json({message:'Overnight payroll is temporarily hidden while the day-shift DTR is being tested'})
       const profileForDate = date => ({...shiftDefaults(employee.shift), ...profileRows.find(p => dateKey(p.effective_from) <= date && (!p.effective_to || dateKey(p.effective_to) >= date)), monthly_basic_salary:monthlyBasicSalary})
       const sourceEvents = matching.filter(record => isAttendanceScan(record.eventType) || record.eventType === null)
         .map(record => ({ occurredAt: parseManilaTimestamp(record.timestamp), eventType: record.eventType }))
@@ -174,7 +174,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
 
   router.get('/api/payroll/profiles', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
     try {
-      return res.json(await payrollService.listProfiles({}))
+      return res.json(await payrollService.listProfiles({shift:req.query.shift}))
     } catch (error) {
       return handlePayrollError(error, res)
     }
@@ -186,7 +186,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
           (e.date_hired IS NULL OR NOT EXISTS(SELECT 1 FROM payroll_biometric_identities b WHERE b.employee_id=e.id) OR
           NOT EXISTS(SELECT 1 FROM payroll_employee_profiles p WHERE p.employee_id=e.id AND p.effective_from<=(NOW() AT TIME ZONE 'Asia/Manila')::date AND COALESCE(p.effective_to,'infinity'::date)>=(NOW() AT TIME ZONE 'Asia/Manila')::date AND p.monthly_basic_salary>0))`,[dayShiftOnly()]),
         db.query("SELECT COUNT(*)::integer AS count FROM payroll_attendance_import_batches WHERE review_state='draft'"),
-        db.query("SELECT COUNT(*) FILTER(WHERE r.status='draft')::integer AS drafts,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NULL)::integer AS awaiting_payment,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NOT NULL)::integer AS awaiting_release FROM payroll_runs r LEFT JOIN payroll_payments p ON p.payroll_run_id=r.id")
+        db.query("SELECT COUNT(*) FILTER(WHERE r.status='draft')::integer AS drafts,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NULL)::integer AS awaiting_payment,COUNT(*) FILTER(WHERE r.status='approved' AND p.payroll_run_id IS NOT NULL)::integer AS awaiting_release FROM payroll_runs r LEFT JOIN payroll_payments p ON p.payroll_run_id=r.id WHERE COALESCE(r.rule_snapshot->>'isTest','false')<>'true'")
       ])
       res.set('Cache-Control','private, no-store').json({setup:setup.rows[0].count,attendance:reviews.rows[0].count,...runs.rows[0]})
     }catch(e){handlePayrollError(e,res)}
@@ -288,8 +288,8 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       const run=await payrollService.getRun(id)
       if(!run)return res.status(404).json({message:'Payroll not found'})
       if(run.status==='draft')return res.status(409).json({message:'Approve payroll before exporting the payment register'})
-      const csv=csvRows(['Employee ID','Employee name','Net pay'],run.lines.map(l=>[l.employee_code,l.employee_name,Number(l.net_pay).toFixed(2)]))
-      res.set('Cache-Control','private, no-store').type('text/csv').attachment(`payroll-${id}-payment-register.csv`).send(csv)
+      const csv=csvRows(['Practice data','Employee ID','Employee name','Net pay'],run.lines.map(l=>[run.rule_snapshot?.isTest?'TEST ONLY':'',l.employee_code,l.employee_name,Number(l.net_pay).toFixed(2)]))
+      res.set('Cache-Control','private, no-store').type('text/csv').attachment(`${run.rule_snapshot?.isTest?'TEST-ONLY-':''}payroll-${id}-payment-register.csv`).send(csv)
     }catch(e){handlePayrollError(e,res)}
   })
   router.get('/api/payroll/runs/:id/export/:type',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
@@ -300,12 +300,12 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       const headers=type==='register'?['Status','Payday','Employee ID','Employee','Basic','COLA','Absence deduction','Late deduction','Undertime deduction','SSS employee','PhilHealth employee','Pag-IBIG employee','Extra earnings','Charge deductions','Basic adjustment','Other charge earnings','13th-month basic accrual','Net pay']:
         ['Status','Payday','Employee ID','Employee','SSS employee','SSS employer','EC employer','PhilHealth employee','PhilHealth employer','Pag-IBIG employee','Pag-IBIG employer']
       const rows=run.lines.map(l=>{
-        const identity=[run.status,run.payday,l.employee_code,l.employee_name]
+        const identity=[run.rule_snapshot?.isTest?`TEST ONLY - ${run.status}`:run.status,run.payday,l.employee_code,l.employee_name]
         if(type==='remittance')return [...identity,l.employee_sss,l.employer_sss,l.employer_ec,l.employee_philhealth,l.employer_philhealth,l.employee_pagibig,l.employer_pagibig]
         const totals={earning:0,deduction:0,adjustment:0};for(const c of l.details?.charges||[])totals[c.type==='basic_pay_adjustment'?'adjustment':c.type==='other_non_taxable_earning'?'earning':'deduction']+=Number(c.amount||0)
         return [...identity,l.gross_salary,l.cola_pay,l.absence_deduction,l.late_deduction,l.undertime_deduction,l.employee_sss,l.employee_philhealth,l.employee_pagibig,effectiveEarnings(l.details).reduce((sum,e)=>sum+Number(e.amount),0),totals.deduction,totals.adjustment,totals.earning,l.thirteenth_month_accrual,l.net_pay]
       })
-      res.set('Cache-Control','private, no-store').type('text/csv').attachment(`payroll-${id}-${type}-${run.status}.csv`).send(csvRows(headers,rows))
+      res.set('Cache-Control','private, no-store').type('text/csv').attachment(`${run.rule_snapshot?.isTest?'TEST-ONLY-':''}payroll-${id}-${type}-${run.status}.csv`).send(csvRows(headers,rows))
     }catch(e){handlePayrollError(e,res)}
   })
 
@@ -364,18 +364,18 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
   async function findPayslip(queryable, lineId, runId = null, employeeId = null) {
     const { rows } = await queryable.query(
       `SELECT line.*, run.period_start, run.period_end, run.payday, run.cutoff, run.status,
-              run.id AS run_id
+              run.id AS run_id,run.rule_snapshot,
+              EXISTS(SELECT 1 FROM payroll_run_events removed WHERE removed.payroll_run_id = run.id AND removed.action = 'test_payslips_removed') AS test_payslips_removed
        FROM payroll_run_lines line
        JOIN payroll_runs run ON run.id = line.payroll_run_id
        WHERE line.id = $1 AND ($2::integer IS NULL OR run.id = $2)
-         AND ($3::integer IS NULL OR (line.employee_id = $3 AND run.status = 'locked'
-           AND EXISTS(SELECT 1 FROM payroll_payments payment WHERE payment.payroll_run_id=run.id)))` ,
+         AND ($3::integer IS NULL OR (line.employee_id = $3 AND ${RELEASED_PAYSLIP_SQL}))`,
       [lineId, runId, employeeId]
     )
     if (!rows[0]) return null
     const line = rows[0]
     return { run: { id: line.run_id, period_start: line.period_start, period_end: line.period_end,
-      payday: line.payday, cutoff: line.cutoff, status: line.status }, line }
+      payday: line.payday, cutoff: line.cutoff, status: line.status,rule_snapshot:line.rule_snapshot }, line }
   }
 
   async function servePdf(req, res, employeeId = null) {
@@ -385,10 +385,11 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     try {
       const payslip = await findPayslip(db, lineId, runId, employeeId)
       if (!payslip) return res.status(404).json({ message: 'Payslip not found' })
-      const pdf = await renderPayslipPdf(payslip)
+      const copies = req.query.copies === '2' ? 2 : 1
+      const pdf = await renderPayslipPdf(payslip, { copies })
       res.set('Cache-Control', 'private, no-store')
       res.set('Content-Type', 'application/pdf')
-      res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${payslipFilename(payslip.run, payslip.line)}"`)
+      res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${copies === 2 ? 'print-' : ''}${payslipFilename(payslip.run, payslip.line)}"`)
       return res.send(pdf)
     } catch (error) {
       return handlePayrollError(error, res)
@@ -402,11 +403,89 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     return servePdf(req, res, employeeId)
   })
 
+  // Several payslips in one PDF, for printing or saving everyone (or the ticked people) at once.
+  router.get('/api/payroll/runs/:id/payslips.pdf', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
+    const runId = positiveId(req.params.id)
+    const lineIds = String(req.query.lines || '').split(',').filter(Boolean).map(positiveId)
+    if (!runId || lineIds.some((id) => !id) || lineIds.length > 500) return res.status(400).json({ message: 'Invalid payslip selection' })
+    try {
+      const { rows } = await db.query(
+        `SELECT line.id FROM payroll_run_lines line WHERE line.payroll_run_id = $1
+           AND (cardinality($2::integer[]) = 0 OR line.id = ANY($2::integer[])) ORDER BY line.employee_name, line.id`,
+        [runId, lineIds])
+      if (!rows.length) return res.status(404).json({ message: 'No payslips found for this run' })
+      const payslips = []
+      for (const row of rows) payslips.push(await findPayslip(db, row.id, runId))
+      const copies = req.query.copies === '2' ? 2 : 1
+      const pdf = await renderPayslipsPdf(payslips, { copies })
+      const { run } = payslips[0]
+      res.set('Cache-Control', 'private, no-store')
+      res.set('Content-Type', 'application/pdf')
+      res.set('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename="${run.rule_snapshot?.isTest ? 'TEST-ONLY-' : ''}${copies === 2 ? 'print-' : ''}payslips-${dateKey(run.payday)}.pdf"`)
+      return res.send(pdf)
+    } catch (error) {
+      return handlePayrollError(error, res)
+    }
+  })
+
+  // Email status of every payslip in a run, for the Payslips page.
+  router.get('/api/payroll/runs/:id/payslip-deliveries', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
+    const runId = positiveId(req.params.id)
+    if (!runId) return res.status(400).json({ message: 'Invalid payroll run ID' })
+    try {
+      const { rows } = await db.query(
+        `SELECT line.id AS line_id,
+                (SELECT array_agg(DISTINCT LOWER(TRIM(account.email))) FROM users account
+                  WHERE account.employee_id = line.employee_id AND NULLIF(TRIM(account.email), '') IS NOT NULL) AS emails,
+                (SELECT MAX(sent.created_at) FROM payroll_run_events sent WHERE sent.payroll_run_id = line.payroll_run_id
+                  AND sent.action = 'payslip_emailed' AND sent.metadata->>'lineId' = line.id::text) AS sent_at
+         FROM payroll_run_lines line WHERE line.payroll_run_id = $1 ORDER BY line.id`, [runId])
+      const removed = (await db.query(
+        `SELECT MIN(created_at) AS removed_at FROM payroll_run_events WHERE payroll_run_id = $1 AND action = 'test_payslips_removed'`, [runId])).rows[0]
+      return res.json({
+        // Practice runs only: when HR took the test payslips off the employees' pages.
+        testPayslipsRemovedAt: removed?.removed_at || null,
+        lines: rows.map((row) => ({ lineId: row.line_id, sentAt: row.sent_at,
+          email: row.emails?.length === 1 ? row.emails[0] : null,
+          emailProblem: !row.emails?.length ? 'No account email' : row.emails.length > 1 ? 'More than one account email' : null })),
+      })
+    } catch (error) {
+      return handlePayrollError(error, res)
+    }
+  })
+
+  // After a practice test, take its test payslips off the employees' pages. They cannot be sent again.
+  router.post('/api/payroll/runs/:id/remove-test-payslips', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
+    const runId = positiveId(req.params.id)
+    if (!runId) return res.status(400).json({ message: 'Invalid payroll run ID' })
+    try {
+      const run = (await db.query(
+        `SELECT run.id, run.rule_snapshot,
+                EXISTS(SELECT 1 FROM payroll_run_events removed WHERE removed.payroll_run_id = run.id AND removed.action = 'test_payslips_removed') AS removed
+         FROM payroll_runs run WHERE run.id = $1`, [runId])).rows[0]
+      if (!run) return res.status(404).json({ message: 'Payroll run not found' })
+      if (run.rule_snapshot?.isTest !== true) return res.status(409).json({ message: 'Only practice payslips can be removed' })
+      assertPracticeAllowed(true)
+      if (!run.removed) {
+        await db.query(
+          `INSERT INTO payroll_run_events (payroll_run_id, action, actor_user_id, actor_role, actor_name, metadata)
+           VALUES ($1, 'test_payslips_removed', $2, $3, $4, '{}'::jsonb)`,
+          [runId, req.user.id, req.user.role, req.user.name || null])
+      }
+      return res.json({ status: 'removed' })
+    } catch (error) {
+      return handlePayrollError(error, res)
+    }
+  })
+
   router.post('/api/payroll/runs/:id/payslips/:lineId/send', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
     const runId = positiveId(req.params.id)
     const lineId = positiveId(req.params.lineId)
     if (!runId || !lineId) return res.status(400).json({ message: 'Invalid payslip ID' })
-    if (process.env.PAYROLL_FINALIZATION_ENABLED !== 'true') {
+    // Real payslip email waits for approval to be enabled; practice payslips can be emailed only from the local app.
+    let practiceAllowed = true
+    try { assertPracticeAllowed(true) } catch { practiceAllowed = false }
+    if (process.env.PAYROLL_FINALIZATION_ENABLED !== 'true' && !practiceAllowed) {
       return res.status(403).json({ message: 'Payslip email is disabled until payroll calculations are verified and approval is enabled' })
     }
     if (typeof deliverPayslipEmail !== 'function') return res.status(503).json({ message: 'Email delivery is unavailable' })
@@ -415,6 +494,12 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         await tx.query('SELECT pg_advisory_xact_lock($1, $2)', [716211, lineId])
         const payslip = await findPayslip(tx, lineId, runId)
         if (!payslip) return { status: 'not_found' }
+        const isTest = payslip.run.rule_snapshot?.isTest === true
+        if (isTest) assertPracticeAllowed(true)
+        if (!isTest && process.env.PAYROLL_FINALIZATION_ENABLED !== 'true') {
+          throw Object.assign(new Error('Payslip email is disabled until payroll calculations are verified and approval is enabled'), { statusCode: 403 })
+        }
+        if (isTest && payslip.line.test_payslips_removed) throw Object.assign(new Error('These test payslips were removed from employee pages'), { statusCode: 409 })
         if (payslip.run.status !== 'locked' || !(await tx.query('SELECT 1 FROM payroll_payments WHERE payroll_run_id=$1',[runId])).rows.length) {
           throw Object.assign(new Error('Record payment and close payroll before emailing payslips'), { statusCode: 409 })
         }
@@ -435,8 +520,9 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         const pdf = await renderPayslipPdf(payslip)
         await deliverPayslipEmail({
           to: recipients.rows[0].email,
-          subject: `Payslip for ${dateKey(payslip.run.payday)}`,
-          text: `Your payslip for ${dateKey(payslip.run.period_start)} to ${dateKey(payslip.run.period_end)} is attached. Please contact HR if you notice a discrepancy.`,
+          subject: `${isTest ? '[TEST] ' : ''}Payslip for ${dateKey(payslip.run.payday)}`,
+          // The payslip is in the message itself; the PDF is attached for saving or printing.
+          ...(({ html, text }) => ({ bodyHtml: html, text }))(payslipEmail({ ...payslip, payslipsUrl })),
           attachments: [{ filename: payslipFilename(payslip.run, payslip.line), content: pdf, contentType: 'application/pdf' }],
           requireDelivery: true,
         })
@@ -463,11 +549,12 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       return res.status(400).json({ message: 'Payroll period details are required' })
     }
     try {
-      const { periodStart, periodEnd, attendanceBatchId, cutoff, payday, includeContributions } = req.body
+      const { periodStart, periodEnd, attendanceBatchId, cutoff, payday, includeContributions, shift } = req.body
       if (!validDate(periodStart) || !validDate(periodEnd) || periodEnd < periodStart || !validDate(payday)) {
         return res.status(400).json({ message: 'Valid periodStart, periodEnd, and payday dates are required' })
       }
       return res.json(await payrollService.previewRun({
+        shift,
         periodStart,
         periodEnd,
         attendanceBatchId,

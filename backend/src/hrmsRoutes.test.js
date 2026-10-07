@@ -5,6 +5,18 @@ const {csvRows}=require('./services/hrmsCsvService')
 async function serverFor(router,callback){const app=express();app.use(express.json(),router);const server=app.listen(0);try{await callback(`http://127.0.0.1:${server.address().port}`)}finally{await new Promise(r=>server.close(r))}}
 const authRequired=(req,res,next)=>{req.user={id:1,role:req.headers['x-test-role']||'hr'};next()}
 const requireRole=roles=>(req,res,next)=>roles.includes(req.user.role)?next():res.status(403).json({message:'Forbidden'})
+
+test('payroll and attendance endpoints pass the selected shift to the review/calculation service',async()=>{
+ let selected
+ await serverFor(createPayrollRouter({db:{},payrollService:{previewRun:async input=>{selected=input.shift;return {id:1}}},authRequired,requireRole}),async url=>{
+  const response=await fetch(url+'/api/payroll/runs/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({periodStart:'2026-09-11',periodEnd:'2026-09-25',payday:'2026-09-30',cutoff:'second',shift:'night'})})
+  assert.equal(response.status,200);assert.equal(selected,'night')
+ })
+ await serverFor(createAttendanceReviewRouter({service:{preview:async input=>{selected=input.payrollScope;return {}}},authRequired,requireRole}),async url=>{
+  const body=new FormData();body.append('file',new Blob(['Person ID,Time,Attendance Check Point\n']),'night.csv');body.append('shift','night')
+  assert.equal((await fetch(url+'/api/attendance/preview',{method:'POST',body})).status,200);assert.equal(selected,'night')
+ })
+})
 test('attendance rejects employee access and invalid IDs/versions before touching review data',async()=>{
  let calls=0;const service={list:async()=>{calls++;return []},resolve:async()=>{calls++;return {}}}
  await serverFor(createAttendanceReviewRouter({service,authRequired,requireRole}),async url=>{

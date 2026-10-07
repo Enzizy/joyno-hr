@@ -4,6 +4,7 @@ const {fingerprint}=require('./services/attendanceReviewService')
 const emptyReviewContext={employees:[],profiles:[],leaves:[],holidays:[]}
 const confirmedBatch={id:7,review_state:'confirmed',period_start:'2026-09-11',period_end:'2026-09-25',review_version:2,context_hash:fingerprint(emptyReviewContext),error_count:0}
 function reviewFixture(sql){
+  if(sql.includes('FROM payroll_attendance_review_events'))return {rows:[]}
   if(sql.includes('FROM payroll_attendance_import_batches'))return {rows:[confirmedBatch]}
   if(sql.includes('SELECT e.id,e.employee_code')||sql.includes('SELECT p.id,p.employee_id')||sql.includes('FROM leave_requests WHERE status')||sql.includes('FROM philippine_holidays'))return {rows:[]}
 }
@@ -11,6 +12,7 @@ const {
   calculateContributions,
   calculatePayrollLine,
   calculateSssAssessablePay,
+  calculateThirteenthMonthAccrual,
   calculateWorkedSpecialHoliday,
   getSssMonthlySalaryCredit,
 } = require('./services/payrollCalculationService')
@@ -24,6 +26,21 @@ const {
 } = require('./services/payrollAttendanceService')
 const { payrollPeriodForMonth, validatePayrollPeriod } = require('./services/payrollScheduleService')
 const { createPayrollService } = require('./services/payrollService')
+
+test('13th-month accrual matches workbook register BB/BC: absences and basic adjustment count, tardiness does not', () => {
+  // FOR TESTING.xlsm PAYROLL REGISTER, September 30 2026 dayshift rows.
+  assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 10000, absenceDeduction: 919.54 }), 756.71) // UT 689.66 ignored
+  assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 10000, absenceDeduction: 2758.62 }), 603.45) // late/UT 1,427.20 ignored
+  assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 7500, absenceDeduction: 2758.62 }), 395.12) // tardiness 8.62 ignored
+  assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 7500, absenceDeduction: 689.66, basicAdjustment: 300 }), 592.53)
+  assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 7500, absenceDeduction: 8000 }), 0)
+  const line = calculatePayrollLine({ monthlyBasicSalary: 20000, cutoff: 'second', attendance: [
+    { date: '2026-09-11', status: 'absent' },
+    { date: '2026-09-14', status: 'present', lateMinutes: 0, undertimeMinutes: 360 },
+  ] })
+  assert.equal(line.undertimeDeduction, 689.66)
+  assert.equal(line.thirteenthMonthAccrual, 756.71)
+})
 
 test('15,000 monthly salary pays 7,500 per cutoff with all contributions on second cutoff', () => {
   const first = calculatePayrollLine({
@@ -214,7 +231,9 @@ test('HR first-cutoff override records its reason and recalculates SSS and net p
   assert.equal(updated.details.sssAssessment.overrideReason, 'Confirmed from HR register')
   assert.equal(event.previousPay, 7500)
   assert.equal(event.firstCutoffPay, 8000)
-  await assert.rejects(service.overrideFirstCutoffPay(4, 8, 8500, '  '), { statusCode: 400 })
+  // The note is optional, but the amount must still be valid pesos and centavos.
+  await assert.rejects(service.overrideFirstCutoffPay(4, 8, -1, ''), { statusCode: 400 })
+  await assert.rejects(service.overrideFirstCutoffPay(4, 8, 8500.001, ''), { statusCode: 400 })
 })
 
 test('late minutes never add travel fare to salary payroll', () => {
@@ -481,7 +500,7 @@ test('10th and 25th cutoffs yield the correct cross-month periods and February p
 })
 
 test('unfinished payroll cannot be approved by default', async () => {
-  const service = createPayrollService({ db: { query: () => { throw new Error('Database should not be called') } } })
+  const service = createPayrollService({ db: { query: () => ({rows:[{id:1,status:'draft',rule_snapshot:{}}]}) } })
   await assert.rejects(service.approveRun(1), { statusCode: 403 })
 })
 
@@ -510,11 +529,14 @@ test('approval rejects saved full-holiday-pay lines before updating the run', as
   }
 })
 
-test('month-end approval rejects an unverified first-cutoff estimate', async () => {
+test('month-end approval accepts half the monthly salary as the 15th pay without HR confirmation', async () => {
   const previous = process.env.PAYROLL_FINALIZATION_ENABLED
   process.env.PAYROLL_FINALIZATION_ENABLED = 'true'
   let updated = false
+  const queries = []
   const service = createPayrollService({ db: { async query(sql) {
+    queries.push(sql)
+    if (updated) return { rows: [{ id: 1, status: 'approved', cutoff: 'second', period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30' }] }
     const fixture=reviewFixture(sql);if(fixture)return fixture
     if (sql.includes('FROM payroll_runs')) return { rows: [{ id: 1, status: 'draft', cutoff: 'second',
       rule_snapshot:{attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2},include_contributions: true, attendance_batch_id: 7, period_start: '2026-09-11', period_end: '2026-09-25' }] }
@@ -523,12 +545,13 @@ test('month-end approval rejects an unverified first-cutoff estimate', async () 
     if (sql.includes('FROM payroll_daily_attendance')) return { rows: [{ count: 0 }] }
     if (sql.includes('SELECT 1 FROM payroll_run_lines')) return { rows: [] }
     if (sql.includes('SELECT employee_code FROM payroll_run_lines')) return { rows: [{ employee_code: 'IT-12' }] }
-    if (sql.includes('UPDATE payroll_runs')) updated = true
+    if (sql.includes('UPDATE payroll_runs')) { updated = true; return { rows: [{ id: 1, status: 'approved', cutoff: 'second', period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30' }] } }
     throw new Error(`Unexpected query: ${sql}`)
   } } })
   try {
-    await assert.rejects(service.approveRun(1), /Confirm the 15th payroll amount for IT-12/)
-    assert.equal(updated, false)
+    await service.approveRun(1)
+    assert.equal(updated, true)
+    assert.equal(queries.some(sql => sql.includes('firstCutoffSource')), false)
   } finally {
     if (previous === undefined) delete process.env.PAYROLL_FINALIZATION_ENABLED
     else process.env.PAYROLL_FINALIZATION_ENABLED = previous

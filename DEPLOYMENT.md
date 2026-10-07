@@ -124,9 +124,7 @@ Announcements use the existing Brevo email helper. The backend requires `BREVO_A
 
 Cloudflare production follows `main`; pushing a development branch creates no production release. The VPS API must be updated separately. Before a release, back up the existing API image and private configuration, fetch the verified release commit, build the API, verify the database migration list, and restart only the HR API. The shared database already records migrations through 027; do not reapply migrations or recalculate leave/payroll data for this deployment.
 
-Production builds hide the Pay page even if `VITE_PAYROLL_ENABLED=true` is set in Cloudflare.
-The production API also disables payroll endpoints. Local development can continue to use
-`VITE_PAYROLL_ENABLED=true` and `PAYROLL_ENABLED=true`.
+This section describes the leave-credit release. Payroll has since gone live; see **Payroll release** below.
 
 Cloudflare deploys the frontend from `main`. The Hostinger API needs this separate update:
 
@@ -151,3 +149,29 @@ The backup path is printed by the command. If the migration is already recorded,
 New allowances are separate: 5 sick and 3 vacation days after 3 months; 5 SIL days after 1 year.
 Bereavement is retired from new requests. Unused SIL is marked as cash-convertible;
 automatic cash payment remains pending a decision on timing and payroll handling.
+
+## Payroll release
+
+Payroll is live in production:
+
+- **Website.** Production builds include Payroll, Pay & schedules and the employees' My payslips page (`frontend/src/config/features.js`). Local development still follows `VITE_PAYROLL_ENABLED` and `VITE_PAYROLL_FINALIZATION_ENABLED`. Cloudflare deploys from `main`.
+- **API.** `compose.kvm.yml` sets `PAYROLL_ENABLED=true`, `PAYROLL_FINALIZATION_ENABLED=true` and `PAYSLIPS_URL=https://joyno-hr.pages.dev/payroll` (the "View my payslips" link in payslip emails). Practice runs stay local-only: the API refuses them when `NODE_ENV=production`. Payslip emails use the same Brevo settings as announcements.
+- **Database.** Migration 028 is already recorded in the shared database. The index created by 029 already exists (it was applied before it was recorded), so `npm run migrate` drops and recreates the same index and records 029. Payroll tables are empty at release, so this is instant.
+
+Order matters: Cloudflare publishes the website as soon as `main` is pushed, and the live Payroll pages show errors until the API is updated. Update the API on the VPS right after pushing:
+
+```bash
+cd /opt/joyno-hr
+git pull --ff-only
+cd backend
+sudo docker compose -f compose.kvm.yml build api
+sudo docker compose -f compose.kvm.yml run --rm api npm run migrate
+sudo docker compose -f compose.kvm.yml up -d --no-deps api
+sudo docker compose -f compose.kvm.yml exec -T api node -e \
+  "fetch('http://127.0.0.1:3000/health').then(r => r.text()).then(console.log)"
+# Payroll API on: this prints 401 (sign-in required). 404 means payroll is still off.
+sudo docker compose -f compose.kvm.yml exec -T api node -e \
+  "fetch('http://127.0.0.1:3000/api/payroll/runs').then(r => console.log(r.status))"
+```
+
+To switch payroll off again, set the two payroll flags in `compose.kvm.yml` to `"false"` and recreate the API container. The website then shows payroll errors until a build with payroll hidden is deployed.

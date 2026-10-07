@@ -97,7 +97,7 @@ onMounted(async () => {
       <p v-if="hrmsError" role="alert" class="mt-2 text-sm text-amber-300">{{hrmsError}}</p>
       <div v-if="hrmsOperations" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <RouterLink to="/compensation" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.setup}} employees need pay / ID setup</RouterLink>
-        <RouterLink to="/attendance" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.attendance}} attendance reviews unfinished</RouterLink>
+        <RouterLink to="/payroll" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.attendance}} attendance reviews unfinished</RouterLink>
         <RouterLink to="/payroll" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.drafts}} payroll drafts need review</RouterLink>
         <RouterLink to="/payroll" class="rounded-lg bg-gray-900 p-3 text-sm">{{hrmsOperations.awaiting_payment}} approved runs await payment · {{hrmsOperations.awaiting_release}} await payslip release</RouterLink>
       </div>

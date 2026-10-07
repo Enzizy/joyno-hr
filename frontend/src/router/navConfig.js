@@ -47,9 +47,8 @@ export const navGroups = [
       { path: '/leave-approvals', name: 'Approvals', icon: 'check', roles: MANAGEMENT_ROLES },
     ],
   },
-  {name:'Attendance',icon:'chart',path:'/attendance',roles:MANAGEMENT_ROLES,hidden:!payrollEnabled},
   {
-    name: 'Pay',
+    name: 'Payroll',
     icon: 'pay',
     path: '/payroll',
     roles: ALL_ROLES,

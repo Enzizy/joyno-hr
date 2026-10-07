@@ -19,8 +19,10 @@ services:
       NODE_ENV: production
       PORT: 3000
       RUN_MIGRATIONS_ON_STARTUP: "false"
-      PAYROLL_ENABLED: "false"
-      PAYROLL_FINALIZATION_ENABLED: "false"
+      # Payroll is live: HR runs, approves and closes payroll and emails payslips from the production site.
+      PAYROLL_ENABLED: "true"
+      PAYROLL_FINALIZATION_ENABLED: "true"
+      PAYSLIPS_URL: "https://joyno-hr.pages.dev/payroll"
       RUN_BACKGROUND_JOBS: ${RUN_BACKGROUND_JOBS:-false}
     ports:
       - "127.0.0.1:3001:3000"

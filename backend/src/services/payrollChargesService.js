@@ -23,12 +23,12 @@ function normalizeCharges(charges) {
   return charges.map((entry) => {
     const type = String(entry?.type || '')
     const amount = Number(entry?.amount)
-    const note = String(entry?.note || '').trim()
+    // A note is optional; the item's type is used as its description on the payslip.
+    const note = String(entry?.note || '').trim() || CHARGE_TYPES[type]?.label || ''
     if (!CHARGE_TYPES[type] || !Number.isFinite(amount) || amount === 0 ||
         Math.abs(amount) > 1000000 || (amount < 0 && type !== 'basic_pay_adjustment') ||
-        Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001 ||
-        note.length < 3 || note.length > 200) {
-      throw new TypeError('Each item needs a valid type, peso amount, and a 3–200 character reason')
+        Math.abs(amount * 100 - Math.round(amount * 100)) > 0.000001 || note.length > 200) {
+      throw new TypeError('Each item needs a valid type and peso amount (notes up to 200 characters)')
     }
     return { type, amount, note }
   })

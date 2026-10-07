@@ -23,12 +23,14 @@ function createAttendanceReviewRouter({service,authRequired,requireRole}){
  const file=(req,res,next)=>upload.single('file')(req,res,error=>{
   if(error)return res.status(error.code==='LIMIT_FILE_SIZE'?413:400).json({message:'Upload one CSV file, up to 10 MB'})
   if(!req.file||!req.file.originalname.toLowerCase().endsWith('.csv')||req.file.buffer.includes(0))return res.status(415).json({message:'Upload a valid CSV file'})
-  req.attendanceInput={fileName:req.file.originalname,csvText:decodeAttendanceCsv(req.file.buffer),periodStart:req.body.periodStart,periodEnd:req.body.periodEnd,previewToken:req.body.previewToken}
+  let employeeIds
+  try{employeeIds=req.body.employeeIds ? JSON.parse(req.body.employeeIds) : undefined}catch{return res.status(400).json({message:'Choose valid employees'})}
+  req.attendanceInput={fileName:req.file.originalname,csvText:decodeAttendanceCsv(req.file.buffer),periodStart:req.body.periodStart,periodEnd:req.body.periodEnd,previewToken:req.body.previewToken,payrollScope:req.body.shift,isTest:req.body.isTest==='true',employeeIds}
   next()
  })
  router.post('/api/attendance/preview',file,handler(req=>service.preview(req.attendanceInput)))
  router.post('/api/attendance/drafts',file,handler(req=>service.save(req.attendanceInput,req.user)))
- router.get('/api/attendance/batches',handler(()=>service.list()))
+ router.get('/api/attendance/batches',handler(req=>service.list(req.query.shift)))
  router.get('/api/attendance/batches/:id',handler(req=>service.get(req.params.id)))
  router.get('/api/attendance/batches/:id/export',async(req,res)=>{
   try{
@@ -36,9 +38,9 @@ function createAttendanceReviewRouter({service,authRequired,requireRole}){
    if(!batch)return res.status(404).json({message:'Attendance batch not found'})
    if(batch.review_state!=='confirmed')return res.status(409).json({message:'Confirm attendance before exporting official DTR'})
    const local=value=>value?new Date(value).toLocaleString('en-PH',{timeZone:'Asia/Manila',hour12:false}):''
-   res.set('Cache-Control','private, no-store').type('text/csv').attachment(`attendance-${batch.id}-confirmed.csv`).send(csvRows(
-    ['Review ID','Employee ID','Attendance ID','Employee','Work date','Status','Time in (Manila)','Time out (Manila)','Late minutes','Undertime minutes','Leave record ID','Verification reason'],
-    batch.daily.map(d=>[batch.id,d.employee_code,d.person_id,d.employee_name,d.work_date,d.status,local(d.first_scan_at),local(d.last_scan_at),d.late_minutes,d.undertime_minutes,d.leave_request_id,d.correction_reason])))
+   res.set('Cache-Control','private, no-store').type('text/csv').attachment(`${batch.isTest?'TEST-ONLY-':''}attendance-${batch.id}-confirmed.csv`).send(csvRows(
+    ['Practice data','Review ID','Employee ID','Attendance ID','Employee','Work date','Status','Time in (Manila)','Time out (Manila)','Late minutes','Undertime minutes','Leave record ID','Day type','Approved OT hours','Verification reason'],
+    batch.daily.map(d=>[batch.isTest?'TEST ONLY':'',batch.id,d.employee_code,d.person_id,d.employee_name,d.work_date,d.status,local(d.first_scan_at),local(d.last_scan_at),d.late_minutes,d.undertime_minutes,d.leave_request_id,d.review_decision?.dayType==='special_holiday'?'Special holiday / rest day':'Regular',Number(d.review_decision?.overtimeHours||0),d.correction_reason])))
   }catch(e){res.status(500).json({message:'Unable to export attendance'})}
  })
  router.post('/api/attendance/batches/:id/refresh',handler(req=>service.refresh(req.params.id,req.body.version,req.user)))

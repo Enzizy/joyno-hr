@@ -42,7 +42,6 @@ watch(adjustmentType, (type) => {
 })
 
 function submit() {
-  if (!reason.value.trim()) return
   const payload = {
     adjustmentType: adjustmentType.value,
     reason: reason.value.trim(),
@@ -109,14 +108,14 @@ function submit() {
       </div>
 
       <label class="block text-sm text-gray-300">
-        Reason for adjustment
+        Note (optional)
         <textarea v-model="reason" rows="3" maxlength="500" placeholder="Example: Employee requested approved undertime directly from HR." class="form-control mt-1.5" />
       </label>
     </div>
 
     <template #footer>
       <AppButton variant="secondary" @click="emit('close')">Cancel</AppButton>
-      <AppButton :loading="saving" :disabled="!reason.trim() || (usesTimes && (!timeIn || !timeOut))" @click="submit">Save adjustment</AppButton>
+      <AppButton :loading="saving" :disabled="usesTimes && (!timeIn || !timeOut)" @click="submit">Save adjustment</AppButton>
     </template>
   </AppModal>
 </template>

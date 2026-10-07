@@ -15,7 +15,7 @@ const currentEntry = computed(() => {
 </script>
 
 <template>
-  <nav v-if="route.path !== '/'" class="mb-4 flex items-center gap-2 text-xs text-gray-500" aria-label="Breadcrumb">
+  <nav v-if="route.path !== '/' && route.meta.breadcrumb !== false" class="mb-4 flex items-center gap-2 text-xs text-gray-500" aria-label="Breadcrumb">
     <RouterLink to="/" class="rounded text-gray-500 hover:text-primary-300">Dashboard</RouterLink>
     <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m9 18 6-6-6-6" /></svg>
     <template v-if="currentEntry.group">

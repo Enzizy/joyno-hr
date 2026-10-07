@@ -11,7 +11,38 @@ function isNightPayrollEmployee(employee, profiles = []) {
 }
 
 function payrollEmployeeIncluded(employee, profiles = [], restrictToDay = dayShiftOnly()) {
-  return !restrictToDay || !isNightPayrollEmployee(employee, profiles)
+  const scope = typeof restrictToDay === 'boolean' ? (restrictToDay ? 'day' : 'all') : normalizePayrollScope(restrictToDay)
+  const night = isNightPayrollEmployee(employee, profiles)
+  return scope === 'all' || (scope === 'night' ? night : !night)
 }
 
-module.exports = { dayShiftOnly, isNightPayrollEmployee, payrollEmployeeIncluded }
+function normalizePayrollScope(value) {
+  if (value === undefined || value === null || value === '') return dayShiftOnly() ? 'day' : 'all'
+  if (!['day', 'night', 'all'].includes(value)) throw new RangeError('Choose Day or Night shift')
+  return value
+}
+
+async function attendancePayrollScope(db, batchId) {
+  const row = (await db.query(`SELECT current_value->>'payrollScope' AS payroll_scope FROM payroll_attendance_review_events
+    WHERE batch_id=$1 AND current_value ? 'payrollScope' ORDER BY id DESC LIMIT 1`, [batchId])).rows[0]
+  return row?.payroll_scope || 'all'
+}
+
+async function attendanceReviewSettings(db, batchId) {
+  const row = (await db.query(`SELECT current_value FROM payroll_attendance_review_events
+    WHERE batch_id=$1 AND current_value ? 'payrollScope' ORDER BY id DESC LIMIT 1`, [batchId])).rows[0]
+  return row?.current_value || { payrollScope: 'all' }
+}
+
+function assertPracticeAllowed(isTest) {
+  if (isTest && process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
+    throw Object.assign(new Error('Practice payroll is available only in the local test app'), { statusCode: 403 })
+  }
+}
+
+function canFinalizePayroll(run) {
+  if (run.rule_snapshot?.isTest === true) { assertPracticeAllowed(true); return true }
+  return process.env.PAYROLL_FINALIZATION_ENABLED === 'true'
+}
+
+module.exports = { dayShiftOnly, isNightPayrollEmployee, payrollEmployeeIncluded, normalizePayrollScope, attendancePayrollScope, attendanceReviewSettings, assertPracticeAllowed, canFinalizePayroll }

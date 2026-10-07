@@ -3,9 +3,19 @@ const {buildAttendancePreview,reviewDecision}=require('./services/attendanceRevi
 const context=()=>({employees:[{id:1,employee_code:'EMP-1',first_name:'Sample',last_name:'Employee',status:'active',date_hired:'2026-01-01',last_working_date:null,person_id:'00042'}],profiles:[{id:1,employee_id:1,effective_from:'2026-01-01',effective_to:null,monthly_basic_salary:15000,workdays:[1,2,3,4,5],work_start_time:'09:00:00',work_end_time:'18:00:00',unpaid_break_minutes:60}],leaves:[],holidays:[]})
 const csv=(rows=[['00042','09/21/26 09:10','Main_Door_Out_Door1_Entrance Card Reader1'],['00042','09/21/26 17:30','Main_Door_IN_Door1_Entrance Card Reader1']])=>'Person ID,Time,Attendance Check Point\n'+rows.map(r=>r.join(',')).join('\n')
 const preview=(c=context(),text=csv(),start='2026-09-21',end='2026-09-21')=>buildAttendancePreview({csvText:text,periodStart:start,periodEnd:end},c)
-test('late and undertime need explicit review although the punches are complete',()=>{
- const day=preview().daily[0];assert.equal(day.status,'present');assert.equal(day.review_state,'pending');assert.equal(day.late_minutes,10);assert.equal(day.undertime_minutes,30)
+test('late and undertime with complete punches are deducted as recorded without a decision',()=>{
+ const day=preview().daily[0];assert.equal(day.status,'present');assert.equal(day.review_state,'clear');assert.ok(day.issue_codes.includes('late_undertime'));assert.equal(day.late_minutes,10);assert.equal(day.undertime_minutes,30)
  const checked=reviewDecision(day,{action:'acknowledge',reason:'Verified actual punches'},context());assert.equal(checked.review_state,'resolved');assert.equal(checked.undertime_minutes,30)
+})
+test('counting a full day for a company task removes late and undertime but keeps the real scans',()=>{
+ const day=preview().daily[0]
+ const excused=reviewDecision(day,{action:'excused'},context())
+ assert.equal(excused.status,'present');assert.equal(excused.late_minutes,0);assert.equal(excused.undertime_minutes,0)
+ assert.equal(excused.first_scan_at,day.first_scan_at);assert.equal(excused.last_scan_at,day.last_scan_at)
+ assert.equal(excused.correction_reason,'Counted as a full day · late and undertime excused')
+ assert.equal(reviewDecision(day,{action:'excused',reason:'Laboratory tests (company requirement)'},context()).correction_reason,'Laboratory tests (company requirement)')
+ const c=context();c.employees.push({...c.employees[0],id:2,employee_code:'EMP-2',person_id:'00043'});c.profiles.push({...c.profiles[0],id:2,employee_id:2})
+ assert.throws(()=>reviewDecision(preview(c).daily.find(d=>d.employee_id===2),{action:'excused'},c),/time-in and time-out/)
 })
 test('employees with no rows in the CSV are included without being inferred absent',()=>{
  const c=context();c.employees.push({...c.employees[0],id:2,employee_code:'EMP-2',person_id:'00043'});c.profiles.push({...c.profiles[0],id:2,employee_id:2})

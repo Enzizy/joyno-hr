@@ -192,8 +192,8 @@ export async function getDashboardOverview() {
   return api.getDashboardOverview()
 }
 
-export async function getPayrollProfiles() {
-  return api.getPayrollProfiles()
+export async function getPayrollProfiles(shift) {
+  return api.getPayrollProfiles(shift)
 }
 
 export async function inspectPayrollTestCsv(file) {
@@ -256,8 +256,8 @@ export async function updatePayrollFirstCutoffPay(runId, lineId, firstCutoffPay,
   return api.updatePayrollFirstCutoffPay(runId, lineId, firstCutoffPay, reason)
 }
 
-export async function getPayrollPayslipPdf(runId, lineId) {
-  return api.getPayrollPayslipPdf(runId, lineId)
+export async function getPayrollPayslipPdf(runId, lineId, options) {
+  return api.getPayrollPayslipPdf(runId, lineId, options)
 }
 
 export async function sendPayrollPayslip(runId, lineId) {

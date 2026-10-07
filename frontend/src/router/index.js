@@ -3,6 +3,14 @@ import { useAuthStore } from '@/stores/authStore'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { isRoleAllowed } from '@/utils/roles'
 import { payrollEnabled } from '@/config/features'
+import { standardPeriod } from '@/utils/payrollPeriods'
+
+function attendanceRedirect(to) {
+  const period = standardPeriod(String(to.query.payrollMonth || ''), String(to.query.cutoff || ''))
+  if (!period) return { path: '/payroll' }
+  const query = { step: 'attendance', ...(to.query.practice === 'true' ? { practice: 'true' } : {}), ...(to.query.batch ? { batch: to.query.batch } : {}) }
+  return { path: `/payroll/${period.payday}/${to.query.shift === 'night' ? 'night' : 'day'}`, query }
+}
 
 const routes = [
   {
@@ -118,14 +126,23 @@ const routes = [
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
       ...(payrollEnabled ? [{
-        path: 'attendance', name: 'Attendance', component: () => import('@/views/AttendanceView.vue'), meta: {roles:['admin','hr','ceo']},
+        // Attendance is now stage 2 of a pay run; older links land on the matching run.
+        path: 'attendance', name: 'Attendance', redirect: attendanceRedirect,
       }, {
         path: 'compensation', name: 'Compensation', component: () => import('@/views/CompensationView.vue'), meta: {roles:['admin','hr','ceo']},
       }, {
         path: 'payroll',
         name: 'Payroll',
-        component: () => import('@/views/PayrollView.vue'),
+        component: () => import('@/views/PayrollHubView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
+      }, {
+        // The one-employee calculator was replaced by practice runs.
+        path: 'payroll/test', redirect: '/payroll',
+      }, {
+        path: 'payroll/:payday(\\d{4}-\\d{2}-\\d{2})/:shift(day|night)',
+        name: 'PayRun',
+        component: () => import('@/views/PayRunView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo'], breadcrumb: false },
       }] : []),
       // Admin
       {

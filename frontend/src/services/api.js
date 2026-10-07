@@ -80,8 +80,8 @@ export const publishAnnouncement=(id,version)=>request(`/api/announcements/${id}
 export const archiveAnnouncement=(id,version)=>request(`/api/announcements/${id}/archive`,{method:'POST',body:JSON.stringify({version})})
 export const readAnnouncement=id=>request(`/api/announcements/${id}/read`,{method:'POST',body:'{}'})
 
-export async function getPayrollProfiles() {
-  return request('/api/payroll/profiles')
+export async function getPayrollProfiles(shift) {
+  return request(`/api/payroll/profiles${shift ? `?shift=${encodeURIComponent(shift)}` : ''}`)
 }
 
 export async function inspectPayrollTestCsv(file) {
@@ -112,12 +112,13 @@ export async function importPayrollAttendance(file, periodStart, periodEnd) {
   return request('/api/payroll/attendance/import', { method: 'POST', body })
 }
 
-export async function attendanceUpload(action,file,periodStart,periodEnd,previewToken='') {
+export async function attendanceUpload(action,file,periodStart,periodEnd,previewToken='',shift='day',options={}) {
   const body=new FormData()
-  body.append('file',file);body.append('periodStart',periodStart);body.append('periodEnd',periodEnd);body.append('previewToken',previewToken)
+  body.append('file',file);body.append('periodStart',periodStart);body.append('periodEnd',periodEnd);body.append('previewToken',previewToken);body.append('shift',shift)
+  body.append('isTest',String(options.isTest===true));if(options.employeeIds)body.append('employeeIds',JSON.stringify(options.employeeIds))
   return request(`/api/attendance/${action}`,{method:'POST',body})
 }
-export const listAttendanceReviews=()=>request('/api/attendance/batches')
+export const listAttendanceReviews=(shift)=>request(`/api/attendance/batches${shift ? `?shift=${encodeURIComponent(shift)}` : ''}`)
 export const getAttendanceReview=id=>request(`/api/attendance/batches/${id}`)
 export const attendanceReviewAction=(id,action,data)=>request(`/api/attendance/batches/${id}/${action}`,{method:'POST',body:JSON.stringify(data)})
 export const getPayrollProfileHistory=id=>request(`/api/payroll/profiles/${id}/history`)
@@ -182,12 +183,21 @@ export async function updatePayrollFirstCutoffPay(runId, lineId, firstCutoffPay,
   })
 }
 
-export async function getPayrollPayslipPdf(runId, lineId) {
+// copies: 2 gives the print sheet (employee's and company's copy on one Legal page).
+export async function getPayrollPayslipPdf(runId, lineId, { copies = 1 } = {}) {
   const path = runId == null
     ? `/api/payroll/my-payslips/${encodeURIComponent(lineId)}.pdf`
     : `/api/payroll/runs/${encodeURIComponent(runId)}/payslips/${encodeURIComponent(lineId)}.pdf`
-  return requestPdf(path)
+  return requestPdf(copies === 2 ? `${path}?copies=2` : path)
 }
+
+export async function getPayrollPayslipsPdf(runId, { lineIds = [], copies = 1 } = {}) {
+  const lines = lineIds.length ? `&lines=${lineIds.map(encodeURIComponent).join(',')}` : ''
+  return requestPdf(`/api/payroll/runs/${encodeURIComponent(runId)}/payslips.pdf?copies=${copies}${lines}`)
+}
+
+export const getPayslipDeliveries = (runId) => request(`/api/payroll/runs/${encodeURIComponent(runId)}/payslip-deliveries`)
+export const removeTestPayslips = (runId) => request(`/api/payroll/runs/${encodeURIComponent(runId)}/remove-test-payslips`, { method: 'POST' })
 
 export async function sendPayrollPayslip(runId, lineId) {
   return request(`/api/payroll/runs/${encodeURIComponent(runId)}/payslips/${encodeURIComponent(lineId)}/send`, { method: 'POST' })

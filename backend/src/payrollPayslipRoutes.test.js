@@ -158,6 +158,61 @@ test('paid and closed payslip email uses the linked account and does not resend 
   }
 })
 
+// Sends one practice payslip with the given environment and run state; returns the response and any email sent.
+async function sendPracticePayslip({ nodeEnv, removed = false }) {
+  const previous = { env: process.env.NODE_ENV, flag: process.env.PAYROLL_FINALIZATION_ENABLED }
+  process.env.NODE_ENV = nodeEnv
+  delete process.env.PAYROLL_FINALIZATION_ENABLED
+  const emails = []
+  const practiceLine = { id: 8, run_id: 4, employee_id: 12, employee_code: 'IT-12', employee_name: 'Sample Employee', status: 'locked',
+    rule_snapshot: { isTest: true }, test_payslips_removed: removed, period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30',
+    gross_salary: 7500, net_pay: 7500, details: {} }
+  const db = { transaction: (fn) => fn(db), query: async (sql) => {
+    if (sql.includes('pg_advisory')) return { rows: [] }
+    if (sql.includes('FROM payroll_run_lines line')) return { rows: [practiceLine] }
+    if (sql.includes('FROM payroll_payments')) return { rows: [{ exists: 1 }] }
+    if (sql.includes("action = 'payslip_emailed'")) return { rows: [] }
+    if (sql.includes('FROM users')) return { rows: [{ email: 'sample@example.com' }] }
+    if (sql.includes('INSERT INTO payroll_run_events')) return { rows: [] }
+    throw Error(`Unexpected query: ${sql}`)
+  } }
+  const app = express()
+  app.use(createPayrollRouter({ db, payrollService: {}, authRequired: (req, res, next) => { req.user = { id: 1, role: 'hr' }; next() },
+    requireRole: () => (req, res, next) => next(), deliverPayslipEmail: async (email) => { emails.push(email) } }))
+  const server = app.listen(0)
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/payroll/runs/4/payslips/8/send`, { method: 'POST' })
+    return { status: response.status, body: await response.json(), emails }
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    if (previous.env === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous.env
+    if (previous.flag !== undefined) process.env.PAYROLL_FINALIZATION_ENABLED = previous.flag
+  }
+}
+
+test('practice payslips are emailed only from the local app, marked as a test', async () => {
+  const blocked = await sendPracticePayslip({ nodeEnv: 'production' })
+  assert.equal(blocked.status, 403)
+  assert.equal(blocked.emails.length, 0)
+  const sent = await sendPracticePayslip({ nodeEnv: 'development' })
+  assert.equal(sent.status, 200)
+  assert.equal(sent.emails.length, 1)
+  assert.equal(sent.emails[0].to, 'sample@example.com')
+  assert.equal(sent.emails[0].subject, '[TEST] Payslip for 2026-09-30')
+  assert.match(sent.emails[0].text, /^This is a test payslip\. No payment was made\./)
+  // The payslip is in the message body, not only in the attachment.
+  assert.match(sent.emails[0].bodyHtml, /Test payslip — no payment was made/)
+  assert.match(sent.emails[0].bodyHtml, /Net pay[\s\S]*₱7,500\.00/)
+  assert.match(sent.emails[0].text, /Net pay: ₱7,500\.00/)
+  assert.match(sent.emails[0].attachments[0].filename, /^TEST-ONLY-payslip-/)
+})
+
+test('removed test payslips cannot be sent again', async () => {
+  const removed = await sendPracticePayslip({ nodeEnv: 'development', removed: true })
+  assert.equal(removed.status, 409)
+  assert.equal(removed.emails.length, 0)
+})
+
 test('one-employee CSV preview includes manual earnings and does not write to the database', async () => {
   const app = express()
   const queries = []

@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
-const { payrollBreakdown, payslipFilename, renderPayslipPdf } = require('./services/payrollPayslipService')
+const { payrollBreakdown, payslipSections, amountInWords, payslipFilename, renderPayslipPdf, renderPayslipsPdf } = require('./services/payrollPayslipService')
 const { createPayrollService } = require('./services/payrollService')
 const { normalizeCharges } = require('./services/payrollChargesService')
 
@@ -92,13 +92,49 @@ test('draft PDF is a printable PDF buffer', async () => {
   assert.ok(pdf.length > 1000)
 })
 
-test('payslip PDF handles a full set of charge entries', async () => {
+const pageCount = (pdf) => (pdf.toString('latin1').match(/\/Type \/Page\b/g) || []).length
+
+test('payslip PDF keeps the workbook rows when a line has many charges', async () => {
   const manyCharges = Array.from({ length: 20 }, (_, index) => ({
     type: 'cash_advance', amount: 1, note: `Approved installment ${index + 1}`,
   }))
-  const pdf = await renderPayslipPdf({ run, line: { ...line, details: { ...line.details, charges: manyCharges } } })
+  const charged = { ...line, details: { ...line.details, charges: manyCharges } }
+  const pdf = await renderPayslipPdf({ run, line: charged })
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
-  assert.ok((pdf.toString('latin1').match(/\/Type \/Page\b/g) || []).length >= 2)
+  assert.equal(pageCount(pdf), 1)
+  assert.equal(payslipSections(charged).deductions.find((row) => row.label.startsWith('CASH ADVANCE')).amount, 20)
+})
+
+test('payslip follows the workbook layout and its net pay matches the pay line', () => {
+  const leaveLine = { ...line, absence_days: 1, paid_leave_days: 2, unpaid_leave_days: 0, absence_deduction: '689.66',
+    late_minutes: 30, undertime_minutes: 15, late_deduction: '43.10', undertime_deduction: '21.55', cola_pay: '500',
+    details: { manualEarnings: [], charges: [{ type: 'pagibig_mpl', amount: 300, note: 'MPL 2 of 24' }, { type: 'other_non_taxable_earning', amount: 250, note: 'Rice' }],
+      automaticEarnings: [{ type: 'overtime', amount: 582.76 }], approvedWork: { overtimeHours: 4 } } }
+  const sections = payslipSections(leaveLine)
+  const less = Object.fromEntries(sections.less.map((row) => [row.label, row]))
+  const add = Object.fromEntries(sections.additions.map((row) => [row.label, row]))
+  // Paid leave is shown inside ABSENCE and added back under LEAVE, as the workbook does.
+  assert.equal(less.ABSENCE.qty, '(3.00)')
+  assert.equal(less.ABSENCE.amount, 2068.97)
+  assert.equal(add.LEAVE.amount, 1379.31)
+  assert.equal(less['UT/LATE'].qty, '(45 min.)')
+  assert.equal(add.OVERTIME.qty, '(4.00)')
+  assert.equal(add['ALLOWANCE / COLA'].amount, 750)
+  assert.equal(sections.deductions.find((row) => row.label === 'MPL').amount, 300)
+  const systemNet = 7500 + 500 + 582.76 + 250 - 689.66 - 64.65 - 1325 - 300
+  assert.equal(sections.net, Math.round(systemNet * 100) / 100)
+})
+
+test('amount in words follows the workbook macro', () => {
+  assert.equal(amountInWords(6728.45), 'Six Thousand Seven Hundred Twenty Eight & 45/100 Pesos Only')
+  assert.equal(amountInWords(15000), 'Fifteen Thousand Pesos Only')
+  assert.equal(amountInWords(1210005.07), 'One Million Two Hundred Ten Thousand Five & 07/100 Pesos Only')
+})
+
+test('print sheets put two copies of each payslip on one Legal page', async () => {
+  const pdf = await renderPayslipsPdf([{ run, line }, { run, line: { ...line, id: 9, employee_code: 'IT/13' } }], { copies: 2 })
+  assert.equal(pageCount(pdf), 2)
+  assert.match(pdf.toString('latin1'), /\/MediaBox \[0 0 612 1008\]/)
 })
 
 test('manual earnings update is draft-only and recalculates net without double-counting', async () => {

@@ -3,6 +3,7 @@ const {payrollEmployeeIncluded}=require('./services/payrollScopeService')
 const {buildAttendancePreview,fingerprint}=require('./services/attendanceReviewService')
 const {createPayrollService}=require('./services/payrollService')
 const {createPayrollRouter}=require('./routes/payrollRoutes')
+const {normalizePayrollScope}=require('./services/payrollScopeService')
 const day={id:1,employee_id:1,employee_code:'DAY-1',first_name:'Day',last_name:'Fixture',shift:'day',status:'active',person_id:'00001',date_hired:'2026-01-01'}
 const night={...day,id:2,employee_id:2,employee_code:'NIGHT-2',first_name:'Night',shift:'Night',person_id:'00002'}
 const profile={employee_id:1,effective_from:'2026-01-01',monthly_basic_salary:15000,work_start_time:'09:00',work_end_time:'18:00',unpaid_break_minutes:60,workdays:[1,2,3,4,5]}
@@ -31,11 +32,30 @@ test('day staff absent from a day export remain flagged for HR; filtering does n
  const d=preview(c).daily.find(d=>d.employee_id===3)
  assert.equal(d.status,'exception');assert.ok(d.issue_codes.includes('no_record'))
 })
+
+test('explicit Night scope includes night staff even while the old day-only default is set',()=>{
+ assert.equal(payrollEmployeeIncluded(night,[],'night'),true)
+ assert.equal(payrollEmployeeIncluded(day,[],'night'),false)
+ assert.throws(()=>normalizePayrollScope('invalid'),/Choose Day or Night/)
+ const c=context();c.payrollScope='night';c.profiles.push({...profile,employee_id:2,work_start_time:'21:00',work_end_time:'06:00'})
+ const p=preview(c,'Person ID,Time,Attendance Check Point\n00002,2026-09-21 21:00,Main_Door_Out_Door1_Entrance Card Reader1\n00002,2026-09-22 06:00,Main_Door_IN_Door1_Entrance Card Reader1')
+ assert.equal(p.daily.length,1);assert.equal(p.daily[0].employee_id,2);assert.equal(p.summary.flaggedDays,0)
+ assert.notEqual(p.preview_token,preview().preview_token)
+})
 test('scope changes invalidate prior confirmations and previews without mutating the employee roster',()=>{
  const c=context(),before=JSON.stringify(c),scoped=preview(c)
  const all={...c};delete all.payrollScope
  assert.notEqual(scoped.context_hash,fingerprint(all));assert.notEqual(scoped.preview_token,preview(all).preview_token)
  assert.equal(JSON.stringify(c),before)
+})
+
+test('other-shift salary and leave changes do not invalidate Day attendance; a shift transfer does',()=>{
+ const c=context(),before=fingerprint(c)
+ c.profiles.push({...profile,employee_id:2,monthly_basic_salary:19000,work_start_time:'21:00',work_end_time:'06:00'})
+ c.leaves.push({employee_id:2,start_date:'2026-09-21',end_date:'2026-09-21',status:'approved'})
+ assert.equal(fingerprint(c),before)
+ c.employees[1]={...night,shift:'day'};c.profiles=c.profiles.filter(p=>p.employee_id!==2)
+ assert.notEqual(fingerprint(c),before)
 })
 test('pay setup API excludes night employees while the flag is on and restores them when switched off',async()=>{
  const previous=process.env.PAYROLL_DAY_SHIFT_ONLY

@@ -139,8 +139,9 @@ const loginLimiter = rateLimit({
 })
 
 const JWT_SECRET = process.env.JWT_SECRET || 'change_this_secret'
-// Payroll remains available for local testing only during the leave-policy release.
-const PAYROLL_ENABLED = process.env.NODE_ENV !== 'production' && process.env.PAYROLL_ENABLED === 'true'
+// Payroll is live; PAYROLL_ENABLED (set in the KVM Compose file) turns its API on. Practice runs stay
+// local-only (see assertPracticeAllowed), and finalization has its own PAYROLL_FINALIZATION_ENABLED flag.
+const PAYROLL_ENABLED = process.env.PAYROLL_ENABLED === 'true'
 const SMTP_USER = (process.env.SMTP_USER || '').trim()
 const SMTP_PASS = (process.env.SMTP_PASS || '').trim()
 const SMTP_FROM = (process.env.SMTP_FROM || SMTP_USER || '').trim()
@@ -160,9 +161,10 @@ const EMAIL_LOGO_URL = (
 ).trim()
 let mailTransport = null
 
-function buildBrandedEmailHtml({ subject, text, linkLabels = {} }) {
+// bodyHtml: a message that brings its own layout (for example a payslip); otherwise the text is formatted.
+function buildBrandedEmailHtml({ subject, text, linkLabels = {}, bodyHtml = '' }) {
   const appName = MAIL_APP_NAME
-  const body = renderEmailBodyHtml(text, linkLabels)
+  const body = bodyHtml || renderEmailBodyHtml(text, linkLabels)
 
   return `<!doctype html>
 <html>
@@ -280,9 +282,9 @@ function getMailTransport() {
   return mailTransport
 }
 
-async function deliverEmailNotification({ to, subject, text, html = null, linkLabels = {}, attachments = [], requireDelivery = false }) {
+async function deliverEmailNotification({ to, subject, text, html = null, bodyHtml = '', linkLabels = {}, attachments = [], requireDelivery = false }) {
   if (!to || !subject || !text) return
-  const finalHtml = html || buildBrandedEmailHtml({ subject, text, linkLabels })
+  const finalHtml = html || buildBrandedEmailHtml({ subject, text, linkLabels, bodyHtml })
   if (BREVO_API_KEY && BREVO_FROM_EMAIL) {
     const response = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
@@ -923,7 +925,9 @@ app.use(createAnnouncementRouter({
 if (PAYROLL_ENABLED) {
   app.use(createAttendanceReviewRouter({service:createAttendanceReviewService({db}),authRequired,requireRole}))
   const payrollService = createPayrollService({ db })
-  app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog, deliverPayslipEmail: deliverEmailNotification }))
+  app.use(createPayrollRouter({ db, payrollService, authRequired, requireRole, addAuditLog, deliverPayslipEmail: deliverEmailNotification,
+  // The email's 'View my payslips' link, set only once payroll is on the public site; employees cannot open a local address.
+  payslipsUrl: String(process.env.PAYSLIPS_URL || '').trim() }))
 }
 
 async function loadUserProfile(userId) {

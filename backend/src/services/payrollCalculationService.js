@@ -185,6 +185,15 @@ function calculateAttendanceTotals(attendance, { dailyRate, hourlyRate, workdays
   }
 }
 
+// Workbook PAYROLL REGISTER: Total Basic Salary = basic - absences + leave w/pay
+// + CHARGES basic-pay adjustment (BB), then 13th month = BB / 12 (BC). Paid leave
+// never enters absenceDeduction here, and tardiness/undertime is not subtracted.
+function calculateThirteenthMonthAccrual({ grossSalary, absenceDeduction = 0, basicAdjustment = 0 }) {
+  const earnedBasic = roundMoney(Math.max(0, finiteNumber(grossSalary, 'grossSalary') -
+    finiteNumber(absenceDeduction, 'absenceDeduction') + finiteNumber(basicAdjustment, 'basicAdjustment')))
+  return roundMoney(earnedBasic / 12)
+}
+
 function calculatePayrollLine({
   monthlyBasicSalary,
   monthlyCola = 0,
@@ -218,9 +227,6 @@ function calculatePayrollLine({
     hourlyRate,
     workdays,
   })
-  // The workbook's 13th-month base subtracts absences from basic pay, but not
-  // the separate tardiness/undertime deduction.
-  const earnedBasic = Math.max(0, grossSalary - attendanceTotals.absenceDeduction)
   const contributionValues = cutoff === 'second' && includeContributions
     ? calculateContributions(monthlySalary, { effectiveYear, sssCompensation })
     : {
@@ -264,7 +270,9 @@ function calculatePayrollLine({
       pagIbig: contributionValues.pagIbigBasis,
       schedule: contributionValues.schedule,
     },
-    thirteenthMonthAccrual: roundMoney(earnedBasic / 12),
+    thirteenthMonthAccrual: calculateThirteenthMonthAccrual({
+      grossSalary, absenceDeduction: attendanceTotals.absenceDeduction,
+    }),
     employeeDeductions,
     netPay: roundMoney(Math.max(0, grossSalary + colaPay - employeeDeductions)),
   }
@@ -275,6 +283,7 @@ module.exports = {
   calculateAttendanceTotals,
   calculateContributions,
   calculateSssAssessablePay,
+  calculateThirteenthMonthAccrual,
   calculateWorkedSpecialHoliday,
   calculatePayrollLine,
   getSssMonthlySalaryCredit,

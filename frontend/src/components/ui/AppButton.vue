@@ -1,7 +1,7 @@
 <script setup>
 defineProps({
   type: { type: String, default: 'button' },
-  variant: { type: String, default: 'primary' }, // primary, secondary, success, danger, ghost
+  variant: { type: String, default: 'primary' }, // primary, secondary, outline, success, danger, ghost
   size: { type: String, default: 'md' }, // sm, md, lg
   disabled: Boolean,
   loading: Boolean,
@@ -20,6 +20,8 @@ defineProps({
       size === 'lg' && 'px-6 py-3 text-base',
       variant === 'primary' && 'border-primary-500 bg-primary-500 text-black shadow-[0_8px_24px_rgba(216,170,36,0.12)] hover:border-primary-400 hover:bg-primary-400 focus:ring-primary-400',
       variant === 'secondary' && 'border-gray-700 bg-gray-900 text-gray-200 hover:border-gray-600 hover:bg-gray-800 focus:ring-gray-500',
+      // A clearly clickable second-level action: gold outline, recoloured by the light theme's palette.
+      variant === 'outline' && 'border-primary-500/70 bg-primary-500/10 text-primary-300 hover:border-primary-400 hover:bg-primary-500/20 focus:ring-primary-400',
       variant === 'success' && 'border-emerald-700 bg-emerald-700/90 text-white hover:bg-emerald-600 focus:ring-emerald-500',
       variant === 'danger' && 'border-red-800 bg-red-950/50 text-red-300 hover:bg-red-900/60 focus:ring-red-500',
       variant === 'ghost' && 'bg-transparent text-gray-300 hover:bg-gray-900 hover:text-gray-100 focus:ring-gray-500',
