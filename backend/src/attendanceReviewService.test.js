@@ -79,3 +79,31 @@ test('verified missing punches can be corrected and reconciled with the same off
  assert.equal(fixed.late_minutes,10);assert.equal(fixed.undertime_minutes,0)
  assert.equal(fixed.leave_request_id,9);assert.equal(fixed.review_decision.action,'actual_times');assert.equal(fixed.review_decision.paidFraction,.5)
 })
+
+test('a day off appears only when the employee scanned in, and is decided as rest-day work or not work', () => {
+  const scans = csv([
+    ['00042', '10/02/26 09:00', 'Main_Door_Out_Door1_Entrance Card Reader1'], ['00042', '10/02/26 18:00', 'Main_Door_IN_Door1_Entrance Card Reader1'],
+    ['00042', '10/03/26 09:05', 'Main_Door_Out_Door1_Entrance Card Reader1'], ['00042', '10/03/26 13:00', 'Main_Door_IN_Door1_Entrance Card Reader1'],
+  ])
+  const result = preview(context(), scans, '2026-10-02', '2026-10-04')
+  // Friday is a normal day, Saturday has scans, Sunday has none and is left out.
+  assert.deepEqual(result.daily.map(d => d.work_date), ['2026-10-02', '2026-10-03'])
+  const saturday = result.daily[1]
+  assert.equal(saturday.review_state, 'pending')
+  assert.deepEqual(saturday.issue_codes, ['rest_day_work'])
+  const worked = reviewDecision(saturday, { action: 'acknowledge', overtimeHours: 1 }, context())
+  assert.equal(worked.review_decision.dayType, 'rest_day')
+  assert.equal(worked.review_decision.overtimeHours, 1)
+  const notWork = reviewDecision(saturday, { action: 'not_work', overtimeHours: 3 }, context())
+  assert.equal(notWork.first_scan_at, null)
+  assert.equal(notWork.review_decision.dayType, 'regular')
+  assert.equal(notWork.review_decision.overtimeHours, 0)
+  assert.throws(() => reviewDecision(saturday, { action: 'absent' }, context()), /rest-day work or not work/)
+  assert.throws(() => reviewDecision(result.daily[0], { action: 'acknowledge', dayType: 'rest_day' }, context()), /outside the employee schedule/)
+})
+
+test('the CEO is not on payroll', () => {
+  const c = context()
+  c.employees[0].is_ceo = true
+  assert.equal(preview(c).daily.length, 0)
+})

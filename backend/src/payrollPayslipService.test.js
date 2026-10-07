@@ -213,3 +213,11 @@ test('saved month-end draft recalculates SSS when approved overtime is entered',
   assert.equal(updated.details.sssAssessment.monthlyCompensation, 15582.76)
   assert.equal(updated.details.contributionBasis.sssMsc, 15500)
 })
+
+test('rest-day pay shows on the payslip REST DAY line', () => {
+  const sections = payslipSections({ ...line, details: { manualEarnings: [], automaticEarnings: [{ type: 'rest_day', amount: 896.55 }], approvedWork: { restDayHours: 8 } } })
+  const restDay = sections.additions.find(row => row.label === 'REST DAY')
+  assert.equal(restDay.amount, 896.55)
+  assert.equal(restDay.qty, '(1.00)')
+  assert.equal(restDay.unit, '1 day')
+})

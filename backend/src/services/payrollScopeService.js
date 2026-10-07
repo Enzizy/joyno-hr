@@ -11,6 +11,8 @@ function isNightPayrollEmployee(employee, profiles = []) {
 }
 
 function payrollEmployeeIncluded(employee, profiles = [], restrictToDay = dayShiftOnly()) {
+  // The CEO pays the payroll and is not paid through it.
+  if (employee.is_ceo === true) return false
   const scope = typeof restrictToDay === 'boolean' ? (restrictToDay ? 'day' : 'all') : normalizePayrollScope(restrictToDay)
   const night = isNightPayrollEmployee(employee, profiles)
   return scope === 'all' || (scope === 'night' ? night : !night)

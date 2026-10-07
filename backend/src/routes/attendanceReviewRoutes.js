@@ -40,7 +40,7 @@ function createAttendanceReviewRouter({service,authRequired,requireRole}){
    const local=value=>value?new Date(value).toLocaleString('en-PH',{timeZone:'Asia/Manila',hour12:false}):''
    res.set('Cache-Control','private, no-store').type('text/csv').attachment(`${batch.isTest?'TEST-ONLY-':''}attendance-${batch.id}-confirmed.csv`).send(csvRows(
     ['Practice data','Review ID','Employee ID','Attendance ID','Employee','Work date','Status','Time in (Manila)','Time out (Manila)','Late minutes','Undertime minutes','Leave record ID','Day type','Approved OT hours','Verification reason'],
-    batch.daily.map(d=>[batch.isTest?'TEST ONLY':'',batch.id,d.employee_code,d.person_id,d.employee_name,d.work_date,d.status,local(d.first_scan_at),local(d.last_scan_at),d.late_minutes,d.undertime_minutes,d.leave_request_id,d.review_decision?.dayType==='special_holiday'?'Special holiday / rest day':'Regular',Number(d.review_decision?.overtimeHours||0),d.correction_reason])))
+    batch.daily.map(d=>[batch.isTest?'TEST ONLY':'',batch.id,d.employee_code,d.person_id,d.employee_name,d.work_date,d.status,local(d.first_scan_at),local(d.last_scan_at),d.late_minutes,d.undertime_minutes,d.leave_request_id,d.review_decision?.dayType==='special_holiday'?'Special holiday / rest day':d.review_decision?.dayType==='rest_day'?'Rest day':'Regular',Number(d.review_decision?.overtimeHours||0),d.correction_reason])))
   }catch(e){res.status(500).json({message:'Unable to export attendance'})}
  })
  router.post('/api/attendance/batches/:id/refresh',handler(req=>service.refresh(req.params.id,req.body.version,req.user)))

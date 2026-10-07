@@ -196,6 +196,7 @@ function createPayrollService({ db }) {
     const scope = normalizePayrollScope(shift)
     const { rows } = await db.query(
       `SELECT e.id AS employee_id, e.employee_code, e.first_name, e.last_name, e.department, e.shift,
+              EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = e.id AND ceo_account.role = 'ceo') AS is_ceo,
               p.id AS profile_id, p.effective_from, p.effective_to, p.monthly_basic_salary, p.monthly_cola,
               p.daily_fare_rate, p.work_start_time, p.work_end_time, p.unpaid_break_minutes,
               p.workdays, p.daily_rate_divisor, bio.person_id AS biometric_person_id, e.date_hired,
@@ -721,6 +722,7 @@ function createPayrollService({ db }) {
       const employeesResult = await tx.query(
         `SELECT employee.id AS employee_id, employee.employee_code, employee.first_name, employee.last_name,
                 employee.date_hired::text,employee.last_working_date::text,employee.shift,
+                EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = employee.id AND ceo_account.role = 'ceo') AS is_ceo,
                 profile.id AS profile_id, profile.effective_from, profile.effective_to,
                 profile.monthly_basic_salary, profile.monthly_cola, profile.daily_fare_rate, profile.work_start_time,
                 profile.work_end_time, profile.unpaid_break_minutes, profile.workdays, profile.daily_rate_divisor

@@ -6,9 +6,12 @@ const { dateKey } = require('./payrollAttendanceService')
 //   WSH/RD OT      = hourly x 130% x 130% x hours (TIMEKEEPING S: hrs*1.3*1.3)
 //   WSH/RD premium = paid hours / 8 x daily x 30% (register P: 0.3 * days * daily);
 //                    the monthly basic already pays the ordinary day.
+//   rest day       = paid hours / 8 x daily x 130% (register N, WRD: days * 1.3 * daily); the monthly
+//                    basic does not cover days outside the schedule, so the whole day is paid.
 const DAY_TYPES = Object.freeze({
   regular: { label: 'Regular workday', overtimeMultiplier: 1.25, premiumRate: 0 },
-  special_holiday: { label: 'Special holiday / rest day (WSH/RD)', overtimeMultiplier: 1.3 * 1.3, premiumRate: 0.3 },
+  special_holiday: { label: 'Special holiday / rest day (WSH/RD)', overtimeMultiplier: 1.3 * 1.3, premiumRate: 0.3, earningType: 'holiday_premium' },
+  rest_day: { label: 'Rest day (not on the schedule)', overtimeMultiplier: 1.3 * 1.3, premiumRate: 1.3, earningType: 'rest_day' },
 })
 const MAX_OVERTIME_HOURS = 16
 const round = value => Math.round((value + Number.EPSILON) * 100) / 100
@@ -17,7 +20,7 @@ function normalizeApprovedWork(decision = {}) {
   const dayType = decision.dayType == null || decision.dayType === '' ? 'regular' : String(decision.dayType)
   const raw = decision.overtimeHours
   const overtimeHours = raw == null || raw === '' ? 0 : Number(raw)
-  if (!DAY_TYPES[dayType]) throw Object.assign(new Error('Choose a regular workday or a special holiday / rest day'), { statusCode: 400 })
+  if (!DAY_TYPES[dayType]) throw Object.assign(new Error('Choose a regular workday, a special holiday or a rest day'), { statusCode: 400 })
   if (!Number.isFinite(overtimeHours) || overtimeHours < 0 || overtimeHours > MAX_OVERTIME_HOURS ||
       Math.abs(overtimeHours * 100 - Math.round(overtimeHours * 100)) > 0.000001) {
     throw Object.assign(new Error(`Approved overtime must be 0–${MAX_OVERTIME_HOURS} hours, with up to two decimals`), { statusCode: 400 })
@@ -44,7 +47,7 @@ function profileForDate(profiles, employeeId, date, fallback) {
 }
 
 function calculateApprovedWork({ attendance = [], profiles = [], employeeId, fallbackProfile = {} }) {
-  let overtimePay = 0, premiumPay = 0, overtimeHours = 0, premiumHours = 0
+  let overtimePay = 0, premiumPay = 0, overtimeHours = 0, premiumHours = 0, restDayPay = 0, restDayHours = 0
   const days = []
   for (const day of attendance) {
     const decision = day.review_decision ?? day.reviewDecision
@@ -59,20 +62,23 @@ function calculateApprovedWork({ attendance = [], profiles = [], employeeId, fal
     const paidHours = rule.premiumRate ? paidHoursWorked(day) : 0
     const dayOvertime = work.overtimeHours * hourlyRate * rule.overtimeMultiplier
     const dayPremium = paidHours / 8 * dailyRate * rule.premiumRate
-    overtimePay += dayOvertime; premiumPay += dayPremium
-    overtimeHours += work.overtimeHours; premiumHours += paidHours
+    overtimePay += dayOvertime; overtimeHours += work.overtimeHours
+    if (rule.earningType === 'rest_day') { restDayPay += dayPremium; restDayHours += paidHours }
+    else { premiumPay += dayPremium; premiumHours += paidHours }
     days.push({ date, dayType: work.dayType, overtimeHours: work.overtimeHours, premiumHours: round(paidHours),
       overtimeAmount: round(dayOvertime), premiumAmount: round(dayPremium), reason: decision.reason || null })
   }
-  const overtime = round(overtimePay), premium = round(premiumPay)
+  const overtime = round(overtimePay), premium = round(premiumPay), restDay = round(restDayPay)
   const automaticEarnings = [
     ...(overtime > 0 ? [{ type: 'overtime', amount: overtime,
       note: `${round(overtimeHours)} approved OT hours from attendance (regular day 125%, WSH/RD 169%)` }] : []),
     ...(premium > 0 ? [{ type: 'holiday_premium', amount: premium,
       note: `${round(premiumHours)} paid hours on special holiday / rest day × daily rate ÷ 8 × 30%` }] : []),
+    ...(restDay > 0 ? [{ type: 'rest_day', amount: restDay,
+      note: `${round(restDayHours)} paid hours on rest days × daily rate ÷ 8 × 130%` }] : []),
   ]
   return { automaticEarnings, approvedWork: { days, overtimeHours: round(overtimeHours), overtimeAmount: overtime,
-    premiumHours: round(premiumHours), premiumAmount: premium } }
+    premiumHours: round(premiumHours), premiumAmount: premium, restDayHours: round(restDayHours), restDayAmount: restDay } }
 }
 
 module.exports = { DAY_TYPES, MAX_OVERTIME_HOURS, calculateApprovedWork, hasApprovedWork, normalizeApprovedWork, paidHoursWorked }

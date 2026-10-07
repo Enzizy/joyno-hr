@@ -25,7 +25,7 @@ const REPLACING = {
   holiday_premium: 'Holiday premium (replaces the premium from attendance)',
   special_holiday_pay: 'Old full holiday pay — remove this line',
 }
-const AUTOMATIC_LABELS = { overtime: 'Overtime from attendance', holiday_premium: 'Holiday premium from attendance', night_differential: 'Night differential' }
+const AUTOMATIC_LABELS = { overtime: 'Overtime from attendance', holiday_premium: 'Holiday premium from attendance', rest_day: 'Rest day work from attendance', night_differential: 'Night differential' }
 
 const money = value => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const name = computed(() => props.line.employee_name || [props.line.first_name, props.line.last_name].filter(Boolean).join(' ') || 'Employee')

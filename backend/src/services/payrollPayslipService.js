@@ -70,6 +70,8 @@ function payslipSections(line) {
   const overtime = total(ofType(earnings, 'overtime'))
   const nightPay = total(ofType(earnings, 'night_differential'))
   const holiday = total(ofType(earnings, 'holiday_premium', 'special_holiday_pay'))
+  const restDayPay = total(ofType(earnings, 'rest_day'))
+  const restDays = amount(approved.restDayHours) / 8
   const allowance = roundMoney(amount(line.cola_pay) + total(ofType(charges, 'other_non_taxable_earning')))
   const adjustmentItems = [...ofType(charges, 'basic_pay_adjustment'), ...ofType(earnings, 'other')]
   const cashItems = ofType(charges, 'cash_advance', 'other_charge')
@@ -80,7 +82,7 @@ function payslipSections(line) {
   const additions = [
     { label: 'OVERTIME', name: 'Overtime', qty: count(overtimeHours), unit: units(overtimeHours, 'h', 'h'), amount: overtime },
     { label: 'NIGHT DIFF.', name: 'Night differential', qty: count(nightHours), unit: units(nightHours, 'h', 'h'), amount: nightPay },
-    { label: 'REST DAY', name: 'Rest day', amount: 0 },
+    { label: 'REST DAY', name: 'Rest day work', qty: count(restDays), unit: units(restDays, 'day'), amount: restDayPay },
     { label: 'SPECIAL HOLIDAY', name: 'Special holiday', amount: 0 },
     { label: 'REGULAR HOLIDAY', name: 'Regular holiday', amount: 0 },
     { label: holiday ? 'OTHER (HOL.): WSH/RD' : 'OTHER (HOL.)', name: 'Holiday / rest day premium', qty: count(holidayDays), unit: units(holidayDays, 'day'), amount: holiday },

@@ -37,6 +37,11 @@ function profileAt(profiles, id, date) {
 function employed(employee, date) {
   return (!employee.date_hired || employee.date_hired <= date) && (!employee.last_working_date || date <= employee.last_working_date)
 }
+// A day off measured like a scheduled day, so hours worked on a rest day can be counted.
+function withWorkday(profile, date) {
+  const workdays = (profile?.workdays || [1,2,3,4,5]).map(Number)
+  return workdays.includes(weekday(date)) ? profile : { ...profile, workdays: [...workdays, weekday(date)] }
+}
 function minutes(time) { const [h,m] = String(time).split(':').map(Number); return h * 60 + m }
 function paidOverlap(from, to, profile) {
   const range = coverageWindow(from, to, profile)
@@ -84,12 +89,15 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
       if (!employed(e, date)) continue
       const profile = profileAt(context.profiles, e.id, date)
       const workdays = profile?.workdays || [1,2,3,4,5]
-      if (!workdays.map(Number).includes(weekday(date))) continue
       const events = groups.get(`${e.id}:${date}`) || []
+      // Days off are never absences. They appear only when the employee scanned in, so HR can decide
+      // whether it was paid rest-day work. Leave does not apply to them.
+      const restDay = !workdays.map(Number).includes(weekday(date))
+      if (restDay && !events.length) continue
       if (holidays.has(date) && !events.length) continue
-      const leaveRows = context.leaves.filter(l => Number(l.employee_id) === Number(e.id) && l.start_date <= date && l.end_date >= date)
+      const leaveRows = restDay ? [] : context.leaves.filter(l => Number(l.employee_id) === Number(e.id) && l.start_date <= date && l.end_date >= date)
       const approved = leaveRows.filter(l => l.status === 'approved'), pending = leaveRows.some(l => l.status === 'pending')
-      const attendance = computeDailyAttendance({ date, events, profile: profile || shiftDefaults(e.shift) })
+      const attendance = computeDailyAttendance({ date, events, profile: withWorkday(profile || shiftDefaults(e.shift), date) })
       const codes = []
       if (!e.date_hired) codes.push('missing_hire_date')
       if (!profile || !(Number(profile.monthly_basic_salary) >= MINIMUM_MONTHLY_SALARY)) codes.push('missing_profile')
@@ -105,9 +113,12 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
           attendance.exceptionReason = null; attendance.leaveDeductionFraction = leave.leave_pay_type === 'paid' ? 0 : 1
         } else codes.push('leave_reconciliation')
       }
-      if (attendance.status === 'exception') codes.push(events.length ? 'missing_punch' : 'no_record')
-      if (Number(attendance.lateMinutes) > 0 || Number(attendance.undertimeMinutes) > 0) codes.push('late_undertime')
-      if (!scanDates.has(date) && !holidays.has(date)) emptyDates.add(date)
+      if (restDay) codes.push('rest_day_work')
+      else {
+        if (attendance.status === 'exception') codes.push(events.length ? 'missing_punch' : 'no_record')
+        if (Number(attendance.lateMinutes) > 0 || Number(attendance.undertimeMinutes) > 0) codes.push('late_undertime')
+        if (!scanDates.has(date) && !holidays.has(date)) emptyDates.add(date)
+      }
       const baseHash = fingerprint({ attendance, profile, leaves: leaveRows, employee: e })
       days.push({ employee_id: e.id, employee_code: e.employee_code, employee_name: `${e.first_name} ${e.last_name}`.trim(),
         person_id: e.person_id, work_date: date, status: attendance.status,
@@ -139,7 +150,8 @@ async function loadContext(db, start, end, requestedScope, settings = {}) {
   assertPracticeAllowed(isTest)
   const scope = normalizePayrollScope(requestedScope)
   const employees = (await db.query(`SELECT e.id,e.employee_code,e.first_name,e.last_name,e.status,e.shift,
-    e.date_hired::text,e.last_working_date::text,b.person_id FROM employees e
+    e.date_hired::text,e.last_working_date::text,b.person_id,
+    EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = e.id AND ceo_account.role = 'ceo') AS is_ceo FROM employees e
     LEFT JOIN payroll_biometric_identities b ON b.employee_id=e.id ORDER BY e.id`)).rows
   let profiles = (await db.query(`SELECT p.id,p.employee_id,p.effective_from::text,p.effective_to::text,
     p.monthly_basic_salary,p.monthly_cola,p.daily_rate_divisor,p.workdays,
@@ -169,13 +181,19 @@ async function loadContext(db, start, end, requestedScope, settings = {}) {
 function automaticReason(decision) {
   const base = { acknowledge: 'Recorded times accepted', actual_times: `Real times entered: ${decision.timeIn || '?'}–${decision.timeOut || '?'}`,
     absent: 'Did not come to work', verified_work: 'Worked a full day without usable scans', link_leave: 'Approved leave applied',
+    not_work: 'Rest day — scans not counted as work',
     excused: 'Counted as a full day · late and undertime excused' }[String(decision.action || '')] || 'Reviewed by HR'
   let work = { dayType: 'regular', overtimeHours: 0 }
   try { work = normalizeApprovedWork(decision) } catch { /* reported by the approved-work check */ }
-  return [base, work.dayType === 'special_holiday' ? 'special holiday / rest day' : null, work.overtimeHours ? `${work.overtimeHours} h approved OT` : null].filter(Boolean).join(' · ')
+  return [base, work.dayType === 'special_holiday' ? 'special holiday / rest day' : work.dayType === 'rest_day' ? 'rest day work' : null, work.overtimeHours ? `${work.overtimeHours} h approved OT` : null].filter(Boolean).join(' · ')
 }
 
 function reviewDecision(day, decision, context) {
+  const restDay = day.issue_codes?.includes('rest_day_work')
+  if (restDay && !['acknowledge', 'actual_times', 'verified_work', 'not_work'].includes(String(decision.action || ''))) fail('For a rest day, choose rest-day work or not work', 400)
+  if (!restDay && (decision.action === 'not_work' || decision.dayType === 'rest_day')) fail('Rest-day pay applies only to days outside the employee schedule', 400)
+  // Work on a day off is always paid as rest-day work; "not work" pays nothing.
+  if (restDay) decision = decision.action === 'not_work' ? { ...decision, dayType: 'regular', overtimeHours: 0 } : { ...decision, dayType: 'rest_day' }
   const action = String(decision.action || ''), reason = String(decision.reason || '').trim() || automaticReason(decision)
   if (reason.length > 500) fail('Keep the note under 500 characters', 400)
   if (day.issue_codes.some(c => ['missing_profile','missing_attendance_id','missing_hire_date','unsupported_schedule','pending_leave','leave_conflict'].includes(c))) fail('Fix employee setup or the pending/conflicting leave before reviewing this day')
@@ -189,7 +207,7 @@ function reviewDecision(day, decision, context) {
     const officialLeave=context.leaves.find(l=>Number(l.id)===Number(day.leave_request_id))
     if (officialLeave&&Number(officialLeave.day_fraction??1)===1) fail('Full-day leave conflicts with work punches. Correct the official leave record first')
     const first = verifiedShiftTimestamp(day.work_date, decision.timeIn, day.profile), last = verifiedShiftTimestamp(day.work_date, decision.timeOut, day.profile)
-    const measured = computeDailyAttendance({date:day.work_date,events:[{occurredAt:first},{occurredAt:last}],profile:day.profile})
+    const measured = computeDailyAttendance({date:day.work_date,events:[{occurredAt:first},{occurredAt:last}],profile:withWorkday(day.profile,day.work_date)})
     if (measured.status !== 'present') fail('Provide verified time-in and time-out in order',400)
     Object.assign(resolved,{status:'present',first_scan_at:measured.firstScanAt,last_scan_at:measured.lastScanAt,
       late_minutes:measured.lateMinutes,undertime_minutes:measured.undertimeMinutes,exception_reason:null})
@@ -203,6 +221,9 @@ function reviewDecision(day, decision, context) {
     if (day.status !== 'present' || !day.first_scan_at || !day.last_scan_at) fail('Counting a full day needs a time-in and time-out. For missing scans, choose that they worked a full day')
     if (day.leave_request_id) fail('Resolve recorded leave before excusing this day')
     Object.assign(resolved,{late_minutes:0,undertime_minutes:0})
+  } else if (action === 'not_work') {
+    // Kept as a day with no scans, so nothing (pay, night differential) is calculated from it.
+    Object.assign(resolved,{status:'present',first_scan_at:null,last_scan_at:null,late_minutes:0,undertime_minutes:0,exception_reason:null})
   } else if (action === 'verified_work') {
     if (day.leave_request_id) fail('Resolve recorded leave before confirming work')
     // Explicit HR evidence of work is retained without inventing biometric punches.

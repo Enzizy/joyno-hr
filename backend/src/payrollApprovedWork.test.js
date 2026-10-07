@@ -55,3 +55,12 @@ test('HR records OT on the verified day, and cannot record it on an absence', ()
   const empty = { ...base, status: 'exception', issue_codes: ['no_record'], first_scan_at: null, last_scan_at: null, undertime_minutes: 0 }
   assert.throws(() => reviewDecision(empty, { action: 'absent', overtimeHours: 2, reason: 'Absent' }, { leaves: [] }), /day the employee worked/)
 })
+
+test('rest-day work is paid 130% of the daily rate, with overtime at 169% (workbook WRD)', () => {
+  const profiles = [{ employee_id: 1, effective_from: '2026-01-01', monthly_basic_salary: 15000, daily_rate_divisor: 261 }]
+  const day = { work_date: '2026-10-03', status: 'present', late_minutes: 0, undertime_minutes: 0, review_decision: { dayType: 'rest_day', overtimeHours: 2 } }
+  const result = calculateApprovedWork({ attendance: [day], profiles, employeeId: 1 })
+  assert.deepEqual(result.automaticEarnings.map(entry => [entry.type, entry.amount]), [['overtime', 291.38], ['rest_day', 896.55]])
+  assert.equal(result.approvedWork.restDayHours, 8)
+  assert.equal(result.approvedWork.premiumAmount, 0)
+})

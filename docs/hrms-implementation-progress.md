@@ -168,3 +168,9 @@ Verification: 134 backend tests and eight frontend tests passed; two opt-in data
   - Checks: health ok with the database connected; payroll and attendance endpoints answer 401 (on) on the container and on the public API https://srv1981649.hstgr.cloud; `PAYROLL_ENABLED`, `PAYROLL_FINALIZATION_ENABLED`, `NODE_ENV=production`, `PAYSLIPS_URL` and Brevo are set. The accounting app on the same VPS was untouched.
 - Rollback: set the payroll flags in `compose.kvm.yml` to `"false"` and recreate the API, or run the `before-payroll-a511528` image. The website needs a build with payroll hidden to remove the pages.
 - Inside a pay run, the attendance import no longer shows the "Work dates to check" box (the dates are in the page header); the upload area takes the full width.
+- **Rest-day work.** Days off on an employee's schedule are never absences and still don't appear without scans. When someone scans on a day off, the day appears as "Scans on a rest day" and needs a decision:
+  - **They worked their rest day:** paid 130% of the daily rate for the hours worked, up to 8 (workbook WRD: days × 1.3 × daily). Rest-day overtime is paid at 169%. The pay shows as automatic earning `rest_day` and on the payslip's REST DAY line. It is not in the SSS basis.
+  - **Not work:** not paid; the scans are cleared from the day.
+
+  A scheduled workday can't be marked as a rest day. Lateness on a day off is never deducted, because deductions only count scheduled workdays.
+- **The CEO is not on payroll.** The employee linked to the CEO account (Gino Cabanas) is left out of attendance reviews, Pay & schedules, readiness counts and pay calculations. `payrollEmployeeIncluded` checks an `is_ceo` flag added to the three employee queries.
