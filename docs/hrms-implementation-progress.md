@@ -158,3 +158,12 @@ Verification: 134 backend tests and eight frontend tests passed; two opt-in data
   - The server's attendance check, which flags those days as missing setup so a placeholder can't be paid.
   - Example: John Phil Brandares's ₱0.02 now shows as needing a monthly salary.
 - **Clickable-looking buttons on the Payroll page.** A new `outline` button style (gold border and text on a faint gold fill, recoloured by the light theme's palette) is used for "Employee pay setup", "Record pay" and every "Set up N" action. "Upload from <date>" is shown as a disabled button until attendance closes. The shift's Start/Continue stays the solid gold primary button.
+
+## Payroll released to production — 7 October 2026
+
+- Commit 885d258 was pushed to `main`; Cloudflare published the website with Payroll, Pay & schedules and My payslips.
+- **API updated on the Hostinger VPS.**
+  - Backup: `/opt/joyno-hr-backups/payroll-release-20261007T084833Z` (private settings, compose file, previous commit and image, build log); previous image tagged `joyno-hr-api:before-payroll-a511528`.
+  - Pulled, built, ran `npm run migrate` (applied 029; 028 was already recorded), then recreated only the HR API container.
+  - Checks: health ok with the database connected; payroll and attendance endpoints answer 401 (on) on the container and on the public API https://srv1981649.hstgr.cloud; `PAYROLL_ENABLED`, `PAYROLL_FINALIZATION_ENABLED`, `NODE_ENV=production`, `PAYSLIPS_URL` and Brevo are set. The accounting app on the same VPS was untouched.
+- Rollback: set the payroll flags in `compose.kvm.yml` to `"false"` and recreate the API, or run the `before-payroll-a511528` image. The website needs a build with payroll hidden to remove the pages.
