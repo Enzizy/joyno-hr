@@ -167,3 +167,4 @@ Verification: 134 backend tests and eight frontend tests passed; two opt-in data
   - Pulled, built, ran `npm run migrate` (applied 029; 028 was already recorded), then recreated only the HR API container.
   - Checks: health ok with the database connected; payroll and attendance endpoints answer 401 (on) on the container and on the public API https://srv1981649.hstgr.cloud; `PAYROLL_ENABLED`, `PAYROLL_FINALIZATION_ENABLED`, `NODE_ENV=production`, `PAYSLIPS_URL` and Brevo are set. The accounting app on the same VPS was untouched.
 - Rollback: set the payroll flags in `compose.kvm.yml` to `"false"` and recreate the API, or run the `before-payroll-a511528` image. The website needs a build with payroll hidden to remove the pages.
+- Inside a pay run, the attendance import no longer shows the "Work dates to check" box (the dates are in the page header); the upload area takes the full width.
