@@ -95,7 +95,7 @@ test('a newer practice upload for the same payday starts a fresh practice run', 
   assert.equal(currentPayRun({ ...base, reviews: [review(9, 'confirmed'), review(12, 'confirmed')] }), null)
 })
 
-test('payday readiness lists people not set up and late pay start dates', () => {
+test('payday readiness lists people not set up', () => {
   const oct15 = periodForPayday('2026-10-15')
   const person = (code, extra = {}) => ({ employee_id: code, employee_code: code, ...ready, first_effective_from: '2026-01-01', date_hired: '2025-01-01', ...extra })
   const readiness = paydayReadiness(oct15, {
@@ -108,8 +108,6 @@ test('payday readiness lists people not set up and late pay start dates', () => 
   assert.equal(readiness.day.ready, 3)
   assert.deepEqual(readiness.day.notSetUp.map(p => p.employee_id), ['d', 'e'])
   assert.deepEqual(profileGaps({ ...ready, monthly_basic_salary: '0.01' }), ['Monthly salary'])
-  // b was hired long before Sep 26 but pay starts Oct 6; c was hired Oct 1 and is paid from Oct 1, which is fine.
-  assert.deepEqual(readiness.day.startsLate.map(p => p.employee_id), ['b'])
   assert.equal(readiness.night.total, 0)
 })
 

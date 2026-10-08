@@ -107,3 +107,16 @@ test('the CEO is not on payroll', () => {
   c.employees[0].is_ceo = true
   assert.equal(preview(c).daily.length, 0)
 })
+
+test('the salary currently set covers the whole pay period, whatever date it was saved', async () => {
+  const { loadContext } = require('./services/attendanceReviewService')
+  const db = { query: async (sql) => {
+    if (sql.includes('FROM employees e')) return { rows: [{ id: 1, employee_code: 'E1', status: 'active', shift: 'day', date_hired: '2025-01-01', person_id: '00042', is_ceo: false }] }
+    if (sql.includes('DISTINCT ON(p.employee_id)')) return { rows: [{ id: 9, employee_id: 1, effective_from: '2026-10-08', effective_to: null, monthly_basic_salary: 15000, workdays: [1, 2, 3, 4, 5], work_start_time: '09:00:00', work_end_time: '18:00:00', unpaid_break_minutes: 60 }] }
+    return { rows: [] }
+  } }
+  const context = await loadContext(db, '2026-09-26', '2026-10-10', 'day')
+  assert.equal(context.profiles.length, 1)
+  assert.equal(context.profiles[0].effective_from, '2026-09-26')
+  assert.equal(context.profiles[0].source_effective_from, '2026-10-08')
+})

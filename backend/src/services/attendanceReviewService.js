@@ -153,10 +153,14 @@ async function loadContext(db, start, end, requestedScope, settings = {}) {
     e.date_hired::text,e.last_working_date::text,b.person_id,
     EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = e.id AND ceo_account.role = 'ceo') AS is_ceo FROM employees e
     LEFT JOIN payroll_biometric_identities b ON b.employee_id=e.id ORDER BY e.id`)).rows
-  let profiles = (await db.query(`SELECT p.id,p.employee_id,p.effective_from::text,p.effective_to::text,
+  // Each employee's current salary and schedule apply to the whole period, like the workbook's one salary
+  // per person: whatever HR has set is what the next payroll uses. The effective date only records when it
+  // was set; approved and closed payrolls keep their own figures.
+  const latest=(await db.query(`SELECT DISTINCT ON(p.employee_id) p.id,p.employee_id,p.effective_from::text,p.effective_to::text,
     p.monthly_basic_salary,p.monthly_cola,p.daily_rate_divisor,p.workdays,
     p.work_start_time::text,p.work_end_time::text,p.unpaid_break_minutes
-    FROM payroll_employee_profiles p WHERE p.effective_from <= $2 AND COALESCE(p.effective_to,'infinity'::date) >= $1 ORDER BY p.id`, [start,end])).rows
+    FROM payroll_employee_profiles p ORDER BY p.employee_id,p.effective_from DESC,p.id DESC`)).rows
+  let profiles = latest.map(p=>({...p,source_effective_from:p.effective_from,effective_from:start,effective_to:null}))
   const leaves = (await db.query(`SELECT id,employee_id,start_date::text,end_date::text,status,leave_type_name,
     leave_pay_type,leave_days,paid_days,unpaid_days,day_fraction,coverage_start::text,coverage_end::text
     FROM leave_requests WHERE status IN ('pending','approved') AND start_date <= $2 AND end_date >= $1 ORDER BY id`, [start,end])).rows
@@ -166,14 +170,11 @@ async function loadContext(db, start, end, requestedScope, settings = {}) {
   if(isTest) {
     if(!Array.isArray(settings.employeeIds) || !settings.employeeIds.length || settings.employeeIds.length>500 || settings.employeeIds.some(id=>!Number.isSafeInteger(Number(id)) || Number(id)<1)) fail('Select at least one configured employee for practice payroll',400)
     employeeIds=[...new Set(settings.employeeIds.map(Number))].sort((a,b)=>a-b)
-    const latest=(await db.query(`SELECT DISTINCT ON(p.employee_id) p.*,p.effective_from::text,p.effective_to::text,
-      p.work_start_time::text,p.work_end_time::text FROM payroll_employee_profiles p ORDER BY p.employee_id,p.effective_from DESC,p.id DESC`)).rows
     for(const id of employeeIds) {
       const e=employees.find(e=>Number(e.id)===id),p=latest.find(p=>Number(p.employee_id)===id)
       if(!e || !['active','on_leave'].includes(e.status) || !e.person_id || !p || !(Number(p.monthly_basic_salary)>=MINIMUM_MONTHLY_SALARY) || !payrollEmployeeIncluded(e,[p],scope)) fail('Selected employees must have salary, attendance ID, and the selected shift configured',400)
     }
-    // Practice uses current pay as a hypothetical snapshot; real effective dates are never edited.
-    profiles=latest.filter(p=>employeeIds.includes(Number(p.employee_id))).map(p=>({...p,source_effective_from:p.effective_from,effective_from:start,effective_to:null}))
+    profiles=profiles.filter(p=>employeeIds.includes(Number(p.employee_id)))
   }
   return { employees,profiles,leaves,holidays, ...(scope !== 'all' ? {payrollScope:scope} : {}), ...(isTest ? {isTest,employeeIds} : {}) }
 }

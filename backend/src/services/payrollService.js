@@ -728,11 +728,10 @@ function createPayrollService({ db }) {
                 profile.work_end_time, profile.unpaid_break_minutes, profile.workdays, profile.daily_rate_divisor
          FROM employees employee
          LEFT JOIN LATERAL (
+           -- The salary currently set applies to the whole period (see loadContext in attendanceReviewService).
            SELECT payroll_profile.* FROM payroll_employee_profiles payroll_profile
            WHERE payroll_profile.employee_id = employee.id
-             AND payroll_profile.effective_from <= LEAST($1::date,COALESCE(employee.last_working_date,$1::date))
-             AND COALESCE(payroll_profile.effective_to, 'infinity'::date) >= LEAST($1::date,COALESCE(employee.last_working_date,$1::date))
-           ORDER BY payroll_profile.effective_from DESC
+           ORDER BY payroll_profile.effective_from DESC, payroll_profile.id DESC
            LIMIT 1
          ) profile ON TRUE
          WHERE ($4::boolean=FALSE OR (LOWER(COALESCE(employee.shift,'day')) <> 'night' AND (profile.id IS NULL OR profile.work_end_time > profile.work_start_time)))
@@ -869,8 +868,8 @@ function createPayrollService({ db }) {
           ...night,
           automaticEarnings,
           approvedWork: approved.approvedWork,
-          payBasisReview: {required:Boolean(employee.date_hired>periodStart || (employee.last_working_date && employee.last_working_date<periodEnd) || dateKey(employee.effective_from)>periodStart),
-            reason:'Employment or compensation changed within the cutoff; verify basic pay and COLA proration against company policy',verifiedReason:null},
+          payBasisReview: {required:Boolean(employee.date_hired>periodStart || (employee.last_working_date && employee.last_working_date<periodEnd)),
+            reason:'Hired or left during the cutoff; verify basic pay and COLA proration against company policy',verifiedReason:null},
           contributionBasis: line.contributionBasis,
           sssAssessment: sssAssessment ? { ...sssAssessment,
             firstCutoffSource: firstCutoffLine ? `saved-first-cutoff-${firstCutoffLine.first_cutoff_status}` : 'assumed-half-basic',

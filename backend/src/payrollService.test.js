@@ -6,7 +6,7 @@ const confirmedBatch={id:7,review_state:'confirmed',period_start:'2026-09-11',pe
 function reviewFixture(sql){
   if(sql.includes('FROM payroll_attendance_review_events'))return {rows:[]}
   if(sql.includes('FROM payroll_attendance_import_batches'))return {rows:[confirmedBatch]}
-  if(sql.includes('SELECT e.id,e.employee_code')||sql.includes('SELECT p.id,p.employee_id')||sql.includes('FROM leave_requests WHERE status')||sql.includes('FROM philippine_holidays'))return {rows:[]}
+  if(sql.includes('SELECT e.id,e.employee_code')||sql.includes('SELECT DISTINCT ON(p.employee_id) p.id,p.employee_id')||sql.includes('FROM leave_requests WHERE status')||sql.includes('FROM philippine_holidays'))return {rows:[]}
 }
 const {
   calculateContributions,

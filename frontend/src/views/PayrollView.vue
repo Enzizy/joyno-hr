@@ -1068,7 +1068,7 @@ async function emailAllPayslips() {
               <button v-for="l in currentLines.filter(needsNightReview)" :key="l.id" class="ml-3 underline" @click="beginAdjust(l)">Review {{displayName(l)}}</button>
             </div>
             <div v-if="activeRun.status==='draft' && currentLines.some(l=>l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason)" class="mb-4 rounded-lg border border-amber-800/40 p-3 text-sm text-amber-200">
-              Employment or compensation changed within this cutoff. Review basic pay and COLA against company policy, enter any needed adjustments under Charges, and verify each affected employee.
+              Someone was hired or left during this cutoff. Review basic pay and COLA against company policy, enter any needed adjustments under Charges, and verify each affected employee.
               <button v-for="l in currentLines.filter(l=>l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason)" :key="l.id" class="ml-3 underline" @click="payBasisForm={line:l,reason:''}">Verify {{displayName(l)}}</button>
             </div>
             <p v-if="legacyHolidayLineCount" class="mb-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">{{ legacyHolidayLineCount }} old full-holiday-pay line(s) need HR review. Open Adjust pay for each one, remove the old line, and record the holiday work in Attendance instead.</p>

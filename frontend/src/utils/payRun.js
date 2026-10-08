@@ -155,18 +155,12 @@ export function runSummary(stages) {
   return { label: `${stage.label} · ${stage.detail}`, tone: stage.state === 'locked' ? 'neutral' : 'warning' }
 }
 
-// What would stop a payday's pay runs in each shift: people not set up, and pay that starts after the
-// work dates begin (for someone already hired by then).
+// How many people in each shift are set up to be paid, and who is not.
 export function paydayReadiness(period, profilesByShift) {
   const result = {}
   for (const [shift, list] of Object.entries(profilesByShift || {})) {
     const ready = (list || []).filter(profileReady)
-    const startsLate = ready.filter(p => {
-      const payStarts = p.first_effective_from || p.effective_from
-      const onRecordFrom = p.date_hired && p.date_hired > period.start ? p.date_hired : period.start
-      return Boolean(payStarts && payStarts > onRecordFrom)
-    })
-    result[shift] = { total: (list || []).length, ready: ready.length, notSetUp: (list || []).filter(p => !profileReady(p)), startsLate }
+    result[shift] = { total: (list || []).length, ready: ready.length, notSetUp: (list || []).filter(p => !profileReady(p)) }
   }
   return result
 }
