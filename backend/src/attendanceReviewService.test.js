@@ -139,3 +139,16 @@ test('every rest-day decision is accepted by the database scan rule', () => {
   }
   assert.equal(reviewDecision(saturday, { action: 'not_work' }, context()).status, 'absent')
 })
+
+test('on a workday, "didn\'t work (only visited)" is an absence and the scans are ignored', () => {
+  const visit = csv([['00042', '09/21/26 14:26', 'Main_Door_Out_Door1_Entrance Card Reader1'], ['00042', '09/21/26 16:17', 'Main_Door_IN_Door1_Entrance Card Reader1']])
+  const day = preview(context(), visit).daily[0]
+  const decided = reviewDecision(day, { action: 'not_work', overtimeHours: 2 }, context())
+  assert.equal(decided.status, 'absent')
+  assert.equal(decided.first_scan_at, null)
+  assert.equal(decided.late_minutes, 0)
+  assert.equal(decided.review_decision.overtimeHours, 0)
+  assert.equal(decided.correction_reason, 'Only visited, did not work — counted as an absence')
+  assert.ok(satisfiesScanPairRule(decided))
+  assert.throws(() => reviewDecision({ ...day, leave_request_id: 7 }, { action: 'not_work' }, context()), /recorded leave/)
+})

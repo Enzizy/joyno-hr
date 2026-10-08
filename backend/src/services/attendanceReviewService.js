@@ -179,10 +179,10 @@ async function loadContext(db, start, end, requestedScope, settings = {}) {
   return { employees,profiles,leaves,holidays, ...(scope !== 'all' ? {payrollScope:scope} : {}), ...(isTest ? {isTest,employeeIds} : {}) }
 }
 // HR's note is optional; without one, the history records what was decided.
-function automaticReason(decision) {
+function automaticReason(decision, { restDay = false } = {}) {
   const base = { acknowledge: 'Recorded times accepted', actual_times: `Real times entered: ${decision.timeIn || '?'}–${decision.timeOut || '?'}`,
     absent: 'Did not come to work', verified_work: 'Worked a full day without usable scans', link_leave: 'Approved leave applied',
-    not_work: 'Rest day — scans not counted as work',
+    not_work: restDay ? 'Rest day — scans not counted as work' : 'Only visited, did not work — counted as an absence',
     excused: 'Counted as a full day · late and undertime excused' }[String(decision.action || '')] || 'Reviewed by HR'
   let work = { dayType: 'regular', overtimeHours: 0 }
   try { work = normalizeApprovedWork(decision) } catch { /* reported by the approved-work check */ }
@@ -192,10 +192,11 @@ function automaticReason(decision) {
 function reviewDecision(day, decision, context) {
   const restDay = day.issue_codes?.includes('rest_day_work')
   if (restDay && !['acknowledge', 'actual_times', 'verified_work', 'not_work'].includes(String(decision.action || ''))) fail('For a rest day, choose rest-day work or not work', 400)
-  if (!restDay && (decision.action === 'not_work' || decision.dayType === 'rest_day')) fail('Rest-day pay applies only to days outside the employee schedule', 400)
-  // Work on a day off is always paid as rest-day work; "not work" pays nothing.
-  if (restDay) decision = decision.action === 'not_work' ? { ...decision, dayType: 'regular', overtimeHours: 0 } : { ...decision, dayType: 'rest_day' }
-  const action = String(decision.action || ''), reason = String(decision.reason || '').trim() || automaticReason(decision)
+  if (!restDay && decision.dayType === 'rest_day') fail('Rest-day pay applies only to days outside the employee schedule', 400)
+  // "Not work" pays nothing extra; work on a day off is always paid as rest-day work.
+  if (decision.action === 'not_work') decision = { ...decision, dayType: 'regular', overtimeHours: 0 }
+  else if (restDay) decision = { ...decision, dayType: 'rest_day' }
+  const action = String(decision.action || ''), reason = String(decision.reason || '').trim() || automaticReason(decision, { restDay })
   if (reason.length > 500) fail('Keep the note under 500 characters', 400)
   if (day.issue_codes.some(c => ['missing_profile','missing_attendance_id','missing_hire_date','unsupported_schedule','pending_leave','leave_conflict'].includes(c))) fail('Fix employee setup or the pending/conflicting leave before reviewing this day')
   const resolved = { ...day, review_state: 'resolved', correction_reason: reason, review_decision: { ...decision,reason } }
@@ -223,9 +224,11 @@ function reviewDecision(day, decision, context) {
     if (day.leave_request_id) fail('Resolve recorded leave before excusing this day')
     Object.assign(resolved,{late_minutes:0,undertime_minutes:0})
   } else if (action === 'not_work') {
-    // Stored as not worked, with no scans, so nothing (pay, night differential) is calculated from it.
-    // A day off is never deducted: pay only counts scheduled workdays. (The database only allows a
-    // scan-less worked day for verified work.)
+    // They came in but did not work (for example, only to pick something up). Stored as not worked, with
+    // no scans, so nothing (pay, night differential) is calculated from it. On a scheduled workday that is
+    // an absence and one day is deducted; a day off is never deducted, because pay only counts scheduled
+    // workdays. (The database only allows a scan-less worked day for verified work.)
+    if (day.leave_request_id) fail('This day has recorded leave. Choose the leave instead', 400)
     Object.assign(resolved,{status:'absent',first_scan_at:null,last_scan_at:null,late_minutes:0,undertime_minutes:0,leave_deduction_fraction:1,exception_reason:null})
   } else if (action === 'verified_work') {
     if (day.leave_request_id) fail('Resolve recorded leave before confirming work')

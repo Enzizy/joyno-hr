@@ -159,6 +159,7 @@ const decisionOptions=computed(()=>{
   absent:{title:'They did not come to work',hint:'Unpaid absence. One day of pay is deducted.'},
   verified_work:{title:noScans?'They worked a full day but have no scans':'They worked a full day but the scans are incomplete',hint:'Counted as a full day with no deduction. Write who confirmed it in the reason.'},
   link_leave:{title:'They were on approved leave',hint:'Uses the official leave record, paid or unpaid as approved.'},
+  not_work:{title:'They didn’t work (only visited)',hint:'For example, they came in to pick something up. Counted as an absence: one day’s pay is deducted, and the scans are ignored.'},
  }
  if(d.issue_codes?.includes('rest_day_work')){
   const paidHours=Math.round(Math.max(0,480-missed)/60*100)/100
@@ -171,6 +172,8 @@ const decisionOptions=computed(()=>{
  }
  const keys=d.status==='exception'?(noScans?['absent','verified_work','actual_times']:['actual_times','verified_work'])
   :d.issue_codes?.includes('leave_reconciliation')?['actual_times']:(missed||excused)&&!d.leave_request_id?['acknowledge','excused','actual_times']:['acknowledge','actual_times']
+ // Scans on a workday without leave can still be a visit, not work.
+ if(!noScans&&!d.leave_request_id&&!d.issue_codes?.includes('leave_reconciliation'))keys.push('not_work')
  if(d.leaves?.some(l=>l.status==='approved'))keys.push('link_leave')
  return keys.map(value=>({value,...all[value]}))
 })
