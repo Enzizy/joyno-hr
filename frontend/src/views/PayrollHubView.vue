@@ -105,7 +105,7 @@ function openStart(payday = next.value.payday, shift = 'day') {
 function begin() {
   const { payday, shift } = starting.value
   starting.value = null
-  router.push({ ...runLink(payday, shift), query: { step: 'employees' } })
+  router.push({ ...runLink(payday, shift), query: { step: 'attendance' } })
 }
 </script>
 

@@ -24,11 +24,12 @@ test('the hub lists the next payday first, then earlier paydays', () => {
   assert.equal(nextPayday('2026-10-16'), '2026-10-30')
 })
 
-test('a new real run starts at attendance when only setup is missing', () => {
-  const stages = payRunStages({ period, shift: 'day', profiles: [ready, {}], reviews: [], runs: [] })
-  assert.deepEqual(stages.map(s => s.state), ['todo', 'todo', 'locked', 'locked', 'locked'])
-  assert.equal(stage(stages, 'employees').detail, '1 need setup')
-  assert.equal(currentStageKey(stages), 'employees')
+test('a new pay run starts at attendance; employee setup is not a step', () => {
+  const stages = payRunStages({ period, shift: 'day', reviews: [], runs: [] })
+  assert.deepEqual(stages.map(s => s.key), ['attendance', 'review', 'approve', 'payslips'])
+  assert.deepEqual(stages.map(s => s.state), ['todo', 'locked', 'locked', 'locked'])
+  assert.equal(stage(stages, 'attendance').detail, 'Upload file')
+  assert.equal(currentStageKey(stages), 'attendance')
   assert.deepEqual(runSummary(stages), { label: 'Not started', tone: 'neutral' })
 })
 

@@ -1,11 +1,12 @@
 const express=require('express')
 const multer=require('multer')
 const {MANAGEMENT_ROLES}=require('../constants/roles')
-const {decodeAttendanceCsv}=require('../services/payrollAttendanceService')
+const {decodeAttendanceCsv,mergeAttendanceCsvs}=require('../services/payrollAttendanceService')
 const {csvRows}=require('../services/hrmsCsvService')
 
 function createAttendanceReviewRouter({service,authRequired,requireRole}){
- const router=express.Router(), upload=multer({storage:multer.memoryStorage(),limits:{fileSize:10*1024*1024,files:1}})
+ const MAX_FILES=4
+ const router=express.Router(), upload=multer({storage:multer.memoryStorage(),limits:{fileSize:10*1024*1024,files:MAX_FILES}})
  router.use('/api/attendance',authRequired,requireRole(MANAGEMENT_ROLES))
  router.param('id',(req,res,next,value)=>Number.isSafeInteger(Number(value))&&Number(value)>0?next():res.status(400).json({message:'Invalid attendance batch ID'}))
  router.use('/api/attendance/batches/:id',(req,res,next)=>{
@@ -20,12 +21,16 @@ function createAttendanceReviewRouter({service,authRequired,requireRole}){
    res.status(e.statusCode||(validation?400:500)).json({message:e.statusCode||validation?e.message:'Attendance operation failed'})
   }
  }
- const file=(req,res,next)=>upload.single('file')(req,res,error=>{
-  if(error)return res.status(error.code==='LIMIT_FILE_SIZE'?413:400).json({message:'Upload one CSV file, up to 10 MB'})
-  if(!req.file||!req.file.originalname.toLowerCase().endsWith('.csv')||req.file.buffer.includes(0))return res.status(415).json({message:'Upload a valid CSV file'})
-  let employeeIds
+ // One or more biometric exports ("file" or "files"); several are merged into one review, for example
+ // the September and October exports for the 15th payday's Sep 26 – Oct 10 work dates.
+ const file=(req,res,next)=>upload.fields([{name:'file',maxCount:1},{name:'files',maxCount:MAX_FILES}])(req,res,error=>{
+  if(error)return res.status(error.code==='LIMIT_FILE_SIZE'?413:400).json({message:`Upload up to ${MAX_FILES} CSV files, each up to 10 MB`})
+  const files=[...(req.files?.file||[]),...(req.files?.files||[])]
+  if(!files.length||files.some(f=>!f.originalname.toLowerCase().endsWith('.csv')||f.buffer.includes(0)))return res.status(415).json({message:'Upload valid CSV files'})
+  let employeeIds,csvText
   try{employeeIds=req.body.employeeIds ? JSON.parse(req.body.employeeIds) : undefined}catch{return res.status(400).json({message:'Choose valid employees'})}
-  req.attendanceInput={fileName:req.file.originalname,csvText:decodeAttendanceCsv(req.file.buffer),periodStart:req.body.periodStart,periodEnd:req.body.periodEnd,previewToken:req.body.previewToken,payrollScope:req.body.shift,isTest:req.body.isTest==='true',employeeIds}
+  try{csvText=mergeAttendanceCsvs(files.map(f=>decodeAttendanceCsv(f.buffer)))}catch(e){return res.status(400).json({message:e.message})}
+  req.attendanceInput={fileName:files.map(f=>f.originalname).join(' + ').slice(0,255),csvText,periodStart:req.body.periodStart,periodEnd:req.body.periodEnd,previewToken:req.body.previewToken,payrollScope:req.body.shift,isTest:req.body.isTest==='true',employeeIds}
   next()
  })
  router.post('/api/attendance/preview',file,handler(req=>service.preview(req.attendanceInput)))

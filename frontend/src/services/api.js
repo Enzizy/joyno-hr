@@ -112,9 +112,11 @@ export async function importPayrollAttendance(file, periodStart, periodEnd) {
   return request('/api/payroll/attendance/import', { method: 'POST', body })
 }
 
-export async function attendanceUpload(action,file,periodStart,periodEnd,previewToken='',shift='day',options={}) {
+// files: one export, or several (for example two months) that the server merges into one review.
+export async function attendanceUpload(action,files,periodStart,periodEnd,previewToken='',shift='day',options={}) {
   const body=new FormData()
-  body.append('file',file);body.append('periodStart',periodStart);body.append('periodEnd',periodEnd);body.append('previewToken',previewToken);body.append('shift',shift)
+  for(const file of [].concat(files))body.append('files',file)
+  body.append('periodStart',periodStart);body.append('periodEnd',periodEnd);body.append('previewToken',previewToken);body.append('shift',shift)
   body.append('isTest',String(options.isTest===true));if(options.employeeIds)body.append('employeeIds',JSON.stringify(options.employeeIds))
   return request(`/api/attendance/${action}`,{method:'POST',body})
 }

@@ -1,8 +1,8 @@
 import { standardPeriod, matchingAttendanceReviews } from './payrollPeriods.js'
 import { reviewScope, runScope } from './payrollScope.js'
 
+// Employee setup is shown on the Payroll page, so a pay run starts at Attendance.
 export const PAY_RUN_STAGES = Object.freeze([
-  { key: 'employees', label: 'Employees' },
   { key: 'attendance', label: 'Attendance' },
   { key: 'review', label: 'Review pay' },
   { key: 'approve', label: 'Approve & pay' },
@@ -103,19 +103,13 @@ export function currentPayRun({ period, shift, practice = false, reviews = [], r
 }
 
 // Each stage is done, todo (the next thing to act on) or locked (waiting on an earlier stage or a setting).
-export function payRunStages({ period, shift, practice = false, profiles = [], reviews = [], runs = [], finalizationEnabled = false }) {
-  const ready = profiles.filter(profileReady).length
-  const needSetup = profiles.length - ready
+export function payRunStages({ period, shift, practice = false, reviews = [], runs = [], finalizationEnabled = false }) {
   const { confirmed, unfinished } = attendanceForPeriod(reviews, period, shift, practice)
   const run = currentPayRun({ period, shift, practice, reviews, runs })
   const status = String(run?.status || '')
   const finalized = ['approved', 'locked'].includes(status)
   const attendanceDone = (Boolean(confirmed) && !newerUpload(confirmed, unfinished)) || finalized
   const canFinalize = practice || finalizationEnabled
-
-  const employees = practice
-    ? (ready ? { state: 'done', detail: `${ready} configured` } : { state: 'todo', detail: 'No one configured' })
-    : (needSetup ? { state: 'todo', detail: `${needSetup} need setup` } : { state: 'done', detail: `${ready} ready` })
 
   let attendance
   if (attendanceDone) attendance = { state: 'done', detail: 'Confirmed' }
@@ -141,16 +135,12 @@ export function payRunStages({ period, shift, practice = false, profiles = [], r
   if (status === 'locked') payslips = { state: 'done', detail: practice ? 'Ready to send' : 'Released' }
   else payslips = { state: 'locked', detail: practice ? 'After finishing' : 'After closing' }
 
-  return PAY_RUN_STAGES.map((stage, index) => ({ ...stage, ...[employees, attendance, review, approve, payslips][index] }))
+  return PAY_RUN_STAGES.map((stage, index) => ({ ...stage, ...[attendance, review, approve, payslips][index] }))
 }
 
-// Setup gaps do not stop attendance (the review flags those employees), so the run's
-// current stage skips past Employees once attendance has started.
+// The first stage with something to do; once everything is done, the last stage.
 export function currentStageKey(stages) {
-  const open = stages.filter(stage => stage.state !== 'done')
-  const started = stages.find(stage => stage.key === 'attendance')?.detail !== 'Upload file'
-  const pick = open.find(stage => stage.state === 'todo' && !(stage.key === 'employees' && started)) || open.find(stage => stage.state === 'todo')
-  return pick?.key || [...stages].reverse().find(stage => stage.state === 'done')?.key || 'employees'
+  return stages.find(stage => stage.state === 'todo')?.key || [...stages].reverse().find(stage => stage.state === 'done')?.key || 'attendance'
 }
 
 export function runSummary(stages) {

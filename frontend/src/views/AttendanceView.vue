@@ -39,8 +39,14 @@ const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10)
 const initialPeriod=attendanceSelection(route.query,today.slice(0,7))
 const attendanceMonth=ref(initialPeriod.month),cycle=ref(initialPeriod.cycle)
 const payrollOrigin=ref(standardPeriod(String(route.query.payrollMonth||''),String(route.query.cutoff||''))?{payrollMonth:String(route.query.payrollMonth),cutoff:String(route.query.cutoff)}:null)
-const start=ref(initialPeriod.start),end=ref(initialPeriod.end),file=ref(null),busy=ref(false),error=ref(''),showImport=ref(!route.query.batch)
+const start=ref(initialPeriod.start),end=ref(initialPeriod.end),files=ref([]),busy=ref(false),error=ref(''),showImport=ref(!route.query.batch)
 const fileInputKey=ref(0)
+// Files are added one pick at a time (the device exports one month per file); the same file is not added twice.
+function addFiles(event){const picked=[...(event.target.files||[])];files.value=[...files.value,...picked.filter(f=>!files.value.some(g=>g.name===f.name&&g.size===f.size))];fileInputKey.value++}
+function removeFile(index){files.value=files.value.filter((_,i)=>i!==index)}
+const monthName=key=>new Intl.DateTimeFormat('en-PH',{month:'long',timeZone:'UTC'}).format(new Date(`${key}T00:00:00Z`))
+// The 15th payday's work dates (26th to 10th) cross two months, and the device exports one month at a time.
+const spansMonths=computed(()=>Boolean(start.value&&end.value)&&start.value.slice(0,7)!==end.value.slice(0,7))
 let syncingRange=false
 const preview=ref(null),showPreview=ref(false),batch=ref(null),batches=ref([]),search=ref(''),showAllDays=ref(false)
 const reviewing=ref(null),decision=ref({action:'acknowledge',reason:'',timeIn:'',timeOut:'',leaveId:null}),coverageReason=ref('')
@@ -50,7 +56,7 @@ const payrollTarget=computed(()=>({path:'/payroll',query:{shift:shift.value,prac
 function rangeQuery(){const query={...route.query,shift:shift.value,practice:String(practiceMode.value),...(payrollOrigin.value||{payrollMonth:attendanceMonth.value,cutoff:cycle.value})};if(cycle.value==='custom'){query.firstWorkDate=start.value;query.lastWorkDate=end.value}else{delete query.firstWorkDate;delete query.lastWorkDate}return query}
 // The review that was open before "Upload a different file", so HR can go back to it.
 const returnBatch=ref(null)
-async function newImport(){returnBatch.value=props.embedded?batch.value?.id??null:null;batch.value=null;showImport.value=true;file.value=null;fileInputKey.value++;preview.value=null;showPreview.value=false;error.value='';coverageReason.value='';const query=rangeQuery();delete query.batch;await router.replace({query})}
+async function newImport(){returnBatch.value=props.embedded?batch.value?.id??null:null;batch.value=null;showImport.value=true;files.value=[];fileInputKey.value++;preview.value=null;showPreview.value=false;error.value='';coverageReason.value='';const query=rangeQuery();delete query.batch;await router.replace({query})}
 watch([attendanceMonth,cycle],()=>{
  if(syncingRange)return
  payrollOrigin.value=null
@@ -111,7 +117,7 @@ const blocking=computed(()=>(batch.value?.issues||[]).filter(i=>i.code!=='file_c
 const hasCoverageIssue=computed(()=>(batch.value?.issues||[]).some(i=>i.code==='file_coverage'))
 const needsSetup=computed(()=>reviewing.value?.issue_codes?.some(c=>['missing_profile','missing_attendance_id','missing_hire_date','unsupported_schedule'].includes(c)))
 const stamp=value=>value?new Date(value).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'2-digit',minute:'2-digit',hour12:false}):'—'
-watch([start,end,file],()=>{preview.value=null;showPreview.value=false})
+watch([start,end,files],()=>{preview.value=null;showPreview.value=false})
 watch([start,end],()=>{if(!syncingRange&&cycle.value==='custom')router.replace({query:rangeQuery()})})
 async function run(fn){busy.value=true;error.value='';try{return await fn()}catch(e){error.value=e.message;toast.error(e.message)}finally{busy.value=false}}
 async function reload(){const selectedShift=shift.value;const [loaded,profileResult]=await Promise.all([listAttendanceReviews(selectedShift),getPayrollProfiles(selectedShift)]);if(selectedShift===shift.value){batches.value=loaded;configuredProfiles.value=Array.isArray(profileResult)?profileResult:profileResult.profiles||[];selectedEmployees.value=selectedEmployees.value.filter(id=>readyEmployees.value.some(p=>Number(p.employee_id)===id));if(!selectedEmployees.value.length)selectedEmployees.value=readyEmployees.value.map(p=>Number(p.employee_id))}}
@@ -119,7 +125,7 @@ async function reloadChanged(){await reload();emit('changed')}
 async function open(id){await run(async()=>{
  const loaded=await getAttendanceReview(id);if(!loaded)throw Error('Attendance review not found')
  if(reviewScope(loaded)!==shift.value)throw Error('This review belongs to a different shift. Select its shift first.')
- file.value=null;fileInputKey.value++
+ files.value=[];fileInputKey.value++
  const originatingPeriod=payrollOrigin.value&&standardPeriod(payrollOrigin.value.payrollMonth,payrollOrigin.value.cutoff)
  if(originatingPeriod&&!coversWorkDates(loaded,originatingPeriod.start,originatingPeriod.end))payrollOrigin.value=null
  syncingRange=true
@@ -131,9 +137,9 @@ async function open(id){await run(async()=>{
  practiceMode.value=loaded.isTest===true;if(loaded.employeeIds)selectedEmployees.value=loaded.employeeIds;batch.value=loaded;showImport.value=Boolean(loaded.needs_reimport);coverageReason.value=''
  await router.replace({query:{...rangeQuery(),batch:id}})
 })}
-async function analyse(){await run(async()=>{preview.value=await attendanceUpload('preview',file.value,start.value,end.value,'',shift.value,practiceOptions());showPreview.value=true})}
+async function analyse(){await run(async()=>{preview.value=await attendanceUpload('preview',files.value,start.value,end.value,'',shift.value,practiceOptions());showPreview.value=true})}
 async function save(alsoConfirm=false){await run(async()=>{
- batch.value=await attendanceUpload('drafts',file.value,start.value,end.value,preview.value.preview_token,shift.value,practiceOptions())
+ batch.value=await attendanceUpload('drafts',files.value,start.value,end.value,preview.value.preview_token,shift.value,practiceOptions())
  showPreview.value=false;preview.value=null;showImport.value=false;router.replace({query:{...rangeQuery(),batch:batch.value.id}})
  if(alsoConfirm)batch.value=await attendanceReviewAction(batch.value.id,'confirm',{version:batch.value.review_version})
  await reloadChanged();toast.success(alsoConfirm?'Attendance confirmed':'Saved for HR review')
@@ -204,8 +210,10 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
      <p v-else-if="!embedded" class="text-xs text-gray-500">For the {{cycle==='first'?'15th payday, work dates run from the previous month’s 26th through this month’s 10th.':'month-end payday, work dates run from the 11th through the 25th.'}}</p>
     </div>
     <div class="flex flex-col justify-between gap-4 rounded-lg border border-dashed border-gray-700 bg-gray-950/30 p-5">
-     <div><h3 class="text-sm font-semibold text-gray-100">{{shiftName}} export</h3><p class="mt-2 text-sm leading-6 text-gray-400">{{shift==='night'?'Upload the Night shift export, including the morning clock-outs after the last work date.':'Upload the Day shift export for the work dates shown.'}}</p><label class="mt-4 block text-sm text-gray-300">Biometric CSV<input :key="fileInputKey" type="file" accept=".csv" class="mt-2 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-gray-800 file:px-3 file:py-2 file:text-gray-200" @change="file=$event.target.files?.[0]||null"></label><p v-if="file" class="mt-3 break-all text-xs text-gray-400">Selected: {{file.name}}</p></div>
-     <div><AppButton class="w-full" :disabled="!file||!start||!end||end<start||(practiceMode&&!selectedEmployees.length)" :loading="busy" @click="analyse">Preview &amp; check attendance →</AppButton><p class="mt-2 text-xs leading-5 text-gray-500">Preview first. No attendance is saved until HR confirms the next step.</p></div>
+     <div><h3 class="text-sm font-semibold text-gray-100">{{shiftName}} export</h3><p class="mt-2 text-sm leading-6 text-gray-400">{{shift==='night'?'Upload the Night shift export, including the morning clock-outs after the last work date.':'Upload the Day shift export for the work dates shown.'}}</p><p v-if="spansMonths" class="mt-3 rounded-lg border border-sky-800/50 bg-sky-950/20 p-3 text-xs leading-5 text-sky-200">These work dates cross two months. If the device exports one month at a time, add the {{monthName(start)}} and {{monthName(end)}} files; they are checked as one.</p>
+      <label class="mt-4 block text-sm text-gray-300">{{files.length?'Add another file':'Biometric CSV'}}<input :key="fileInputKey" type="file" accept=".csv" multiple class="mt-2 block w-full text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-gray-800 file:px-3 file:py-2 file:text-gray-200" @change="addFiles"></label>
+      <ul v-if="files.length" class="mt-3 space-y-1.5"><li v-for="(picked,index) in files" :key="picked.name+picked.size" class="flex items-center justify-between gap-3 rounded-lg border border-gray-800 px-3 py-2 text-xs"><span class="min-w-0 break-all text-gray-300">{{picked.name}}</span><button type="button" class="shrink-0 rounded px-1.5 text-gray-500 hover:bg-red-950/30 hover:text-red-300" :aria-label="`Remove ${picked.name}`" :disabled="busy" @click="removeFile(index)">✕</button></li></ul></div>
+     <div><AppButton class="w-full" :disabled="!files.length||!start||!end||end<start||(practiceMode&&!selectedEmployees.length)" :loading="busy" @click="analyse">Preview &amp; check attendance →</AppButton><p class="mt-2 text-xs leading-5 text-gray-500">Preview first. No attendance is saved until HR confirms the next step.</p></div>
     </div>
    </div>
    <details class="border-t border-gray-800 px-5 py-3 text-xs text-gray-500"><summary class="cursor-pointer">How biometric scans are interpreted</summary><p class="mt-2 leading-5">Main Door Out is time-in; Main Door IN is time-out. New Bio can supply the first or last scan. Intermediate scans are ignored. Attendance IDs are mapped separately from Employee IDs. Night shifts use the date they start; morning clock-outs belong to the previous night.</p></details>

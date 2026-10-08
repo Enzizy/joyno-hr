@@ -3,15 +3,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AttendanceView from '@/views/AttendanceView.vue'
 import PayrollView from '@/views/PayrollView.vue'
-import AppButton from '@/components/ui/AppButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import PayRunNextStep from '@/components/payroll/PayRunNextStep.vue'
 import { listAttendanceReviews } from '@/services/api'
-import { getPayrollProfiles, getPayrollRuns } from '@/services/backendService'
+import { getPayrollRuns } from '@/services/backendService'
 import { payrollFinalizationEnabled } from '@/config/features'
 import { payrollShift, shiftLabel } from '@/utils/payrollScope'
 import { formatWorkDate, formatWorkRange } from '@/utils/payrollPeriods'
-import { PAY_RUN_STAGES, attendanceForPeriod, currentStageKey, payRunStages, periodForPayday, profileGaps, profileReady } from '@/utils/payRun'
+import { PAY_RUN_STAGES, attendanceForPeriod, currentStageKey, payRunStages, periodForPayday } from '@/utils/payRun'
 import { useToastStore } from '@/stores/toastStore'
 
 // One pay run = one standard payday for one shift. Payday, shift and practice mode come
@@ -23,18 +21,15 @@ const period = computed(() => periodForPayday(route.params.payday))
 const shift = computed(() => payrollShift(route.params.shift))
 const practice = computed(() => route.query.practice === 'true')
 const contextKey = computed(() => `${route.params.payday}:${shift.value}:${practice.value}`)
-const profiles = ref([])
 const reviews = ref([])
 const runs = ref([])
 const loading = ref(true)
 const ready = ref(false)
 
 const stages = computed(() => period.value ? payRunStages({ period: period.value, shift: shift.value, practice: practice.value,
-  profiles: profiles.value, reviews: reviews.value, runs: runs.value, finalizationEnabled: payrollFinalizationEnabled }) : [])
+  reviews: reviews.value, runs: runs.value, finalizationEnabled: payrollFinalizationEnabled }) : [])
 const stageKeys = PAY_RUN_STAGES.map(stage => stage.key)
 const step = computed(() => stageKeys.includes(route.query.step) ? route.query.step : currentStageKey(stages.value))
-const unconfigured = computed(() => profiles.value.filter(profile => !profileReady(profile)))
-const readyCount = computed(() => profiles.value.length - unconfigured.value.length)
 const paydayTitle = computed(() => period.value
   ? `${new Intl.DateTimeFormat('en-PH', { month: 'long', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${period.value.payday}T12:00:00Z`))} payday` : '')
 const otherShift = computed(() => shift.value === 'day' ? 'night' : 'day')
@@ -48,12 +43,9 @@ const listFrom = (data, ...keys) => Array.isArray(data) ? data : keys.map(key =>
 async function load() {
   const requested = contextKey.value
   try {
-    const [reviewList, profileList, runList] = await Promise.all([
-      listAttendanceReviews(shift.value), getPayrollProfiles(shift.value), getPayrollRuns(),
-    ])
+    const [reviewList, runList] = await Promise.all([listAttendanceReviews(shift.value), getPayrollRuns()])
     if (requested !== contextKey.value) return
     reviews.value = reviewList || []
-    profiles.value = listFrom(profileList, 'items', 'profiles')
     runs.value = listFrom(runList, 'items', 'runs')
   } catch (error) {
     toast.error(error.message || 'Unable to load this pay run.')
@@ -127,7 +119,7 @@ const stageDetailClass = stage => stage.state === 'done' ? 'text-emerald-300' : 
         </div>
       </header>
 
-      <nav class="grid grid-cols-5 gap-2 overflow-x-auto" aria-label="Pay run stages">
+      <nav class="grid grid-cols-4 gap-2 overflow-x-auto" aria-label="Pay run stages">
         <button v-for="(stage, index) in stages" :key="stage.key" type="button" class="min-w-[7.5rem] rounded-xl border bg-gray-900 px-3 py-2.5 text-left transition-colors" :class="stageClass(stage)" :aria-current="step === stage.key ? 'step' : undefined" @click="goto(stage.key)">
           <span class="block text-[11px] text-gray-500">{{index + 1}}</span>
           <span class="block truncate text-sm font-semibold text-gray-100">{{stage.label}}</span>
@@ -137,28 +129,7 @@ const stageDetailClass = stage => stage.state === 'done' ? 'text-emerald-300' : 
 
       <div v-if="!ready" class="rounded-xl border border-gray-800 bg-gray-900 p-6 text-sm text-gray-400" role="status">Loading pay run…</div>
       <template v-else>
-        <section v-if="step === 'employees'" class="space-y-4">
-          <dl class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div class="rounded-xl border border-gray-800 bg-gray-900 p-4"><dt class="text-xs text-gray-500">{{shiftLabel(shift)}} employees</dt><dd class="mt-1 text-2xl font-semibold text-gray-100">{{profiles.length}}</dd></div>
-            <div class="rounded-xl border border-gray-800 bg-gray-900 p-4"><dt class="text-xs text-gray-500">Ready to pay</dt><dd class="mt-1 text-2xl font-semibold text-emerald-300">{{readyCount}}</dd></div>
-            <div class="rounded-xl border border-gray-800 bg-gray-900 p-4"><dt class="text-xs text-gray-500">Need setup</dt><dd class="mt-1 text-2xl font-semibold" :class="unconfigured.length ? 'text-amber-300' : 'text-gray-100'">{{unconfigured.length}}</dd></div>
-          </dl>
-          <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-            <h2 class="font-semibold text-gray-100">{{practice ? 'Who can join this practice run' : unconfigured.length ? 'Set up these employees before pay is calculated' : 'Everyone is ready'}}</h2>
-            <p class="mt-1 text-sm text-gray-400">{{practice ? `Practice runs include only employees with a salary, schedule and Attendance ID. You choose who to include when you upload attendance. ${readyCount} are available.` : unconfigured.length ? 'Each employee needs a monthly salary, a schedule and their biometric Attendance ID. Their attendance days stay blocked until this is done.' : 'Every employee in this shift has a salary, schedule and Attendance ID.'}}</p>
-            <div v-if="unconfigured.length" class="mt-4 max-h-[28rem] divide-y divide-gray-800 overflow-auto rounded-lg border border-gray-800">
-              <div v-for="profile in unconfigured" :key="profile.employee_id" class="flex flex-wrap items-center justify-between gap-3 p-3 text-sm">
-                <div class="min-w-0"><p class="font-medium text-gray-100">{{profile.first_name}} {{profile.last_name}}</p><p class="mt-0.5 text-xs text-gray-500">Employee ID {{profile.employee_code}} · Missing: {{profileGaps(profile).join(', ')}}</p></div>
-                <RouterLink :to="{ path: '/compensation', query: { employee: profile.employee_id, shift, returnTo: route.fullPath } }" class="shrink-0 rounded-lg border border-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 hover:border-primary-500">Set up</RouterLink>
-              </div>
-            </div>
-          </div>
-          <PayRunNextStep :tone="unconfigured.length && !practice ? 'todo' : 'done'" :title="unconfigured.length && !practice ? `${unconfigured.length} employees still need setup` : '✓ Employees are ready'" :detail="unconfigured.length && !practice ? 'You can upload attendance now and finish setup during review.' : 'Next, upload the biometric export for these work dates.'">
-            <AppButton @click="goto('attendance')">Continue to attendance →</AppButton>
-          </PayRunNextStep>
-        </section>
-
-        <AttendanceView v-else-if="step === 'attendance'" :key="contextKey" embedded :pay-calculated="payCalculated" @changed="load" @continue="options => goto('review', options)" />
+        <AttendanceView v-if="step === 'attendance'" :key="contextKey" embedded :pay-calculated="payCalculated" @changed="load" @continue="options => goto('review', options)" />
         <PayrollView v-else :key="contextKey" embedded :stage="step" @changed="load" @navigate="goto" />
       </template>
     </template>

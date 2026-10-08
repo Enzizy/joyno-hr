@@ -74,6 +74,24 @@ function decodeAttendanceCsv(buffer) {
   }
 }
 
+// The biometric device exports one month at a time, so a payday whose work dates cross two months
+// (the 15th: 26th to 10th) arrives as two files. They become one CSV with the first file's columns;
+// rows from the other files are matched by column name, so a different column order still lines up.
+function mergeAttendanceCsvs(texts) {
+  if (texts.length === 1) return texts[0]
+  const files = texts.map(parseCsv).filter((rows) => rows.length)
+  if (!files.length) throw new TypeError('CSV file is empty')
+  const headers = files[0][0].map((header) => String(header || '').trim())
+  const field = (value) => /[",\r\n]/.test(String(value ?? '')) ? `"${String(value).replace(/"/g, '""')}"` : String(value ?? '')
+  const lines = [headers.map(field).join(',')]
+  for (const rows of files) {
+    const own = rows[0].map(normalizeHeader)
+    const columns = headers.map((header) => own.indexOf(normalizeHeader(header)))
+    for (const cells of rows.slice(1)) lines.push(columns.map((index) => field(index < 0 ? '' : cells[index])).join(','))
+  }
+  return lines.join('\n')
+}
+
 function isAttendanceScan(eventType) {
   return eventType === 'in' || eventType === 'out' || eventType === 'boundary'
 }
@@ -288,6 +306,7 @@ module.exports = {
   isAttendanceScan,
   listWeekdays,
   manilaDateParts,
+  mergeAttendanceCsvs,
   parseAttendanceCsv,
   parseCsv,
   parseManilaTimestamp,
