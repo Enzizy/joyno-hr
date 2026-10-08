@@ -120,3 +120,22 @@ test('the salary currently set covers the whole pay period, whatever date it was
   assert.equal(context.profiles[0].effective_from, '2026-09-26')
   assert.equal(context.profiles[0].source_effective_from, '2026-10-08')
 })
+
+// Mirrors the database rule payroll_daily_attendance_scan_pair_check (migration 020 and later).
+function satisfiesScanPairRule(day) {
+  const noScans = day.first_scan_at == null && day.last_scan_at == null
+  if (['absent', 'paid_leave', 'unpaid_leave', 'partial_leave'].includes(day.status)) return noScans
+  if (day.status === 'present') return (day.first_scan_at != null && day.last_scan_at != null && new Date(day.last_scan_at) > new Date(day.first_scan_at)) ||
+    (noScans && day.review_state === 'resolved' && day.review_decision?.action === 'verified_work')
+  return day.status === 'exception'
+}
+
+test('every rest-day decision is accepted by the database scan rule', () => {
+  const scans = csv([['00042', '10/03/26 09:05', 'Main_Door_Out_Door1_Entrance Card Reader1'], ['00042', '10/03/26 13:00', 'Main_Door_IN_Door1_Entrance Card Reader1']])
+  const saturday = preview(context(), scans, '2026-10-03', '2026-10-03').daily[0]
+  for (const decision of [{ action: 'acknowledge' }, { action: 'actual_times', timeIn: '09:00', timeOut: '18:00' }, { action: 'verified_work' }, { action: 'not_work' }]) {
+    const decided = reviewDecision(saturday, decision, context())
+    assert.ok(satisfiesScanPairRule(decided), `${decision.action} would be rejected by the database`)
+  }
+  assert.equal(reviewDecision(saturday, { action: 'not_work' }, context()).status, 'absent')
+})

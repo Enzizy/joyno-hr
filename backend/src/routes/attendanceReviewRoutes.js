@@ -18,6 +18,7 @@ function createAttendanceReviewRouter({service,authRequired,requireRole}){
    if(e.code==='40001')return res.status(409).json({message:'Attendance changed during this operation. Reload and try again.'})
    if(e.code==='23505')return res.status(409).json({message:'Another HR session saved a matching attendance review. Reload the saved reviews.'})
    const validation=e instanceof TypeError||e instanceof RangeError||/invalid|required|valid/i.test(e.message)
+   if(!e.statusCode&&!validation)console.error('[attendance] unexpected error:',e)
    res.status(e.statusCode||(validation?400:500)).json({message:e.statusCode||validation?e.message:'Attendance operation failed'})
   }
  }

@@ -223,8 +223,10 @@ function reviewDecision(day, decision, context) {
     if (day.leave_request_id) fail('Resolve recorded leave before excusing this day')
     Object.assign(resolved,{late_minutes:0,undertime_minutes:0})
   } else if (action === 'not_work') {
-    // Kept as a day with no scans, so nothing (pay, night differential) is calculated from it.
-    Object.assign(resolved,{status:'present',first_scan_at:null,last_scan_at:null,late_minutes:0,undertime_minutes:0,exception_reason:null})
+    // Stored as not worked, with no scans, so nothing (pay, night differential) is calculated from it.
+    // A day off is never deducted: pay only counts scheduled workdays. (The database only allows a
+    // scan-less worked day for verified work.)
+    Object.assign(resolved,{status:'absent',first_scan_at:null,last_scan_at:null,late_minutes:0,undertime_minutes:0,leave_deduction_fraction:1,exception_reason:null})
   } else if (action === 'verified_work') {
     if (day.leave_request_id) fail('Resolve recorded leave before confirming work')
     // Explicit HR evidence of work is retained without inventing biometric punches.

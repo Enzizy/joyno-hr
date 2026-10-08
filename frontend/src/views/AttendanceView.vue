@@ -82,7 +82,8 @@ const groups=computed(()=>{
   g.days.push(d)
   if(d.review_state==='pending')g.pending++
   g.late+=Number(d.late_minutes||0);g.undertime+=Number(d.undertime_minutes||0);g.overtime+=Number(d.review_decision?.overtimeHours||0)
-  if(['absent','unpaid_leave'].includes(d.status))g.absent++
+  // A day off marked as not worked is not an absence.
+  if(['absent','unpaid_leave'].includes(d.status)&&!d.issue_codes?.includes('rest_day_work'))g.absent++
   if(['excused','verified_work'].includes(d.review_decision?.action))g.fullDays++
  }
  return [...byEmployee.values()].map(g=>({...g,shown:showAllDays.value?g.days:g.days.filter(notable)}))
@@ -91,7 +92,7 @@ const groups=computed(()=>{
 const groupSummary=g=>[g.late?`${g.late} min late`:null,g.undertime?`${g.undertime} min undertime`:null,g.absent?`${g.absent} absent`:null,g.fullDays?`${g.fullDays} counted as full day`:null,g.overtime?`${g.overtime} h OT`:null].filter(Boolean).join(' · ')||'No deductions'
 const reviewTotals=computed(()=>{
  const daily=batch.value?.daily||[]
- return {employees:new Set(daily.map(d=>d.employee_id)).size,absent:daily.filter(d=>['absent','unpaid_leave'].includes(d.status)).length,
+ return {employees:new Set(daily.map(d=>d.employee_id)).size,absent:daily.filter(d=>['absent','unpaid_leave'].includes(d.status)&&!d.issue_codes?.includes('rest_day_work')).length,
   fullDays:daily.filter(d=>['excused','verified_work'].includes(d.review_decision?.action)).length,
   late:daily.reduce((sum,d)=>sum+missedMinutes(d),0),overtime:daily.reduce((sum,d)=>sum+Number(d.review_decision?.overtimeHours||0),0)}
 })
