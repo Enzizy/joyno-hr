@@ -54,7 +54,9 @@ const details = computed(() => props.line.details || {})
 const manualTypes = computed(() => new Set(items.value.filter(item => item.source === 'earning').map(item => item.type)))
 const baseRows = computed(() => {
   const line = props.line
-  const rows = [{ label: `Basic pay (half of ${money(line.monthly_basic_salary)})`, amount: Number(line.gross_salary || 0) }]
+  // A shorter schedule is paid its share of the 8-hour salary, for example 6 of 8 hours.
+  const hours = Number(line.hourly_rate) > 0 ? Math.round(Number(line.daily_rate) / Number(line.hourly_rate) * 10) / 10 : 8
+  const rows = [{ label: `Basic pay (half of ${money(line.monthly_basic_salary)}${hours < 8 ? `: ${hours} of 8 hours of ${money(Number(line.monthly_basic_salary) * 8 / hours)}` : ''})`, amount: Number(line.gross_salary || 0) }]
   const cola = Number(line.cola_pay ?? line.colaPay ?? details.value.colaPay ?? 0)
   if (cola) rows.push({ label: 'COLA', amount: cola })
   for (const entry of details.value.automaticEarnings || []) {

@@ -1,5 +1,5 @@
 const { payrollEmployeeIncluded, normalizePayrollScope, attendancePayrollScope, attendanceReviewSettings, canFinalizePayroll } = require('./payrollScopeService')
-const { shiftDefaults, scheduleProblem, scheduledPaidMinutes } = require('./payrollShiftService')
+const { shiftDefaults, scheduleProblem, scheduledPaidMinutes, payableProfile } = require('./payrollShiftService')
 const { calculateNightDifferential, effectiveEarnings } = require('./payrollNightDifferentialService')
 const { calculateApprovedWork } = require('./payrollApprovedWorkService')
 const { RELEASED_PAYSLIP_SQL, payslipSections } = require('./payrollPayslipService')
@@ -772,7 +772,7 @@ function createPayrollService({ db }) {
         colaRule: 'monthly_cola split across two cutoffs (odd cent to first), separate non-taxable earning; excluded from workbook SSS lookup',
         attendanceTimezone: 'Asia/Manila',
         dailyRateDivisor: 261,
-        scheduledHoursPerDay: 'paid hours in each schedule (8 for a full day); a shorter schedule salary covers only its hours',
+        scheduledHoursPerDay: 'paid hours in each schedule (8 for a full day); a shorter schedule is paid monthly_basic_salary x paid hours / 8',
         mealBreakMinutes: 60,
         mealBreakStart: { day: '13:00', overnight: '01:00' },
         nightDifferential: { rate: 0.10, window: '22:00–06:00', basis: 'actual scheduled paid hours; effective daily basic salary; unpaid break and overtime excluded; holiday hours require HR multiplier verification' },
@@ -825,25 +825,27 @@ function createPayrollService({ db }) {
         dailyByEmployee.set(Number(row.employee_id), group)
       }
 
+      const payProfiles = confirmedBatch.context.profiles.map(payableProfile)
       for (const employee of employeesResult.rows) {
-        const profile = normalizeProfile({
+        // A shorter schedule is paid its share of the 8-hour salary HR entered.
+        const profile = payableProfile(normalizeProfile({
           ...employee,
           employee_id: employee.employee_id,
-        })
+        }))
         const attendance = dailyByEmployee.get(Number(employee.employee_id)) || []
         const lineInput = {
           monthlyBasicSalary: profile.monthly_basic_salary,
           monthlyCola: profile.monthly_cola,
           dailyRateDivisor: profile.daily_rate_divisor,
-          // A 6-hour schedule's daily rate pays 6 hours, so its hourly rate is daily ÷ 6.
+          // A 6-hour schedule's daily rate pays 6 hours, so its hourly rate is daily ÷ 6 (the 8-hour salary's rate).
           paidHoursPerDay: scheduledPaidMinutes(profile) / 60,
           workdays: profile.workdays,
           cutoff,
           includeContributions,
           attendance,
         }
-        const night = calculateNightDifferential({attendance, employeeId: employee.employee_id, fallbackProfile: profile, profiles: confirmedBatch.context.profiles, holidays: confirmedBatch.context.holidays})
-        const approved = calculateApprovedWork({ attendance, employeeId: employee.employee_id, fallbackProfile: profile, profiles: confirmedBatch.context.profiles })
+        const night = calculateNightDifferential({attendance, employeeId: employee.employee_id, fallbackProfile: profile, profiles: payProfiles, holidays: confirmedBatch.context.holidays})
+        const approved = calculateApprovedWork({ attendance, employeeId: employee.employee_id, fallbackProfile: profile, profiles: payProfiles })
         const automaticEarnings = [...night.automaticEarnings, ...approved.automaticEarnings]
         const automaticTotal = automaticEarnings.reduce((sum, entry) => sum + Number(entry.amount), 0)
         const baseLine = computeLineWithLeave({ ...lineInput, includeContributions: false })

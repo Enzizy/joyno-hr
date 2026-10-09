@@ -177,6 +177,35 @@ test('month-end draft uses saved first-cutoff eligible pay for the SSS bracket',
   assert.equal(details.sssAssessment.monthlyCompensation, 15600)
 })
 
+test('a 6-hour night is paid 6 of 8 hours of the salary HR entered', async () => {
+  const run = { id: 4, period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30', status: 'draft', cutoff: 'second' }
+  let insertedLine
+  const service = createPayrollService({ db: { async query(sql, params = []) {
+    const fixture=reviewFixture(sql);if(fixture)return fixture
+    if (sql.includes('SELECT * FROM payroll_runs WHERE period_start')) return { rows: [] }
+    if (sql.includes('FROM employees employee')) return { rows: [{ employee_id: 12,
+      employee_code: 'IT-12', first_name: 'Sample', last_name: 'Employee', profile_id: 1,
+      monthly_basic_salary: '15000', monthly_cola: '0', daily_fare_rate: '0', unpaid_break_minutes: 60,
+      work_start_time: '19:00:00', work_end_time: '01:00:00',
+      daily_rate_divisor: 261, workdays: [1, 2, 3, 4, 5], effective_from: '2026-01-01' }] }
+    if (sql.includes('INSERT INTO payroll_runs')) return { rows: [run] }
+    if (sql.includes('INSERT INTO payroll_run_lines')) { insertedLine = params; return { rows: [] } }
+    if (sql.includes('INSERT INTO payroll_run_events')) return { rows: [] }
+    if (sql.includes('SELECT * FROM payroll_runs WHERE id')) return { rows: [run] }
+    if (sql.includes('SELECT * FROM payroll_run_lines WHERE payroll_run_id')) return { rows: [] }
+    if (sql.includes('SELECT * FROM payroll_run_events')) return { rows: [] }
+    if (sql.includes('FROM payroll_run_lines line JOIN payroll_runs run') || sql.includes('FROM payroll_payments') || sql.includes('FROM payroll_daily_attendance') || sql.includes('FROM payroll_attendance_import_errors'))return {rows:[]}
+    throw new Error(`Unexpected query: ${sql}`)
+  } } })
+  await service.previewRun({ periodStart: run.period_start, periodEnd: run.period_end,
+    payday: run.payday, cutoff: 'second', includeContributions: false, attendanceBatchId: 7 })
+  // ₱15,000 × 6 ÷ 8 = ₱11,250 a month: ₱5,625 a cutoff, ₱517.24 a day, ₱86.21 an hour.
+  assert.equal(insertedLine[4], 11250)
+  assert.equal(insertedLine[5], 517.24)
+  assert.equal(insertedLine[6], 86.21)
+  assert.equal(insertedLine[7], 5625)
+})
+
 test('workbook salary deduction combines lateness and undertime at the 261-day rate', () => {
   const result = calculatePayrollLine({
     monthlyBasicSalary: 15000,

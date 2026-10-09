@@ -51,10 +51,17 @@ function scheduleProblem(profile = {}) {
   }
   return null
 }
-// Paid minutes in a full scheduled day; eight hours when the schedule is unknown. A shorter schedule's
-// monthly salary covers only its hours, so its hourly rate is the daily rate ÷ these hours.
+// Paid minutes in a full scheduled day; eight hours when the schedule is unknown. A shorter schedule is
+// paid its share of the 8-hour salary (payableProfile), so its hourly rate stays the 8-hour rate.
 function scheduledPaidMinutes(profile) {
   if (!profile?.work_start_time && !profile?.workStartTime) return FULL_DAY_MINUTES
   try { return shiftWindow(profile).paidMinutes || FULL_DAY_MINUTES } catch { return FULL_DAY_MINUTES }
 }
-module.exports = { clockMinutes, shiftDefaults, shiftWindow, paidShiftOverlap, coverageWindow, scheduleProblem, scheduledPaidMinutes }
+// The salary HR enters is the full 8-hour salary; a shorter schedule is paid its share, so ₱15,000 on
+// a 6-hour night pays ₱11,250 (₱689.66 ÷ 8 × 6 a day). Moving to 8 hours pays the full salary again.
+function payableProfile(profile) {
+  if (!profile) return profile
+  const salary = Number(profile.monthly_basic_salary ?? profile.monthlyBasicSalary)
+  return { ...profile, monthly_basic_salary: Math.round(salary * scheduledPaidMinutes(profile) / FULL_DAY_MINUTES * 100) / 100 }
+}
+module.exports = { clockMinutes, shiftDefaults, shiftWindow, paidShiftOverlap, coverageWindow, scheduleProblem, scheduledPaidMinutes, payableProfile }
