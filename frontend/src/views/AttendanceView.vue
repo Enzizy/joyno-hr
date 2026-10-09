@@ -3,6 +3,7 @@ import PayrollShiftTabs from '@/components/payroll/PayrollShiftTabs.vue'
 import {payrollShift,reviewScope,shiftLabel} from '@/utils/payrollScope'
 import {computed,nextTick,onMounted,ref,watch} from 'vue'
 import {standardPeriod,formatWorkRange,coversWorkDates,attendanceSelection} from '@/utils/payrollPeriods'
+import {clockTime,twelveHourText} from '@/utils/clockTime'
 import {useRoute,useRouter} from 'vue-router'
 import {useToastStore} from '@/stores/toastStore'
 import {attendanceUpload,listAttendanceReviews,getAttendanceReview,attendanceReviewAction,createHrCalendarEntry,getLeaveTypes,getConfirmedAttendanceExport} from '@/services/api'
@@ -107,7 +108,7 @@ const moreItems=computed(()=>[
 const employeeNames=computed(()=>new Map((batch.value?.daily||[]).map(d=>[Number(d.employee_id),d.employee_name])))
 function eventText(event){
  const date=event.work_date?dayLabel(String(event.work_date).slice(0,10)):''
- if(event.action==='day_reviewed')return `${employeeNames.value.get(Number(event.employee_id))||'Employee'} · ${date} — ${event.reason}`
+ if(event.action==='day_reviewed')return `${employeeNames.value.get(Number(event.employee_id))||'Employee'} · ${date} — ${twelveHourText(event.reason)}`
  return {draft_saved:'Attendance file saved for review',refreshed:'Employee setup and leave reloaded',confirmed:'Attendance confirmed',official_leave_corrected:`Official leave cancelled — ${event.reason}`}[event.action]||event.reason||event.action
 }
 const toggled=ref(new Set())
@@ -117,7 +118,7 @@ const pending=computed(()=>(batch.value?.daily||[]).filter(d=>d.review_state==='
 const blocking=computed(()=>(batch.value?.issues||[]).filter(i=>i.code!=='file_coverage'))
 const hasCoverageIssue=computed(()=>(batch.value?.issues||[]).some(i=>i.code==='file_coverage'))
 const needsSetup=computed(()=>reviewing.value?.issue_codes?.some(c=>['missing_profile','missing_attendance_id','missing_hire_date','unsupported_schedule'].includes(c)))
-const stamp=value=>value?new Date(value).toLocaleTimeString('en-PH',{timeZone:'Asia/Manila',hour:'2-digit',minute:'2-digit',hour12:false}):'—'
+const stamp=value=>value?clockTime(value):'—'
 watch([start,end,files],()=>{preview.value=null;showPreview.value=false})
 watch([start,end],()=>{if(!syncingRange&&cycle.value==='custom')router.replace({query:rangeQuery()})})
 async function run(fn){busy.value=true;error.value='';try{return await fn()}catch(e){error.value=e.message;toast.error(e.message)}finally{busy.value=false}}
@@ -235,12 +236,12 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
      <div v-if="isOpen(g)" class="overflow-x-auto border-t border-gray-800 bg-gray-950/30">
       <table v-if="g.shown.length" class="w-full text-left text-sm"><thead class="text-xs text-gray-500"><tr><th class="px-4 py-2 pl-10">Date</th><th class="px-4 py-2">In / out</th><th class="px-4 py-2">Late / undertime</th><th class="px-4 py-2">What happens</th><th class="px-4 py-2"></th></tr></thead><tbody>
        <tr v-for="d in g.shown" :key="d.work_date" class="border-t border-gray-800/70">
-        <td class="px-4 py-2 pl-10 whitespace-nowrap">{{dayLabel(d.work_date)}}<p class="text-xs text-gray-500">{{d.schedule}}</p></td>
+        <td class="px-4 py-2 pl-10 whitespace-nowrap">{{dayLabel(d.work_date)}}<p class="text-xs text-gray-500">{{twelveHourText(d.schedule)}}</p></td>
         <td class="px-4 py-2 whitespace-nowrap">{{stamp(d.first_scan_at)}} / {{stamp(d.last_scan_at)}}</td>
         <td class="px-4 py-2 whitespace-nowrap">{{Number(d.late_minutes)}} / {{Number(d.undertime_minutes)}} min</td>
         <td class="px-4 py-2">
          <template v-if="d.review_state==='pending'"><span class="text-amber-300">Needs a decision</span><p class="text-xs text-gray-400">{{d.issue_codes.map(c=>labels[c]||c).join(' · ')}}</p></template>
-         <template v-else-if="d.review_state==='resolved'"><span class="text-emerald-300">Decided</span><p class="text-xs text-gray-400">{{d.correction_reason}}</p></template>
+         <template v-else-if="d.review_state==='resolved'"><span class="text-emerald-300">Decided</span><p class="text-xs text-gray-400">{{twelveHourText(d.correction_reason)}}</p></template>
          <span v-else-if="missedMinutes(d)" class="text-gray-300">Deducted as recorded</span>
          <span v-else class="text-gray-500">Clear</span>
          <p v-if="approvedWorkLabel(d)" class="mt-1 text-xs font-semibold text-sky-300">{{approvedWorkLabel(d)}}</p>

@@ -22,6 +22,7 @@ import HrCalendarEntryModal from '@/components/leave/HrCalendarEntryModal.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { getDepartmentPresentation } from '@/utils/employeePresentation'
 import { getLeaveTypePresentation } from '@/utils/leavePresentation'
+import { clockLabel } from '@/utils/clockTime'
 
 const props = defineProps({
   compact: Boolean,
@@ -394,7 +395,7 @@ onMounted(async () => {
         <div class="sm:col-span-2">
           <dt class="text-xs text-gray-500">Dates</dt>
           <dd class="mt-1 text-gray-200">{{ formatDate(selectedEvent.start_date) }} – {{ formatDate(selectedEvent.end_date) }}</dd>
-          <dd v-if="Number(selectedEvent.day_fraction)<1" class="mt-1 text-sm text-gray-400">Half-day · {{String(selectedEvent.coverage_start||'').slice(0,5)}} – {{String(selectedEvent.coverage_end||'').slice(0,5)}}</dd>
+          <dd v-if="Number(selectedEvent.day_fraction)<1" class="mt-1 text-sm text-gray-400">Half-day · {{clockLabel(selectedEvent.coverage_start)}} – {{clockLabel(selectedEvent.coverage_end)}}</dd>
         </div>
         <div v-if="selectedEvent.description" class="sm:col-span-2">
           <dt class="text-xs text-gray-500">Description</dt>
