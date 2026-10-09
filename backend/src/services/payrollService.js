@@ -772,7 +772,7 @@ function createPayrollService({ db }) {
         colaRule: 'monthly_cola split across two cutoffs (odd cent to first), separate non-taxable earning; excluded from workbook SSS lookup',
         attendanceTimezone: 'Asia/Manila',
         dailyRateDivisor: 261,
-        scheduledHoursPerDay: 8,
+        scheduledHoursPerDay: 'paid hours in each schedule (8 for a full day); a shorter schedule salary covers only its hours',
         mealBreakMinutes: 60,
         mealBreakStart: { day: '13:00', overnight: '01:00' },
         nightDifferential: { rate: 0.10, window: '22:00–06:00', basis: 'actual scheduled paid hours; effective daily basic salary; unpaid break and overtime excluded; holiday hours require HR multiplier verification' },
@@ -783,7 +783,7 @@ function createPayrollService({ db }) {
           'Main_Door_IN_Door1_Entrance Card Reader1': 'time_out',
           'New Bio_New Office Biometrics_Entrance Card Reader1': 'first_or_last_endpoint',
         },
-        missedTimeDeduction: 'late_and_undertime_minutes * daily_rate / 8 / 60',
+        missedTimeDeduction: 'late_and_undertime_minutes * daily_rate / scheduled paid hours / 60',
         contributionsAppliedThisRun: includeContributions,
         createdAt: new Date().toISOString(),
       }
@@ -835,6 +835,8 @@ function createPayrollService({ db }) {
           monthlyBasicSalary: profile.monthly_basic_salary,
           monthlyCola: profile.monthly_cola,
           dailyRateDivisor: profile.daily_rate_divisor,
+          // A 6-hour schedule's daily rate pays 6 hours, so its hourly rate is daily ÷ 6.
+          paidHoursPerDay: scheduledPaidMinutes(profile) / 60,
           workdays: profile.workdays,
           cutoff,
           includeContributions,

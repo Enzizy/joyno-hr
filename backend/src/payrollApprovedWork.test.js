@@ -67,17 +67,21 @@ test('rest-day work is paid 130% of the daily rate, with overtime at 169% (workb
 })
 
 test('a full shorter shift counts as one whole day; late time reduces it proportionally', () => {
-  // A 7 PM–1 AM night: six paid hours, the 1 AM lunch falls after the shift.
-  const profiles = [{ employee_id: 1, effective_from: '2026-01-01', monthly_basic_salary: 15000, daily_rate_divisor: 261, work_start_time: '19:00', work_end_time: '01:00', unpaid_break_minutes: 60 }]
+  // A 7 PM–1 AM night: six paid hours, the 1 AM lunch falls after the shift. ₱11,250 pays those six
+  // hours at the same ₱86.21 an hour as a ₱15,000 eight-hour salary, so a day is ₱517.24.
+  const profiles = [{ employee_id: 1, effective_from: '2026-01-01', monthly_basic_salary: 11250, daily_rate_divisor: 261, work_start_time: '19:00', work_end_time: '01:00', unpaid_break_minutes: 60 }]
   const day = (lateMinutes, dayType = 'rest_day') => ({ work_date: '2026-10-03', status: 'present', late_minutes: lateMinutes, undertime_minutes: 0, review_decision: { dayType } })
   const full = calculateApprovedWork({ attendance: [day(0)], profiles, employeeId: 1 })
-  assert.equal(full.approvedWork.restDayAmount, 896.55)
+  assert.equal(full.approvedWork.restDayAmount, 672.41)
   assert.equal(full.approvedWork.restDayHours, 6)
   assert.equal(full.approvedWork.restDays, 1)
   const late = calculateApprovedWork({ attendance: [day(90)], profiles, employeeId: 1 })
   assert.equal(late.approvedWork.restDays, 0.75)
-  assert.equal(late.approvedWork.restDayAmount, 672.41)
+  assert.equal(late.approvedWork.restDayAmount, 504.31)
   const holiday = calculateApprovedWork({ attendance: [day(0, 'special_holiday')], profiles, employeeId: 1 })
   assert.equal(holiday.approvedWork.premiumDays, 1)
-  assert.equal(holiday.approvedWork.premiumAmount, 206.9)
+  assert.equal(holiday.approvedWork.premiumAmount, 155.17)
+  // Overtime uses the same hourly rate as everyone: ₱86.21 × 125%.
+  const overtime = calculateApprovedWork({ attendance: [{ ...day(0, 'regular'), review_decision: { dayType: 'regular', overtimeHours: 1 } }], profiles, employeeId: 1 })
+  assert.equal(overtime.approvedWork.overtimeAmount, 107.76)
 })

@@ -34,6 +34,12 @@ test('13th-month accrual matches workbook register BB/BC: absences and basic adj
   assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 7500, absenceDeduction: 2758.62 }), 395.12) // tardiness 8.62 ignored
   assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 7500, absenceDeduction: 689.66, basicAdjustment: 300 }), 592.53)
   assert.equal(calculateThirteenthMonthAccrual({ grossSalary: 7500, absenceDeduction: 8000 }), 0)
+  // A 6-hour schedule's salary pays six hours: an absence is one 6-hour day, lateness the usual hourly rate.
+  const short = calculatePayrollLine({ monthlyBasicSalary: 11250, paidHoursPerDay: 6, cutoff: 'first', attendance: [
+    { date: '2026-10-05', status: 'absent' }, { date: '2026-10-06', status: 'present', lateMinutes: 30 }] })
+  assert.equal(short.grossSalary, 5625)
+  assert.equal(short.absenceDeduction, 517.24)
+  assert.equal(short.lateDeduction, 43.1)
   const line = calculatePayrollLine({ monthlyBasicSalary: 20000, cutoff: 'second', attendance: [
     { date: '2026-09-11', status: 'absent' },
     { date: '2026-09-14', status: 'present', lateMinutes: 0, undertimeMinutes: 360 },

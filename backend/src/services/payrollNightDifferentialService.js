@@ -1,5 +1,5 @@
 const { dateKey, addDays, minutesOnWorkDate } = require('./payrollAttendanceService')
-const { shiftWindow } = require('./payrollShiftService')
+const { shiftWindow, scheduledPaidMinutes } = require('./payrollShiftService')
 
 const round = value => Math.round((value + Number.EPSILON) * 100) / 100
 function effectiveEarnings(details = {}, manualEarnings = details.manualEarnings || []) {
@@ -40,7 +40,7 @@ function calculateNightDifferential({ attendance = [], profiles = [], employeeId
     const actualNightMinutes = windows.reduce((sum, [a,b]) => sum + Math.max(0, Math.min(to,b) - Math.max(from,a)), 0)
     const breakNightMinutes = windows.reduce((sum, [a,b]) => sum + Math.max(0, Math.min(to,shift.breakEnd,b) - Math.max(from,shift.breakStart,a)), 0)
     if (actualNightMinutes > minutes + breakNightMinutes + 0.01) review.push({date,reason:'Night punches extend outside scheduled paid hours; HR must verify approved overtime and enter the total night differential override'})
-    const hourlyRate = Number(profile.monthly_basic_salary ?? profile.monthlyBasicSalary) * 12 / Number(profile.daily_rate_divisor ?? 261) / 8
+    const hourlyRate = Number(profile.monthly_basic_salary ?? profile.monthlyBasicSalary) * 12 / Number(profile.daily_rate_divisor ?? 261) / (scheduledPaidMinutes(profile) / 60)
     if (!Number.isFinite(hourlyRate) || hourlyRate < 0) throw new TypeError('Night differential requires a valid basic salary')
     const amount = minutes / 60 * hourlyRate * 0.10
     if (holidayMinutes > 0) review.push({ date, reason: 'Night work overlaps a holiday; HR must verify the holiday multiplier and enter the total night differential override' })

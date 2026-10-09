@@ -58,6 +58,14 @@ test('holiday after midnight requires an HR multiplier review; ordinary Friday s
   const result=calculateNightDifferential({attendance:[day],fallbackProfile:profile,holidays:[{holiday_date:'2026-09-26'}]})
   assert.equal(result.nightDifferential.reviewRequired,true);assert.equal(result.nightDifferential.days[0].holidayMinutes,300)
 })
+test('a shorter night is paid by its hours: 7 PM–1 AM earns three night hours at the usual hourly rate', () => {
+  const short = { ...profile, monthly_basic_salary: 11250, work_start_time: '19:00', work_end_time: '01:00' }
+  const day = { work_date: '2026-10-06', status: 'present', first_scan_at: '2026-10-06T11:00:00Z', last_scan_at: '2026-10-06T17:00:00Z', late_minutes: 0, undertime_minutes: 0 }
+  const result = calculateNightDifferential({ attendance: [day], profiles: [short], employeeId: 1 })
+  assert.equal(result.nightDifferential.paidMinutes, 180)
+  assert.equal(result.nightDifferential.amount, 25.86)
+})
+
 test('night overtime outside a day schedule requires manual verification instead of silent omission', () => {
   const dayProfile={...profile,work_start_time:'09:00',work_end_time:'18:00'}
   const day=computeDailyAttendance({date:'2026-09-25',events:events('2026-09-25 09:00','2026-09-25 23:00'),profile:dayProfile})

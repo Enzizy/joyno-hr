@@ -51,7 +51,8 @@ function scheduleProblem(profile = {}) {
   }
   return null
 }
-// Paid minutes in a full scheduled day; eight hours when the schedule is unknown.
+// Paid minutes in a full scheduled day; eight hours when the schedule is unknown. A shorter schedule's
+// monthly salary covers only its hours, so its hourly rate is the daily rate ÷ these hours.
 function scheduledPaidMinutes(profile) {
   if (!profile?.work_start_time && !profile?.workStartTime) return FULL_DAY_MINUTES
   try { return shiftWindow(profile).paidMinutes || FULL_DAY_MINUTES } catch { return FULL_DAY_MINUTES }

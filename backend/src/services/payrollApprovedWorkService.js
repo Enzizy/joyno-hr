@@ -3,7 +3,7 @@ const { scheduledPaidMinutes } = require('./payrollShiftService')
 
 // Approved overtime and special-holiday work recorded by HR on the attendance day.
 // Multipliers follow FOR TESTING.xlsm TIMEKEEPING / PAYROLL REGISTER:
-//   regular-day OT = hourly x 125% x hours (register K: daily/8*1.25*P)
+//   regular-day OT = hourly x 125% x hours (register K: daily/8*1.25*P; hourly = daily / scheduled paid hours)
 //   WSH/RD OT      = hourly x 130% x 130% x hours (TIMEKEEPING S: hrs*1.3*1.3)
 //   WSH/RD premium = days worked x daily x 30% (register P: 0.3 * days * daily);
 //                    the monthly basic already pays the ordinary day.
@@ -61,7 +61,7 @@ function calculateApprovedWork({ attendance = [], profiles = [], employeeId, fal
     const profile = profileForDate(profiles, employeeId, date, fallbackProfile)
     const dailyRate = Number(profile.monthly_basic_salary ?? profile.monthlyBasicSalary) * 12 / Number(profile.daily_rate_divisor ?? 261)
     if (!Number.isFinite(dailyRate) || dailyRate < 0) throw new TypeError('Approved overtime requires a valid basic salary')
-    const hourlyRate = dailyRate / 8
+    const hourlyRate = dailyRate / (scheduledPaidMinutes(profile) / 60)
     const paidHours = rule.premiumRate ? paidHoursWorked(day, profile) : 0
     const daysWorked = paidHours * 60 / scheduledPaidMinutes(profile)
     const dayOvertime = work.overtimeHours * hourlyRate * rule.overtimeMultiplier
