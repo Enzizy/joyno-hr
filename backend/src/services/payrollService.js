@@ -1,5 +1,5 @@
 const { payrollEmployeeIncluded, normalizePayrollScope, attendancePayrollScope, attendanceReviewSettings, canFinalizePayroll } = require('./payrollScopeService')
-const { shiftDefaults, shiftWindow } = require('./payrollShiftService')
+const { shiftDefaults, scheduleProblem, scheduledPaidMinutes } = require('./payrollShiftService')
 const { calculateNightDifferential, effectiveEarnings } = require('./payrollNightDifferentialService')
 const { calculateApprovedWork } = require('./payrollApprovedWorkService')
 const { RELEASED_PAYSLIP_SQL, payslipSections } = require('./payrollPayslipService')
@@ -294,8 +294,8 @@ function createPayrollService({ db }) {
         throw new TypeError('workdays must contain weekday numbers from 0 to 6')
       }
 
-      const schedule = shiftWindow({ work_start_time: workStart, work_end_time: workEnd, unpaid_break_minutes: unpaidBreakMinutes })
-      if (schedule.paidMinutes !== 480 || unpaidBreakMinutes !== 60 || schedule.breakStart < schedule.start || schedule.breakEnd > schedule.end) throw new TypeError('Use eight paid hours with the fixed one-hour break: 1–2 PM for day shifts or 1–2 AM for overnight shifts')
+      const problem = scheduleProblem({ work_start_time: workStart, work_end_time: workEnd, unpaid_break_minutes: unpaidBreakMinutes })
+      if (problem) throw new TypeError(problem)
 
       for (const previous of rows) {
         if (dateKey(previous.effective_from) < effectiveFrom && (!previous.effective_to || dateKey(previous.effective_to) >= effectiveFrom)) {
@@ -612,14 +612,9 @@ function createPayrollService({ db }) {
         if (!Number.isFinite(lateMinutes) || lateMinutes < 0 || lateMinutes > 1440) {
           throw new TypeError('lateMinutes must be between 0 and 1440')
         }
-        const [startHour, startMinute] = String(profile.work_start_time || '09:00').split(':').map(Number)
-        const [endHour, endMinute] = String(profile.work_end_time || '18:00').split(':').map(Number)
-        const scheduledPaidMinutes = Math.max(
-          0,
-          (endHour * 60 + endMinute) - (startHour * 60 + startMinute) - Number(profile.unpaid_break_minutes || 0)
-        )
-        if (!Number.isFinite(undertimeMinutes) || undertimeMinutes < 0 || undertimeMinutes > scheduledPaidMinutes) {
-          throw new TypeError(`undertimeMinutes must be between 0 and ${scheduledPaidMinutes}`)
+        const paidMinutes = scheduledPaidMinutes(profile)
+        if (!Number.isFinite(undertimeMinutes) || undertimeMinutes < 0 || undertimeMinutes > paidMinutes) {
+          throw new TypeError(`undertimeMinutes must be between 0 and ${paidMinutes}`)
         }
         scanCount = 2
       }
@@ -781,7 +776,7 @@ function createPayrollService({ db }) {
         mealBreakMinutes: 60,
         mealBreakStart: { day: '13:00', overnight: '01:00' },
         nightDifferential: { rate: 0.10, window: '22:00–06:00', basis: 'actual scheduled paid hours; effective daily basic salary; unpaid break and overtime excluded; holiday hours require HR multiplier verification' },
-        approvedWork: { source: 'HR attendance decision per day', regularOvertime: 'hourly x 125%', specialHolidayOvertime: 'hourly x 130% x 130%', specialHolidayPremium: 'paid hours worked / 8 x daily x 30%', override: 'a manual earning of the same type replaces the attendance-based amount' },
+        approvedWork: { source: 'HR attendance decision per day', regularOvertime: 'hourly x 125%', specialHolidayOvertime: 'hourly x 130% x 130%', specialHolidayPremium: 'days worked x daily x 30%', restDay: 'days worked x daily x 130%', daysWorked: 'scheduled paid hours less late and undertime, over the scheduled paid hours', override: 'a manual earning of the same type replaces the attendance-based amount' },
         overnightWorkDate: 'date the shift starts',
         attendanceReaders: {
           'Main_Door_Out_Door1_Entrance Card Reader1': 'time_in',

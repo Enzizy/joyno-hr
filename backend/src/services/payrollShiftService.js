@@ -38,4 +38,22 @@ function coverageWindow(from, to, profile = {}) {
   if (shift.overnight && to < shift.start) to += 1440
   return { from, to }
 }
-module.exports = { clockMinutes, shiftDefaults, shiftWindow, paidShiftOverlap, coverageWindow }
+// Schedules pay 4 to 8 hours a day. An eight-hour day keeps its one-hour unpaid lunch inside the
+// shift; a shorter day (for example a 7 PM–1 AM night) may run without one. Returns the problem, or null.
+const MIN_PAID_MINUTES = 240
+const FULL_DAY_MINUTES = 480
+function scheduleProblem(profile = {}) {
+  const window = shiftWindow(profile)
+  const breakMinutes = Number(profile.unpaid_break_minutes ?? profile.unpaidBreakMinutes ?? 60)
+  if (window.paidMinutes < MIN_PAID_MINUTES || window.paidMinutes > FULL_DAY_MINUTES) return 'Use a schedule with 4 to 8 paid hours'
+  if (window.paidMinutes === FULL_DAY_MINUTES && (breakMinutes !== 60 || window.breakStart < window.start || window.breakEnd > window.end)) {
+    return 'An eight-hour day needs its one-hour unpaid lunch inside the shift'
+  }
+  return null
+}
+// Paid minutes in a full scheduled day; eight hours when the schedule is unknown.
+function scheduledPaidMinutes(profile) {
+  if (!profile?.work_start_time && !profile?.workStartTime) return FULL_DAY_MINUTES
+  try { return shiftWindow(profile).paidMinutes || FULL_DAY_MINUTES } catch { return FULL_DAY_MINUTES }
+}
+module.exports = { clockMinutes, shiftDefaults, shiftWindow, paidShiftOverlap, coverageWindow, scheduleProblem, scheduledPaidMinutes }

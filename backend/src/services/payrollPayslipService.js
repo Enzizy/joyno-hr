@@ -71,14 +71,14 @@ function payslipSections(line) {
   const nightPay = total(ofType(earnings, 'night_differential'))
   const holiday = total(ofType(earnings, 'holiday_premium', 'special_holiday_pay'))
   const restDayPay = total(ofType(earnings, 'rest_day'))
-  const restDays = amount(approved.restDayHours) / 8
+  const restDays = approved.restDays == null ? amount(approved.restDayHours) / 8 : amount(approved.restDays)
   const allowance = roundMoney(amount(line.cola_pay) + total(ofType(charges, 'other_non_taxable_earning')))
   const adjustmentItems = [...ofType(charges, 'basic_pay_adjustment'), ...ofType(earnings, 'other')]
   const cashItems = ofType(charges, 'cash_advance', 'other_charge')
 
   const overtimeHours = manualTypes.has('overtime') ? 0 : amount(approved.overtimeHours)
   const nightHours = manualTypes.has('night_differential') ? 0 : amount(night.paidMinutes) / 60
-  const holidayDays = manualTypes.has('holiday_premium') ? 0 : amount(approved.premiumHours) / 8
+  const holidayDays = manualTypes.has('holiday_premium') ? 0 : approved.premiumDays == null ? amount(approved.premiumHours) / 8 : amount(approved.premiumDays)
   const additions = [
     { label: 'OVERTIME', name: 'Overtime', qty: count(overtimeHours), unit: units(overtimeHours, 'h', 'h'), amount: overtime },
     { label: 'NIGHT DIFF.', name: 'Night differential', qty: count(nightHours), unit: units(nightHours, 'h', 'h'), amount: nightPay },

@@ -162,7 +162,7 @@ const decisionOptions=computed(()=>{
   not_work:{title:'They didn’t work (only visited)',hint:'For example, they came in to pick something up. Counted as an absence: one day’s pay is deducted, and the scans are ignored.'},
  }
  if(d.issue_codes?.includes('rest_day_work')){
-  const paidHours=Math.round(Math.max(0,480-missed)/60*100)/100
+  const paidHours=Math.round(Math.max(0,(d.scheduled_minutes||480)-missed)/60*100)/100
   Object.assign(all,{
    acknowledge:{title:'They worked their rest day',hint:noScans?'Paid 130% of the daily rate for the hours worked.':`Paid 130% of the daily rate for ${paidHours} h worked (${stamp(d.first_scan_at)}–${stamp(d.last_scan_at)}). Add overtime below for hours past a normal day.`},
    verified_work:{title:'They worked a full rest day, but the scans are incomplete',hint:'Paid as a full rest day: 130% of the daily rate.'},

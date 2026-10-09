@@ -1,13 +1,16 @@
 const { dateKey } = require('./payrollAttendanceService')
+const { scheduledPaidMinutes } = require('./payrollShiftService')
 
 // Approved overtime and special-holiday work recorded by HR on the attendance day.
 // Multipliers follow FOR TESTING.xlsm TIMEKEEPING / PAYROLL REGISTER:
 //   regular-day OT = hourly x 125% x hours (register K: daily/8*1.25*P)
 //   WSH/RD OT      = hourly x 130% x 130% x hours (TIMEKEEPING S: hrs*1.3*1.3)
-//   WSH/RD premium = paid hours / 8 x daily x 30% (register P: 0.3 * days * daily);
+//   WSH/RD premium = days worked x daily x 30% (register P: 0.3 * days * daily);
 //                    the monthly basic already pays the ordinary day.
-//   rest day       = paid hours / 8 x daily x 130% (register N, WRD: days * 1.3 * daily); the monthly
+//   rest day       = days worked x daily x 130% (register N, WRD: days * 1.3 * daily); the monthly
 //                    basic does not cover days outside the schedule, so the whole day is paid.
+// Days worked = scheduled paid hours less late and undertime, over the scheduled paid hours, so a
+// full 6-hour night counts as one day just like a full 8-hour day.
 const DAY_TYPES = Object.freeze({
   regular: { label: 'Regular workday', overtimeMultiplier: 1.25, premiumRate: 0 },
   special_holiday: { label: 'Special holiday / rest day (WSH/RD)', overtimeMultiplier: 1.3 * 1.3, premiumRate: 0.3, earningType: 'holiday_premium' },
@@ -33,11 +36,11 @@ function hasApprovedWork(decision) {
   return dayType !== 'regular' || overtimeHours > 0
 }
 
-// Paid hours actually worked inside the schedule: 8 less late and undertime.
+// Paid hours actually worked inside the schedule: the scheduled paid hours less late and undertime.
 // Work verified without punches counts as the full scheduled day.
-function paidHoursWorked(day) {
+function paidHoursWorked(day, profile) {
   const missed = Number(day.late_minutes ?? day.lateMinutes ?? 0) + Number(day.undertime_minutes ?? day.undertimeMinutes ?? 0)
-  return Math.max(0, 480 - missed) / 60
+  return Math.max(0, scheduledPaidMinutes(profile) - missed) / 60
 }
 
 function profileForDate(profiles, employeeId, date, fallback) {
@@ -47,7 +50,7 @@ function profileForDate(profiles, employeeId, date, fallback) {
 }
 
 function calculateApprovedWork({ attendance = [], profiles = [], employeeId, fallbackProfile = {} }) {
-  let overtimePay = 0, premiumPay = 0, overtimeHours = 0, premiumHours = 0, restDayPay = 0, restDayHours = 0
+  let overtimePay = 0, premiumPay = 0, overtimeHours = 0, premiumHours = 0, restDayPay = 0, restDayHours = 0, premiumDays = 0, restDays = 0
   const days = []
   for (const day of attendance) {
     const decision = day.review_decision ?? day.reviewDecision
@@ -59,12 +62,13 @@ function calculateApprovedWork({ attendance = [], profiles = [], employeeId, fal
     const dailyRate = Number(profile.monthly_basic_salary ?? profile.monthlyBasicSalary) * 12 / Number(profile.daily_rate_divisor ?? 261)
     if (!Number.isFinite(dailyRate) || dailyRate < 0) throw new TypeError('Approved overtime requires a valid basic salary')
     const hourlyRate = dailyRate / 8
-    const paidHours = rule.premiumRate ? paidHoursWorked(day) : 0
+    const paidHours = rule.premiumRate ? paidHoursWorked(day, profile) : 0
+    const daysWorked = paidHours * 60 / scheduledPaidMinutes(profile)
     const dayOvertime = work.overtimeHours * hourlyRate * rule.overtimeMultiplier
-    const dayPremium = paidHours / 8 * dailyRate * rule.premiumRate
+    const dayPremium = daysWorked * dailyRate * rule.premiumRate
     overtimePay += dayOvertime; overtimeHours += work.overtimeHours
-    if (rule.earningType === 'rest_day') { restDayPay += dayPremium; restDayHours += paidHours }
-    else { premiumPay += dayPremium; premiumHours += paidHours }
+    if (rule.earningType === 'rest_day') { restDayPay += dayPremium; restDayHours += paidHours; restDays += daysWorked }
+    else { premiumPay += dayPremium; premiumHours += paidHours; premiumDays += daysWorked }
     days.push({ date, dayType: work.dayType, overtimeHours: work.overtimeHours, premiumHours: round(paidHours),
       overtimeAmount: round(dayOvertime), premiumAmount: round(dayPremium), reason: decision.reason || null })
   }
@@ -73,12 +77,13 @@ function calculateApprovedWork({ attendance = [], profiles = [], employeeId, fal
     ...(overtime > 0 ? [{ type: 'overtime', amount: overtime,
       note: `${round(overtimeHours)} approved OT hours from attendance (regular day 125%, WSH/RD 169%)` }] : []),
     ...(premium > 0 ? [{ type: 'holiday_premium', amount: premium,
-      note: `${round(premiumHours)} paid hours on special holiday / rest day × daily rate ÷ 8 × 30%` }] : []),
+      note: `${round(premiumDays)} days on special holiday / rest day × daily rate × 30%` }] : []),
     ...(restDay > 0 ? [{ type: 'rest_day', amount: restDay,
-      note: `${round(restDayHours)} paid hours on rest days × daily rate ÷ 8 × 130%` }] : []),
+      note: `${round(restDays)} days on rest days × daily rate × 130%` }] : []),
   ]
   return { automaticEarnings, approvedWork: { days, overtimeHours: round(overtimeHours), overtimeAmount: overtime,
-    premiumHours: round(premiumHours), premiumAmount: premium, restDayHours: round(restDayHours), restDayAmount: restDay } }
+    premiumHours: round(premiumHours), premiumDays: round(premiumDays), premiumAmount: premium,
+    restDayHours: round(restDayHours), restDays: round(restDays), restDayAmount: restDay } }
 }
 
 module.exports = { DAY_TYPES, MAX_OVERTIME_HOURS, calculateApprovedWork, hasApprovedWork, normalizeApprovedWork, paidHoursWorked }

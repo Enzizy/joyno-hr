@@ -1,5 +1,5 @@
 const { payrollEmployeeIncluded, normalizePayrollScope, attendancePayrollScope, attendanceReviewSettings, assertPracticeAllowed } = require('./payrollScopeService')
-const { shiftWindow, shiftDefaults, paidShiftOverlap, coverageWindow } = require('./payrollShiftService')
+const { shiftWindow, shiftDefaults, paidShiftOverlap, coverageWindow, scheduleProblem, scheduledPaidMinutes } = require('./payrollShiftService')
 const crypto = require('node:crypto')
 const { normalizeApprovedWork } = require('./payrollApprovedWorkService')
 const { parseAttendanceCsv, parseManilaTimestamp, manilaDateParts, dateKey, addDays,
@@ -102,7 +102,7 @@ function buildAttendancePreview({ csvText, periodStart, periodEnd }, context) {
       if (!e.date_hired) codes.push('missing_hire_date')
       if (!profile || !(Number(profile.monthly_basic_salary) >= MINIMUM_MONTHLY_SALARY)) codes.push('missing_profile')
       if (!e.person_id) codes.push('missing_attendance_id')
-      if (profile && (shiftWindow(profile).paidMinutes !== 480 || Number(profile.unpaid_break_minutes ?? 60) !== 60 || shiftWindow(profile).breakStart < shiftWindow(profile).start || shiftWindow(profile).breakEnd > shiftWindow(profile).end)) codes.push('unsupported_schedule')
+      if (profile && scheduleProblem(profile)) codes.push('unsupported_schedule')
       if (pending) codes.push('pending_leave')
       if (approved.length > 1) codes.push('leave_conflict')
       let leaveId = null
@@ -289,6 +289,7 @@ function createAttendanceReviewService({db}) {
     return {...result,isTest:context.isTest === true,employeeIds:context.employeeIds,payrollScope:context.payrollScope || 'all',scopeNeedsRefresh:result.context_hash !== fingerprint(context),daily:days.map(d=>({...d,employee_name:`${d.first_name} ${d.last_name}`,
       schedule:(()=>{const p=profileAt(context.profiles,d.employee_id,d.work_date);return p?`${p.work_start_time.slice(0,5)}–${p.work_end_time.slice(0,5)}${shiftWindow(p).overnight ? ' next day' : ''}`:'Not configured'})(),
       overnight:shiftWindow(profileAt(context.profiles,d.employee_id,d.work_date) || {}).overnight,
+      scheduled_minutes:scheduledPaidMinutes(profileAt(context.profiles,d.employee_id,d.work_date)),
       leaves:context.leaves.filter(l=>Number(l.employee_id)===Number(d.employee_id)&&l.start_date<=d.work_date&&l.end_date>=d.work_date)})),
       employees:context.employees,issues:result.review_issues,events}
   }

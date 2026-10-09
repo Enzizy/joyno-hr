@@ -21,7 +21,7 @@ test('approved OT matches the workbook register for WSH/RD and regular-day hours
 test('the 30% WSH/RD premium uses paid hours actually worked', () => {
   // Anderson 20,000/month worked 7 of 8 paid hours (0.875 day) on WSH/RD = 241.38
   const anderson = run(20000, [day('2026-09-11', { dayType: 'special_holiday', overtimeHours: 0 }, { undertime_minutes: 60 })])
-  assert.deepEqual(anderson.automaticEarnings, [{ type: 'holiday_premium', amount: 241.38, note: '7 paid hours on special holiday / rest day × daily rate ÷ 8 × 30%' }])
+  assert.deepEqual(anderson.automaticEarnings, [{ type: 'holiday_premium', amount: 241.38, note: '0.88 days on special holiday / rest day × daily rate × 30%' }])
 })
 
 test('a full special-holiday day with 4 OT hours pays the premium and 169% overtime', () => {
@@ -62,5 +62,22 @@ test('rest-day work is paid 130% of the daily rate, with overtime at 169% (workb
   const result = calculateApprovedWork({ attendance: [day], profiles, employeeId: 1 })
   assert.deepEqual(result.automaticEarnings.map(entry => [entry.type, entry.amount]), [['overtime', 291.38], ['rest_day', 896.55]])
   assert.equal(result.approvedWork.restDayHours, 8)
+  assert.equal(result.approvedWork.restDays, 1)
   assert.equal(result.approvedWork.premiumAmount, 0)
+})
+
+test('a full shorter shift counts as one whole day; late time reduces it proportionally', () => {
+  // A 7 PM–1 AM night: six paid hours, the 1 AM lunch falls after the shift.
+  const profiles = [{ employee_id: 1, effective_from: '2026-01-01', monthly_basic_salary: 15000, daily_rate_divisor: 261, work_start_time: '19:00', work_end_time: '01:00', unpaid_break_minutes: 60 }]
+  const day = (lateMinutes, dayType = 'rest_day') => ({ work_date: '2026-10-03', status: 'present', late_minutes: lateMinutes, undertime_minutes: 0, review_decision: { dayType } })
+  const full = calculateApprovedWork({ attendance: [day(0)], profiles, employeeId: 1 })
+  assert.equal(full.approvedWork.restDayAmount, 896.55)
+  assert.equal(full.approvedWork.restDayHours, 6)
+  assert.equal(full.approvedWork.restDays, 1)
+  const late = calculateApprovedWork({ attendance: [day(90)], profiles, employeeId: 1 })
+  assert.equal(late.approvedWork.restDays, 0.75)
+  assert.equal(late.approvedWork.restDayAmount, 672.41)
+  const holiday = calculateApprovedWork({ attendance: [day(0, 'special_holiday')], profiles, employeeId: 1 })
+  assert.equal(holiday.approvedWork.premiumDays, 1)
+  assert.equal(holiday.approvedWork.premiumAmount, 206.9)
 })

@@ -58,10 +58,13 @@ test('an incomplete whole-file date is a coverage issue, never a mass absence re
  const p=preview(context(),csv(),'2026-09-21','2026-09-22');assert.ok(p.issues.some(i=>i.code==='file_coverage'));assert.equal(p.daily[1].status,'exception')
 })
 
-test('invalid calendar dates and unsupported non-eight-hour schedules are rejected before payroll',()=>{
+test('invalid calendar dates and schedules outside 4 to 8 paid hours are rejected before payroll',()=>{
  assert.throws(()=>preview(context(),csv(),'2026-99-01','2026-99-02'),/valid YYYY-MM-DD/)
- const c=context();c.profiles[0].work_end_time='17:00:00'
+ const c=context();c.profiles[0].work_end_time='12:00:00'
  assert.ok(preview(c).daily[0].issue_codes.includes('unsupported_schedule'))
+ // A shorter day, here 9 AM–5 PM with lunch (7 paid hours), is a normal schedule.
+ const shorter=context();shorter.profiles[0].work_end_time='17:00:00'
+ assert.ok(!preview(shorter).daily[0].issue_codes.includes('unsupported_schedule'))
 })
 
 test('mixed paid and unpaid official leave needs an explicit bounded date allocation',()=>{

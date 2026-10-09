@@ -220,4 +220,7 @@ test('rest-day pay shows on the payslip REST DAY line', () => {
   assert.equal(restDay.amount, 896.55)
   assert.equal(restDay.qty, '(1.00)')
   assert.equal(restDay.unit, '1 day')
+  // A full 6-hour rest day is still one day.
+  const shorter = payslipSections({ ...line, details: { manualEarnings: [], automaticEarnings: [{ type: 'rest_day', amount: 896.55 }], approvedWork: { restDayHours: 6, restDays: 1 } } })
+  assert.equal(shorter.additions.find(row => row.label === 'REST DAY').unit, '1 day')
 })

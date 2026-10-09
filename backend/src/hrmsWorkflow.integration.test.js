@@ -106,7 +106,7 @@ test('HRMS database workflow: preview, official leave, immutable confirmation, r
   await client.query("UPDATE employees SET shift='night' WHERE id=1; UPDATE employees SET last_working_date='2026-09-25' WHERE id=2")
   const nightProfile=await payroll.upsertProfile({employeeId:1,effectiveFrom:'2026-10-01',monthlyBasicSalary:15000,workStartTime:'21:00',workEndTime:'06:00'},actor)
   assert.equal(nightProfile.work_start_time,'21:00:00');assert.equal(nightProfile.work_end_time,'06:00:00')
-  await assert.rejects(payroll.upsertProfile({employeeId:1,effectiveFrom:'2026-10-02',monthlyBasicSalary:15000,workStartTime:'21:00',workEndTime:'05:00'},actor),/eight paid hours/)
+  await assert.rejects(payroll.upsertProfile({employeeId:1,effectiveFrom:'2026-10-02',monthlyBasicSalary:15000,workStartTime:'21:00',workEndTime:'07:00'},actor),/4 to 8 paid hours/)
   const nightRecords=[]
   for(let date=new Date('2026-10-11T00:00:00Z');date<=new Date('2026-10-25T00:00:00Z');date.setUTCDate(date.getUTCDate()+1)){
    if([0,6].includes(date.getUTCDay()))continue
