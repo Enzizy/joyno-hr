@@ -69,6 +69,10 @@ test('HRMS database workflow: preview, official leave, immutable confirmation, r
    const decision=d.leave_request_id?{action:'link_leave',leaveId:7,paidFraction:d.work_date==='2026-09-21'?1:0,reason:'Verified paper leave allocation'}:{action:'verified_work',reason:'Device issue; supervisor verified work'}
    batch=await review.resolve(batch.id,batch.review_version,d.employee_id,d.work_date,decision,actor)
   }
+  // Refresh keeps excluded history. A discarded missing-punch row must not block
+  // confirmation, calculation or approval of the active employee-days.
+  await client.query(`INSERT INTO payroll_daily_attendance(batch_id,employee_id,work_date,status,review_state)
+    VALUES($1,2,'2026-09-12','exception','excluded')`,[batch.id])
   batch=await review.confirm(batch.id,batch.review_version,'',actor)
   assert.equal(batch.review_state,'confirmed')
   assert.equal((await review.confirm(batch.id,1,'',actor)).review_version,batch.review_version)
@@ -96,6 +100,7 @@ test('HRMS database workflow: preview, official leave, immutable confirmation, r
   await assert.rejects(payroll.approveRun(run.id,actor),/Recalculate this draft/)
   run=await payroll.previewRun(runInput,actor)
   assert.equal(run.lines.find(l=>l.employee_id===1).details.charges.length,2)
+  assert.equal((await client.query("SELECT COUNT(*)::integer AS n FROM payroll_daily_attendance WHERE batch_id=$1 AND status='exception' AND review_state='excluded'",[batch.id])).rows[0].n,1)
   run=await payroll.approveRun(run.id,actor) // Same HR may prepare and approve, per company authorization.
   await assert.rejects(review.reopen(batch.id,batch.review_version,actor),/already approved/)
   await rejectedSql("UPDATE payroll_attendance_import_batches SET review_state='draft' WHERE id=$1",[batch.id],/Confirmed attendance is immutable/)

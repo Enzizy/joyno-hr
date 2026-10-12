@@ -600,6 +600,28 @@ test('approval rejects saved full-holiday-pay lines before updating the run', as
   }
 })
 
+test('approval still rejects unresolved active attendance before updating pay', async () => {
+  const previous = process.env.PAYROLL_FINALIZATION_ENABLED
+  process.env.PAYROLL_FINALIZATION_ENABLED = 'true'
+  let updated = false
+  const service = createPayrollService({db:{async query(sql) {
+    const fixture=reviewFixture(sql);if(fixture)return fixture
+    if(sql.includes('SELECT * FROM payroll_runs'))return {rows:[{id:1,status:'draft',attendance_batch_id:7,
+      period_start:'2026-09-11',period_end:'2026-09-25',rule_snapshot:{version:5,
+        attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2}}]}
+    if(sql.includes('FROM payroll_daily_attendance'))return {rows:[{count:1}]}
+    if(sql.includes('UPDATE payroll_runs'))updated=true
+    throw new Error(`Unexpected query: ${sql}`)
+  }}})
+  try {
+    await assert.rejects(service.approveRun(1), /Resolve incomplete attendance scans before approval/)
+    assert.equal(updated,false)
+  } finally {
+    if(previous===undefined)delete process.env.PAYROLL_FINALIZATION_ENABLED
+    else process.env.PAYROLL_FINALIZATION_ENABLED=previous
+  }
+})
+
 test('month-end approval accepts half the monthly salary as the 15th pay without HR confirmation', async () => {
   const previous = process.env.PAYROLL_FINALIZATION_ENABLED
   process.env.PAYROLL_FINALIZATION_ENABLED = 'true'

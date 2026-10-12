@@ -1187,7 +1187,8 @@ function createPayrollService({ db }) {
       if (Number(batchResult.rows[0]?.error_count || 0) > 0) throw serviceError('Resolve attendance import errors before approval', 400)
       const exceptionResult = await tx.query(
         `SELECT COUNT(*)::integer AS count FROM payroll_daily_attendance
-         WHERE batch_id = $1 AND work_date BETWEEN $2 AND $3 AND status = 'exception'`,
+         WHERE batch_id = $1 AND work_date BETWEEN $2 AND $3 AND status = 'exception'
+           AND review_state <> 'excluded'`,
         [run.attendance_batch_id, dateKey(run.period_start), dateKey(run.period_end)]
       )
       if (Number(exceptionResult.rows[0]?.count || 0) > 0) throw serviceError('Resolve incomplete attendance scans before approval', 400)

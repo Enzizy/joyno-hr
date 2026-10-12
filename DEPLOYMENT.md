@@ -175,3 +175,9 @@ sudo docker compose -f compose.kvm.yml exec -T api node -e \
 ```
 
 To switch payroll off again, set the two payroll flags in `compose.kvm.yml` to `"false"` and recreate the API container. The website then shows payroll errors until a build with payroll hidden is deployed.
+
+### Confirmed attendance rejected at approval
+
+An attendance refresh retains removed employee-days as `review_state='excluded'` for history. Approval must ignore those rows when checking incomplete scans, matching the confirmed attendance review and payroll calculation. Otherwise a discarded incomplete scan can produce HTTP 400 even when the active attendance is fully confirmed.
+
+The approval fix filters excluded history without changing payroll amounts or weakening checks for active unresolved days. It needs an API rebuild/restart, with no migration, attendance reconfirmation or payroll recalculation for this error. Back up the running API image and private configuration before updating the VPS; Cloudflare's frontend deployment alone cannot apply this server-side fix. A read-only diagnostic should stop before the approval UPDATE, so HR retains control of the actual approval.
