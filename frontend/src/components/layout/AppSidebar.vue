@@ -14,7 +14,11 @@ const expandedGroup = ref('')
 
 function isActive(path) {
   if (path === '/') return route.path === '/'
-  return route.path.startsWith(path)
+  return route.path === path || route.path.startsWith(`${path}/`)
+}
+
+function itemIsActive(item) {
+  return (item.activePaths || [item.path]).some(path => isActive(path))
 }
 
 function groupIsActive(group) {
@@ -55,8 +59,8 @@ watch(
 
     <nav aria-label="Primary navigation" class="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-5">
       <template v-for="group in items" :key="group.name">
-        <RouterLink v-if="directItem(group)" :to="directItem(group).path" class="group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all" :class="isActive(directItem(group).path) ? 'bg-primary-500/12 text-primary-300 ring-1 ring-inset ring-primary-500/25' : 'text-gray-300 hover:bg-gray-900 hover:text-gray-100'" @click="emit('close')">
-          <span class="flex h-7 w-7 items-center justify-center rounded-lg transition-colors" :class="isActive(directItem(group).path) ? 'bg-primary-500/10 text-primary-300' : 'text-gray-400 group-hover:text-primary-300'"><NavIcon :name="directItem(group).icon || group.icon" /></span>
+        <RouterLink v-if="directItem(group)" :to="directItem(group).path" class="sidebar-link group flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all" :class="itemIsActive(directItem(group)) ? 'sidebar-link--active' : 'text-gray-300 hover:bg-gray-900 hover:text-gray-100'" :aria-current="itemIsActive(directItem(group)) ? 'page' : undefined" @click="emit('close')">
+          <span class="flex h-7 w-7 items-center justify-center rounded-lg transition-colors" :class="itemIsActive(directItem(group)) ? 'text-primary-300' : 'text-gray-400 group-hover:text-primary-300'"><NavIcon :name="directItem(group).icon || group.icon" /></span>
           <span>{{ directItem(group).name }}</span>
         </RouterLink>
 

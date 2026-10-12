@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AttendanceView from '@/views/AttendanceView.vue'
 import PayrollView from '@/views/PayrollView.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
-import { listAttendanceReviews } from '@/services/api'
+import { listAttendanceReviews, getAttendanceReview } from '@/services/api'
 import { getPayrollRuns } from '@/services/backendService'
 import { payrollFinalizationEnabled } from '@/config/features'
 import { payrollShift, shiftLabel } from '@/utils/payrollScope'
@@ -25,9 +25,12 @@ const reviews = ref([])
 const runs = ref([])
 const loading = ref(true)
 const ready = ref(false)
+const attendanceNeedsRecheck = ref(false)
+const revision = ref(0)
+const loadError = ref('')
 
 const stages = computed(() => period.value ? payRunStages({ period: period.value, shift: shift.value, practice: practice.value,
-  reviews: reviews.value, runs: runs.value, finalizationEnabled: payrollFinalizationEnabled }) : [])
+  reviews: reviews.value, runs: runs.value, attendanceNeedsRecheck: attendanceNeedsRecheck.value, finalizationEnabled: payrollFinalizationEnabled }) : [])
 const stageKeys = PAY_RUN_STAGES.map(stage => stage.key)
 const step = computed(() => stageKeys.includes(route.query.step) ? route.query.step : currentStageKey(stages.value))
 const paydayTitle = computed(() => period.value
@@ -40,18 +43,30 @@ const payFinal = computed(() => reviewStage.value?.state === 'done')
 const payOutdated = computed(() => reviewStage.value?.detail === 'Recalculate pay')
 
 const listFrom = (data, ...keys) => Array.isArray(data) ? data : keys.map(key => data?.[key]).find(Array.isArray) || []
+let loadRequest=0
 
 async function load() {
   const requested = contextKey.value
+  const request=++loadRequest
   try {
     const [reviewList, runList] = await Promise.all([listAttendanceReviews(shift.value), getPayrollRuns()])
-    if (requested !== contextKey.value) return
+    if (requested !== contextKey.value || request!==loadRequest) return
     reviews.value = reviewList || []
     runs.value = listFrom(runList, 'items', 'runs')
+    const selected = attendanceForPeriod(reviews.value, period.value, shift.value, practice.value)
+    const batch = [selected.confirmed,selected.unfinished].filter(Boolean).sort((a,b)=>Number(b.id)-Number(a.id))[0]
+    if (batch && !payFinal.value) {
+      const detail = await getAttendanceReview(batch.id)
+      if (requested !== contextKey.value || request!==loadRequest) return
+      attendanceNeedsRecheck.value = Boolean(detail.scopeNeedsRefresh)
+      reviews.value = reviews.value.map(item=>String(item.id)===String(detail.id)?{...item,review_state:detail.review_state,review_version:detail.review_version}:item)
+    } else attendanceNeedsRecheck.value = false
+    loadError.value = ''
+    revision.value++
   } catch (error) {
-    toast.error(error.message || 'Unable to load this pay run.')
+    if(request===loadRequest)loadError.value = error.message || 'Unable to check this pay run.'
   } finally {
-    loading.value = false
+    if(request===loadRequest)loading.value = false
   }
 }
 
@@ -74,18 +89,25 @@ function contextQuery(stepKey) {
 }
 
 // { calculate: true } asks Review pay to calculate as soon as it opens, so "Calculate pay" is one click.
-async function goto(key, { calculate = false } = {}) {
+async function goto(key, { calculate = false, refresh = false, employee, date } = {}) {
   if (!period.value || key === route.query.step) return
-  await router.replace({ query: { ...contextQuery(key), ...(calculate ? { calculate: '1' } : {}) } })
+  if (calculate || refresh || !stages.value.find(stage=>stage.key===key)?.available) await load()
+  if (!stages.value.find(stage=>stage.key===key)?.available) return
+  const query = { ...contextQuery(key), ...(calculate ? { calculate: '1' } : {}) }
+  if (key==='attendance' && employee) { query.employee=String(employee);if(date)query.date=date }
+  else {delete query.employee;delete query.date}
+  await router.replace({ query })
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 async function init() {
   ready.value = false
+  attendanceNeedsRecheck.value = false
   loading.value = true
   await load()
   if (!period.value) return
-  await router.replace({ query: contextQuery(step.value) })
+  const requestedStage = stages.value.find(stage=>stage.key===step.value)
+  await router.replace({ query: contextQuery(requestedStage?.available ? step.value : currentStageKey(stages.value)) })
   ready.value = true
 }
 
@@ -115,23 +137,24 @@ const stageDetailClass = stage => stage.state === 'done' ? 'text-emerald-300' : 
           <div class="mt-3 flex flex-wrap gap-2 text-xs text-gray-400">
             <span class="inline-flex items-center gap-2 rounded-full border border-gray-800 bg-gray-900 px-3 py-1">{{shiftLabel(shift)}}<RouterLink :to="{ path: `/payroll/${period.payday}/${otherShift}`, query: practice ? { practice: 'true' } : {} }" class="font-semibold text-primary-300 hover:underline">Switch to {{shiftLabel(otherShift)}}</RouterLink></span>
             <span class="rounded-full border border-gray-800 bg-gray-900 px-3 py-1">Work dates {{formatWorkRange(period.start, period.end)}}</span>
-            <span class="rounded-full border border-gray-800 bg-gray-900 px-3 py-1">{{period.cutoff === 'second' ? 'Month-end · SSS, PhilHealth, Pag-IBIG' : '15th payday · no contributions'}}</span>
           </div>
         </div>
       </header>
 
-      <nav class="grid grid-cols-4 gap-2 overflow-x-auto" aria-label="Pay run stages">
-        <button v-for="(stage, index) in stages" :key="stage.key" type="button" class="min-w-[7.5rem] rounded-xl border bg-gray-900 px-3 py-2.5 text-left transition-colors" :class="stageClass(stage)" :aria-current="step === stage.key ? 'step' : undefined" @click="goto(stage.key)">
-          <span class="block text-[11px] text-gray-500">{{index + 1}}</span>
-          <span class="block truncate text-sm font-semibold text-gray-100">{{stage.label}}</span>
-          <span class="block truncate text-xs" :class="stageDetailClass(stage)">{{loading ? '…' : stage.detail}}</span>
+      <nav class="grid grid-cols-2 gap-2 md:grid-cols-4" aria-label="Pay run stages">
+        <button v-for="(stage, index) in stages" :key="stage.key" type="button" class="pay-run-step" :class="stageClass(stage)" :disabled="loading || Boolean(loadError) || !stage.available" :aria-current="step === stage.key ? 'step' : undefined" @click="goto(stage.key)">
+          <span class="pay-run-step__number" :style="stage.state==='done'?{color:'var(--success-text)',background:'var(--success-bg)'}:{}">{{stage.state==='done'?'✓':index + 1}}</span>
+          <span class="min-w-0"><span class="block text-sm font-semibold text-gray-100">{{stage.label}}</span><span class="mt-1 block text-xs" :class="stageDetailClass(stage)">{{loading ? 'Checking…' : stage.detail}}</span></span>
         </button>
       </nav>
 
-      <div v-if="!ready" class="rounded-xl border border-gray-800 bg-gray-900 p-6 text-sm text-gray-400" role="status">Loading pay run…</div>
+      <div v-if="loadError" class="rounded-xl border border-gray-800 p-5" role="alert"><p>{{loadError}}</p><button class="mt-3 text-primary-300 underline" @click="init">Retry readiness check</button></div>
+      <div v-else-if="!ready" class="rounded-xl border border-gray-800 bg-gray-900 p-6 text-sm text-gray-400" role="status">Checking pay run…</div>
       <template v-else>
-        <AttendanceView v-if="step === 'attendance'" :key="contextKey" embedded :pay-calculated="payCalculated" :pay-final="payFinal" :pay-outdated="payOutdated" @changed="load" @continue="options => goto('review', options)" />
-        <PayrollView v-else :key="contextKey" embedded :stage="step" @changed="load" @navigate="goto" />
+        <KeepAlive :key="contextKey">
+          <AttendanceView v-if="step === 'attendance'" :key="contextKey+'attendance'" embedded :context-revision="revision" :pay-calculated="payCalculated" :pay-final="payFinal" :pay-outdated="payOutdated" @attendance-recheck="attendanceNeedsRecheck = $event" @changed="load" @continue="options => goto('review', options)" />
+          <PayrollView v-else :key="contextKey+'pay'" embedded :context-revision="revision" :stage="step" @attendance-recheck="attendanceNeedsRecheck = $event" @changed="load" @navigate="goto" />
+        </KeepAlive>
       </template>
     </template>
   </div>

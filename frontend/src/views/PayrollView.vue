@@ -4,8 +4,8 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import {payrollShift,reviewScope,runScope,shiftLabel} from '@/utils/payrollScope'
 import { effectiveEarnings, needsNightReview } from '@/utils/payrollEarnings'
 import { clockTime } from '@/utils/clockTime'
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onMounted, onActivated, ref, watch } from 'vue'
+import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { standardPeriod, formatWorkDate, formatWorkRange, coversWorkDates, matchingAttendanceReviews } from '@/utils/payrollPeriods'
 import { listAttendanceReviews, getAttendanceReview, recordPayrollPayment, getPayrollPaymentExport, verifyPayrollPayBasis, getPayrollRegisterExport } from '@/services/api'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -38,6 +38,8 @@ import PayrollAttendanceAdjustmentModal from '@/components/payroll/PayrollAttend
 import PayrollPayslipPreview from '@/components/payroll/PayrollPayslipPreview.vue'
 import PayRunNextStep from '@/components/payroll/PayRunNextStep.vue'
 import PayrollAdjustPanel from '@/components/payroll/PayrollAdjustPanel.vue'
+import PayrollRegister from '@/components/payroll/PayrollRegister.vue'
+import PayrollFinalize from '@/components/payroll/PayrollFinalize.vue'
 import PayrollPayslipsDesk from '@/components/payroll/PayrollPayslipsDesk.vue'
 import EmployeePayslips from '@/components/payroll/EmployeePayslips.vue'
 import { AGENCY_FOR_DEDUCTION, lineAdjustments } from '@/utils/payrollAdjustments'
@@ -47,8 +49,8 @@ import { payrollFinalizationEnabled } from '@/config/features'
 
 // Embedded inside a pay run, `stage` picks which part of the register workflow is shown:
 // review (draft register), approve (approve, payment, close), payslips, or test (no-save calculator).
-const props = defineProps({ embedded: Boolean, stage: { type: String, default: '' } })
-const emit = defineEmits(['changed', 'navigate'])
+const props = defineProps({ embedded: Boolean, stage: { type: String, default: '' }, contextRevision:Number })
+const emit = defineEmits(['changed', 'navigate', 'attendance-recheck'])
 const auth = useAuthStore()
 const toast = useToastStore()
 const route = useRoute()
@@ -69,17 +71,18 @@ watch(shift, async value=>{
   attendanceRequest++
   attendanceLoading.value=false
   workspaceInitialized.value=false
-  attendanceReviews.value=[];profiles.value=[];runAttendanceBatch.value='';attendanceResult.value=null
+  attendanceReviews.value=[];profiles.value=[];runAttendanceBatch.value='';attendanceResult.value=null;attendanceProblem.value=null
   activeRun.value=null;preview.value=null;testResult.value=null;testEmployeeId.value='';testPersonId.value=''
-  selectedPayslip.value=null;adjusting.value=null;editingFirstCutoff.value=null
+  selectedPayslip.value=null;adjusting.value=null
   workflowStep.value=1
   const query={...route.query,shift:value};delete query.attendanceBatch
   await router.replace({query});await loadWorkspace();workspaceInitialized.value=true
 })
 const eligibleReviews = computed(() => matchingAttendanceReviews(shiftReviews.value, cutoffStart.value, cutoffEnd.value))
 const unfinishedReview = computed(() => matchingAttendanceReviews(shiftReviews.value, cutoffStart.value, cutoffEnd.value, false)[0])
-const attendanceTarget = computed(() => ({path:'/attendance',query:{shift:shift.value,practice:String(practiceMode.value),payrollMonth:payrollMonth.value,cutoff:cutoffType.value,...(unfinishedReview.value && !runAttendanceBatch.value ? {batch:unfinishedReview.value.id} : runAttendanceBatch.value ? {batch:runAttendanceBatch.value} : {})}}))
+const attendanceTarget = computed(() => ({path:'/attendance',query:{shift:shift.value,practice:String(practiceMode.value),payrollMonth:payrollMonth.value,cutoff:cutoffType.value,...(attendanceProblem.value?.batchId ? {batch:attendanceProblem.value.batchId} : unfinishedReview.value && !runAttendanceBatch.value ? {batch:unfinishedReview.value.id} : runAttendanceBatch.value ? {batch:runAttendanceBatch.value} : {})}}))
 const attendanceLoading = ref(false)
+const attendanceProblem = ref(null)
 const workspaceInitialized = ref(false)
 // Set when HR pressed "Calculate pay" on confirmed attendance; cleared from the URL so a reload does not recalculate.
 const calculateRequested = ref(props.embedded && route.query.calculate === '1')
@@ -133,7 +136,25 @@ const workflowStep = ref(1)
 const profileSearch = ref('')
 const selectedPayslip = ref(null)
 const adjusting = ref(null)
-const editingFirstCutoff = ref(null)
+const adjustmentsDirty = ref(false)
+const calculationError = ref('')
+const allowNavigation = () => {
+  if (!adjustmentsDirty.value) return true
+  if (!window.confirm('Discard unsaved pay adjustments?')) return false
+  adjusting.value=null;adjustmentsDirty.value=false
+  return true
+}
+onBeforeRouteLeave(allowNavigation)
+onBeforeRouteUpdate(allowNavigation)
+let cachedRevision = 0
+async function refreshContext() {
+  if (!workspaceInitialized.value || cachedRevision === props.contextRevision || !props.embedded) return
+  cachedRevision = props.contextRevision
+  await loadWorkspace()
+  await openPeriodRun()
+  await chooseAttendance(activeRun.value?.attendance_batch_id || eligibleReviews.value[0]?.id)
+}
+onActivated(refreshContext)
 const sendProgress = ref('')
 const testFile = ref(null)
 const testCsvInfo = ref(null)
@@ -203,6 +224,7 @@ watch([cutoffStart, cutoffEnd], () => {
   attendanceRequest += 1
   attendanceLoading.value = false
   attendanceResult.value = null
+  attendanceProblem.value = null
   runAttendanceBatch.value = ''
   expandedEmployeeId.value = null
 })
@@ -291,6 +313,7 @@ onMounted(async () => {
   }
   if (props.embedded && props.stage !== 'test' && canManage.value) await openPeriodRun()
   workspaceInitialized.value = true
+  cachedRevision = props.contextRevision
 })
 
 // Calculate once this pay run's confirmed attendance is loaded, unless a draft already exists.
@@ -325,20 +348,28 @@ async function chooseAttendance(id) {
   runAttendanceBatch.value = ''
   attendanceResult.value = null
   if (!id) { attendanceLoading.value = false; return }
+  attendanceProblem.value = null
   attendanceLoading.value = true
   try {
     const result = await getAttendanceReview(id)
     if (request !== attendanceRequest) return
+    emit('attendance-recheck', Boolean(result?.scopeNeedsRefresh))
     if(Boolean(result?.isTest)!==practiceMode.value)throw Error('Select attendance for the current Practice payroll setting.')
     if (result?.review_state !== 'confirmed') throw Error('Attendance is open for corrections. Confirm it again in Attendance first.')
     if (reviewScope(result)!==shift.value || !coversWorkDates(result, cutoffStart.value, cutoffEnd.value)) throw Error('This attendance review does not cover the selected work dates. Choose the matching payroll cutoff.')
     if(result.scopeNeedsRefresh){
+      attendanceProblem.value = { batchId: id, title: 'Attendance needs a recheck',
+        detail: 'Employee setup or leave changed after confirmation. Edit attendance, reload employee setup and leave, then confirm again.' }
       attendanceReviews.value=attendanceReviews.value.map(b=>String(b.id)===String(id)?{...b,scope_needs_refresh:true}:b)
-      throw Error('Employee setup or leave changed since attendance was confirmed. In Attendance, click Edit attendance, reload it and confirm again.')
+      return
     }
     attendanceResult.value = result
     runAttendanceBatch.value = id
-  } catch (error) { if (request === attendanceRequest) toast.error(error.message) }
+  } catch (error) {
+    if (request === attendanceRequest) attendanceProblem.value = {
+      batchId: id, title: 'Attendance is not ready for payroll', detail: error.message,
+    }
+  }
   finally { if (request === attendanceRequest) attendanceLoading.value = false }
 }
 
@@ -353,7 +384,7 @@ async function savePayment() {
   try {
     const updated = await recordPayrollPayment(activeRun.value.id, { ...paymentForm.value, expectedTotal: totalNet.value })
     activeRun.value = updated; preview.value = updated; paymentForm.value = null
-    toast.success(isPracticeRun.value?'Marked as paid. Finish the practice run next.':'Marked as paid. Close payroll next to release the payslips.')
+    toast.success(isPracticeRun.value?'Simulated payment recorded. Finish the practice run next.':'Payment recorded. Finish payroll next.')
     await refreshRuns()
     emit('changed')
   } catch (error) { toast.error(error.message) } finally { busy.value = false }
@@ -529,11 +560,13 @@ async function saveAttendanceAdjustment(payload) {
 }
 
 async function createPreview() {
+  if (!runAttendanceBatch.value || attendanceResult.value?.review_state !== 'confirmed' || attendanceProblem.value) return
   if (!cutoffStart.value || !cutoffEnd.value || !payDate.value || cutoffStart.value > cutoffEnd.value || payDate.value <= cutoffEnd.value) {
     toast.error('Choose a pay date after the attendance cutoff.')
     return
   }
   busy.value = true
+  calculationError.value = ''
   try {
     const result = await previewPayrollRun({
       periodStart: cutoffStart.value,
@@ -547,11 +580,11 @@ async function createPreview() {
     preview.value = result.run || result
     activeRun.value = preview.value
     workflowStep.value = 4
-    toast.success(isPracticeRun.value?'Practice payroll saved. Review the test amounts before simulated approval.':'Draft payroll saved. Review every employee and amount before any release.')
+    toast.success(isPracticeRun.value?'Practice payroll saved. Review the test amounts before simulated approval.':'Draft payroll saved. Review every employee and amount before finalization.')
     await refreshRuns()
     emit('changed')
   } catch (error) {
-    toast.error(error.message || 'Unable to create payroll preview.')
+    calculationError.value = error.message || 'Unable to calculate pay.'
   } finally {
     busy.value = false
   }
@@ -572,9 +605,10 @@ async function changeRunState(action, run) {
     const updated = result.run || result
     preview.value = updated
     activeRun.value = updated
-    toast.success(isPracticeRun.value ? (action==='approve'?'Practice payroll approved.':'Practice complete. No employee payslips released.') : action === 'approve' ? 'Payroll approved.' : 'Payroll locked.')
+    toast.success(isPracticeRun.value ? (action==='approve'?'Practice payroll approved.':'Practice complete. Test payslips can now be sent to selected employees.') : action === 'approve' ? 'Payroll approved.' : 'Payroll complete. Payslips are available in My payslips.')
     await refreshRuns()
     emit('changed')
+    if (action === 'lock' && props.embedded) emit('navigate','payslips',{refresh:true})
   } catch (error) {
     toast.error(error.message || `Unable to ${action} payroll.`)
   } finally {
@@ -658,8 +692,12 @@ const downloadItems = computed(() => [
   { label: 'Contribution report (CSV)', onSelect: () => exportPayment('remittance') },
   ...(['approved', 'locked'].includes(activeRun.value?.status) ? [{ label: 'Payment register (CSV)', onSelect: () => exportPayment('payment') }] : []),
 ])
+const reviewMenuItems = computed(() => [
+  ...downloadItems.value,
+  ...(activeRun.value?.status==='draft' && !draftReadOnly.value ? [{label:'Change payment date',onSelect:()=>{payDateForm.value=payDate.value},disabled:busy.value}] : []),
+])
 const unverifiedFirstCutoffCount = computed(() => activeRun.value?.cutoff === 'second' && activeRun.value?.include_contributions
-  ? currentLines.value.filter((line) => !['saved-first-cutoff-approved', 'saved-first-cutoff-locked', 'hr-override']
+  ? currentLines.value.filter((line) => line.details?.contributionSettings?.sss !== false && !['saved-first-cutoff-approved', 'saved-first-cutoff-locked', 'hr-override']
     .includes(line.details?.sssAssessment?.firstCutoffSource)).length : 0)
 const reviewExceptionCount = computed(() => currentLines.value.reduce((count, line) => count +
   (line.details?.attendance || []).filter((day) => day.status === 'exception').length, 0))
@@ -668,12 +706,37 @@ const legacyHolidayLineCount = computed(() => currentLines.value.reduce((count, 
   (line.details?.manualEarnings || []).filter((entry) => entry.type === 'special_holiday_pay').length, 0))
 const unverifiedPayBasisCount = computed(() => currentLines.value.filter(l => l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason).length)
 const approvalBlockers = computed(() => [
+  attendanceProblem.value && attendanceProblem.value.title,
   currentLines.value.some(needsNightReview) && 'Night differential needs HR verification for holiday work or work without punches',
   reviewExceptionCount.value && `${reviewExceptionCount.value} unresolved scan day(s) in the attendance used by this draft`,
   reviewImportErrorCount.value && `${reviewImportErrorCount.value} attendance import error(s)`,
   legacyHolidayLineCount.value && `${legacyHolidayLineCount.value} old full-holiday-pay line(s) to replace with the 30% premium`,
   unverifiedPayBasisCount.value && `${unverifiedPayBasisCount.value} employee(s) with mid-cutoff changes need pay verification`,
 ].filter(Boolean))
+const draftReadOnly = computed(() => activeRun.value?.status === 'draft' &&
+  (Boolean(attendanceProblem.value) || !runAttendanceBatch.value || attendanceResult.value?.review_state !== 'confirmed' || runOutdated.value))
+const payIssues = computed(() => {
+  const issues=[]
+  if (attendanceProblem.value || !runAttendanceBatch.value || attendanceResult.value?.review_state!=='confirmed') {
+    issues.push({key:'attendance',text:attendanceProblem.value?.title || 'Confirm attendance before finalization',action:'attendance',actionLabel:'Go to Attendance'})
+  } else if (runOutdated.value) issues.push({key:'recalculate',text:'Attendance changed; recalculate this draft',action:'recalculate',actionLabel:'Recalculate pay'})
+  for (const line of currentLines.value) {
+    if (needsNightReview(line)) issues.push({key:`night-${line.id}`,text:`${displayName(line)} · verify night differential`,action:'adjust',line,actionLabel:'Adjust pay'})
+    if (line.details?.payBasisReview?.required && !line.details.payBasisReview.verifiedReason) issues.push({key:`basic-${line.id}`,text:`${displayName(line)} · verify cutoff basic pay`,action:'verify',line,actionLabel:'Verify basic pay'})
+    if ((line.details?.manualEarnings || []).some(item=>item.type==='special_holiday_pay')) issues.push({key:`holiday-${line.id}`,text:`${displayName(line)} · replace old holiday adjustment`,action:'adjust',line,actionLabel:'Adjust pay'})
+  }
+  if ((reviewExceptionCount.value || reviewImportErrorCount.value) && !issues.some(item=>item.key==='attendance')) issues.push({key:'scans',text:'Resolve missing scans or import errors',action:'attendance',actionLabel:'Go to Attendance'})
+  return issues
+})
+function resolvePayIssue(issue) {
+  if (issue.action==='attendance') emit('navigate','attendance',{employee:issue.line?.employee_id})
+  else if (issue.action==='recalculate') createPreview()
+  else if (issue.action==='verify') payBasisForm.value={line:issue.line,reason:''}
+  else if (issue.action==='adjust') {
+    if (draftReadOnly.value) emit('navigate','attendance')
+    else {emit('navigate','review');beginAdjust(issue.line)}
+  }
+}
 // Approve & pay: what leaves the company, what to check first, and who gets what.
 const paySummary = computed(() => {
   const totals = remittanceTotals.value
@@ -707,7 +770,7 @@ const approvalChecks = computed(() => {
     ? { state: 'warn', text: `${nameList(unpaid)} ${unpaid.length === 1 ? 'has' : 'have'} zero or negative net pay`, detail: 'Check their deductions in Review pay before approving.' }
     : { state: 'ok', text: 'Everyone has a positive net pay' })
   const assumed = lines.filter(line => line.details?.sssAssessment?.firstCutoffSource === 'assumed-half-basic')
-  if (assumed.length) checks.push({ state: 'warn', text: `SSS assumes half the salary as the 15th pay for ${assumed.length} ${assumed.length === 1 ? 'employee' : 'employees'}`, detail: 'The 15th payroll is not in the system. If anyone was absent or had overtime before the 15th, change their 15th pay in Review pay.' })
+  if (assumed.length) checks.push({ state: 'warn', text: `15th SSS pay defaults to half of monthly basic for ${assumed.length} ${assumed.length === 1 ? 'employee' : 'employees'}`, detail: 'No approved 15th payroll was found. If attendance deductions, overtime or night differential change that amount, use Adjust pay → Correct previous payroll amount. Exclude allowances.' })
   const adjusted = lines.map(line => ({ line, items: lineAdjustments(line) })).filter(entry => entry.items.length)
   checks.push(adjusted.length
     ? { state: 'ok', text: `${adjusted.length} ${adjusted.length === 1 ? 'employee has' : 'employees have'} pay adjustments`, adjustments: adjusted }
@@ -743,12 +806,13 @@ function openPayslip(line, run = activeRun.value, pdfBase64 = null) {
 }
 
 function beginAdjust(line) {
+  if (draftReadOnly.value) return
   adjusting.value = line
   selectedPayslip.value = null
 }
 
 // The panel's adjustments are stored as the draft's manual earnings and charges.
-async function saveAdjustments({ earnings, charges, earningsChanged, chargesChanged }) {
+async function saveAdjustments({ earnings, charges, earningsChanged, chargesChanged, firstCutoffChanged, firstCutoffPay, firstCutoffReason }) {
   if (!adjusting.value || !activeRun.value) return
   const runId = activeRun.value.id, lineId = adjusting.value.id
   const apply = (line) => { activeRun.value = { ...activeRun.value, lines: currentLines.value.map((item) => String(item.id) === String(line.id) ? line : item) } }
@@ -756,53 +820,18 @@ async function saveAdjustments({ earnings, charges, earningsChanged, chargesChan
   try {
     if (earningsChanged) apply(await updatePayrollManualEarnings(runId, lineId, earnings))
     if (chargesChanged) { const result = await updatePayrollCharges(runId, lineId, charges); apply(result.line || result) }
+    if (firstCutoffChanged) {
+      const result = await updatePayrollFirstCutoffPay(runId, lineId, firstCutoffPay, firstCutoffReason)
+      apply(result.line || result)
+    }
     adjusting.value = null
+    adjustmentsDirty.value = false
     toast.success('Pay adjustments saved to this draft.')
   } catch (error) {
     toast.error(error.message || 'Unable to save pay adjustments.')
   } finally {
     busy.value = false
   }
-}
-
-// Month-end SSS uses the whole month's pay: the approved 15th payroll when one exists,
-// otherwise half the monthly salary. HR can change it when the 15th had absences or overtime.
-function firstCutoffAmount(line) {
-  return Math.round(Number(line.details?.sssAssessment?.firstCutoffPay ?? Number(line.monthly_basic_salary || 0) / 2) * 100) / 100
-}
-function firstCutoffLabel(line) {
-  const source = line.details?.sssAssessment?.firstCutoffSource
-  return source === 'hr-override' ? 'set by HR' : source?.startsWith('saved-first-cutoff-') ? 'from the 15th payroll' : 'half of monthly salary'
-}
-
-function beginFirstCutoffEdit(line) {
-  editingFirstCutoff.value = { line,
-    firstCutoffPay: Number(line.details?.sssAssessment?.firstCutoffPay ?? Number(line.monthly_basic_salary || 0) / 2),
-    reason: '',
-  }
-  selectedPayslip.value = null
-}
-
-async function saveFirstCutoff() {
-  const editor = editingFirstCutoff.value
-  if (!editor || !activeRun.value) return
-  const value = Number(editor.firstCutoffPay)
-  if (editor.firstCutoffPay === '' || editor.firstCutoffPay == null ||
-      !Number.isFinite(value) || value < 0 || value > 10000000 ||
-      Math.abs(value * 100 - Math.round(value * 100)) > 0.000001) {
-    toast.error('Enter a valid 15th payroll amount in pesos and centavos.')
-    return
-  }
-  busy.value = true
-  try {
-    const result = await updatePayrollFirstCutoffPay(activeRun.value.id, editor.line.id, value, String(editor.reason || '').trim())
-    const line = result.line || result
-    activeRun.value = { ...activeRun.value, lines: currentLines.value.map((item) => String(item.id) === String(line.id) ? line : item) }
-    editingFirstCutoff.value = null
-    toast.success('15th pay amount saved; SSS and net pay were recalculated.')
-  } catch (error) {
-    toast.error(error.message || 'Unable to save first-cutoff amount.')
-  } finally { busy.value = false }
 }
 
 async function payslipPdf(download = false) {
@@ -908,6 +937,11 @@ async function emailAllPayslips() {
     </template>
 
     <template v-else-if="canManage">
+        <section v-if="attendanceProblem && (!activeRun || activeRun.status === 'draft') && !['test','approve','payslips'].includes(stage)" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3" style="border-color:var(--warning-border);background:var(--warning-bg);color:var(--warning-text)" role="status" aria-label="Attendance recheck">
+          <div class="min-w-0"><h2 class="text-sm font-semibold">{{attendanceProblem.title}}</h2><p class="mt-1 max-w-2xl text-xs leading-5">{{attendanceProblem.detail}}</p></div>
+          <AppButton v-if="embedded" variant="secondary" @click="emit('navigate', 'attendance')">Go to Attendance</AppButton>
+          <RouterLink v-else :to="attendanceTarget" class="shrink-0 text-sm font-semibold underline">Go to Attendance</RouterLink>
+        </section>
         <nav v-if="!embedded" class="flex flex-wrap items-center gap-1 border-b border-gray-800" aria-label="Payroll workspace">
           <button class="border-b-2 px-4 py-3 text-sm font-semibold" :class="[1,2,3].includes(workflowStep)?'border-primary-500 text-primary-300':'border-transparent text-gray-400 hover:text-gray-100'" :aria-current="[1,2,3].includes(workflowStep)?'page':undefined" @click="workflowStep=1">Prepare payroll</button>
           <button class="border-b-2 px-4 py-3 text-sm font-semibold" :class="workflowStep===6?'border-primary-500 text-primary-300':'border-transparent text-gray-400 hover:text-gray-100'" :aria-current="workflowStep===6?'page':undefined" @click="workflowStep=6">Saved runs <span v-if="shiftRuns.length" class="ml-1 text-xs text-gray-500">{{shiftRuns.length}}</span></button>
@@ -994,184 +1028,45 @@ async function emailAllPayslips() {
           <div v-if="embedded && !activeRun && stage === 'review' && (calculateRequested || busy)" class="rounded-xl border border-gray-800 bg-gray-900 p-5 text-sm text-gray-300" role="status">Calculating pay from the confirmed attendance…</div>
           <div v-else-if="embedded && !activeRun && (loadingRun || attendanceLoading)" class="rounded-xl border border-gray-800 bg-gray-900 p-5 text-sm text-gray-400" role="status">Loading this pay run…</div>
           <section v-else-if="embedded && !activeRun && stage === 'review' && runAttendanceBatch && attendanceResult?.review_state === 'confirmed'" class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-            <h2 class="font-semibold text-gray-100">Pay hasn't been calculated yet</h2>
+            <h2 class="font-semibold text-gray-100">Attendance confirmed</h2>
             <p class="mt-2 text-sm text-gray-400">It will use the confirmed attendance <span class="text-gray-200">{{attendanceResult.file_name}}</span>{{cutoffType === 'second' ? ', with SSS, PhilHealth and Pag-IBIG' : ''}}. Calculating saves a draft you can check and recalculate. Nobody is paid or notified.</p>
             <details v-if="eligibleReviews.length > 1" class="mt-3 text-xs text-gray-400"><summary class="cursor-pointer">Use a different confirmed file</summary><label class="mt-2 block">Confirmed attendance file<select :value="runAttendanceBatch" class="form-control mt-2" @change="chooseAttendance($event.target.value)"><option v-for="b in eligibleReviews" :key="b.id" :value="b.id">{{b.file_name}} · Review {{b.id}}</option></select></label></details>
           </section>
-          <section v-if="embedded && activeRun && stage === 'approve'" class="space-y-5">
-            <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div><h2 class="font-semibold text-gray-100">{{isPracticeRun ? 'Approve and finish the practice run' : 'Approve and pay'}}</h2><p class="mt-1 text-sm text-gray-400">{{formatWorkRange(activeRun.period_start, activeRun.period_end)}} · payday {{formatWorkDate(activeRun.payday || activeRun.pay_date)}}</p></div>
-                <MoreMenu label="Download" :items="downloadItems" />
-              </div>
-              <ol class="mt-4 grid gap-2 sm:grid-cols-3" aria-label="Approval progress">
-                <li v-for="(item, index) in [
-                  { label: isPracticeRun ? 'Approve practice run' : 'Approve payroll', done: activeRun.status !== 'draft', current: activeRun.status === 'draft', detail: activeRun.approved_at ? `Approved ${formatStamp(activeRun.approved_at)}` : 'Freezes every amount' },
-                  { label: 'Mark as paid', done: Boolean(activeRun.payment), current: activeRun.status === 'approved' && !activeRun.payment, detail: activeRun.payment ? `Paid ${formatWorkDate(activeRun.payment.paid_on)} · ${activeRun.payment.reference}` : 'After the bank transfer' },
-                  { label: isPracticeRun ? 'Finish practice run' : 'Close payroll', done: activeRun.status === 'locked', current: activeRun.status === 'approved' && Boolean(activeRun.payment), detail: activeRun.locked_at ? `Done ${formatStamp(activeRun.locked_at)}` : isPracticeRun ? 'Then send test payslips' : 'Releases payslips' },
-                ]" :key="item.label" class="flex items-start gap-3 rounded-lg border px-3 py-2.5" :class="item.current ? 'border-primary-600 bg-primary-950/20' : 'border-gray-800'">
-                  <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold" :class="item.done ? 'border-emerald-500 bg-emerald-500 text-gray-950' : item.current ? 'border-primary-500 text-primary-300' : 'border-gray-700 text-gray-500'">{{item.done ? '✓' : index + 1}}</span>
-                  <span class="min-w-0"><span class="block text-sm font-semibold" :class="item.done || item.current ? 'text-gray-100' : 'text-gray-500'">{{item.label}}</span><span class="block truncate text-xs text-gray-500">{{item.detail}}</span></span>
-                </li>
-              </ol>
-            </div>
-
-            <div class="grid gap-3 md:grid-cols-2">
-              <div class="rounded-xl border border-emerald-800/50 bg-emerald-950/15 p-5">
-                <p class="text-xs font-semibold uppercase tracking-wide text-emerald-300">Transfer to employees</p>
-                <p class="mt-1 text-3xl font-semibold text-emerald-200">{{money(totalNet)}}</p>
-                <p class="mt-1 text-sm text-gray-400">{{currentLines.length}} {{currentLines.length === 1 ? 'person' : 'people'}}<template v-if="previousPayRun"> · {{Number(totalNet) >= Number(previousPayRun.total_net_pay) ? '+' : '−'}}{{money(Math.abs(Number(totalNet) - Number(previousPayRun.total_net_pay)))}} vs {{formatWorkDate(previousPayRun.payday || previousPayRun.pay_date)}}</template></p>
-              </div>
-              <div class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-                <p class="text-xs font-semibold uppercase tracking-wide text-gray-400">Pay to agencies</p>
-                <template v-if="paySummary.agencies.length">
-                  <p class="mt-1 text-3xl font-semibold text-gray-100">{{money(paySummary.remit)}}</p>
-                  <dl class="mt-2 space-y-1 text-sm">
-                    <div v-for="agency in paySummary.agencies" :key="agency.name" class="flex justify-between gap-3"><dt class="text-gray-400">{{agency.name}}<span v-if="agency.loans" class="text-xs text-gray-500"> · incl. {{money(agency.loans)}} loans</span></dt><dd class="font-medium text-gray-200">{{money(agency.amount)}}</dd></div>
-                  </dl>
-                  <p class="mt-2 text-xs text-gray-500">Employee and employer shares together, paid separately to each agency.</p>
-                </template>
-                <p v-else class="mt-2 text-sm text-gray-400">Nothing this payday. Contributions are taken on the month-end payday.</p>
-              </div>
-            </div>
-
-            <div v-if="activeRun.status === 'draft'" class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-              <h3 class="font-semibold text-gray-100">Before you approve</h3>
-              <ul class="mt-3 space-y-3">
-                <li v-for="check in approvalChecks" :key="check.text" class="flex gap-3 text-sm">
-                  <span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold" :class="check.state === 'ok' ? 'bg-emerald-500/20 text-emerald-300' : check.state === 'warn' ? 'bg-amber-500/20 text-amber-300' : 'bg-red-500/20 text-red-300'" aria-hidden="true">{{check.state === 'ok' ? '✓' : check.state === 'warn' ? '!' : '✕'}}</span>
-                  <div class="min-w-0">
-                    <p :class="check.state === 'ok' ? 'text-gray-200' : check.state === 'warn' ? 'text-amber-200' : 'text-red-200'">{{check.text}}</p>
-                    <p v-if="check.detail" class="mt-0.5 text-xs text-gray-400">{{check.detail}} <button v-if="check.state !== 'ok'" type="button" class="text-primary-300 hover:underline" @click="emit('navigate', 'review')">Open Review pay</button></p>
-                    <ul v-if="check.adjustments" class="mt-1 space-y-0.5 text-xs text-gray-400">
-                      <li v-for="entry in check.adjustments" :key="entry.line.id"><span class="text-gray-300">{{displayName(entry.line)}}:</span> {{entry.items.map(item => `${item.label} ${item.amount < 0 ? '−' : '+'}${money(Math.abs(item.amount))}`).join(' · ')}}</li>
-                    </ul>
-                  </div>
-                </li>
-              </ul>
-            </div>
-
-            <div class="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
-              <div class="flex items-center justify-between gap-3 border-b border-gray-800 px-5 py-3"><h3 class="font-semibold text-gray-100">Who gets paid</h3><span class="text-sm text-gray-400">{{currentLines.length}} {{currentLines.length === 1 ? 'person' : 'people'}}</span></div>
-              <div class="max-h-[28rem] overflow-y-auto">
-                <table class="w-full text-left text-sm">
-                  <thead class="sticky top-0 bg-gray-900 text-xs uppercase text-gray-500"><tr><th class="px-5 py-2">Employee</th><th class="px-5 py-2 text-right">Net pay</th><th class="px-5 py-2"><span class="sr-only">Payslip</span></th></tr></thead>
-                  <tbody class="divide-y divide-gray-800">
-                    <tr v-for="line in paidLines" :key="line.id"><td class="px-5 py-2 text-gray-200">{{displayName(line)}}</td><td class="px-5 py-2 text-right font-semibold" :class="Number(line.net_pay) > 0 ? 'text-emerald-300' : 'text-red-300'">{{money(line.net_pay)}}</td><td class="px-5 py-2 text-right"><button type="button" class="text-xs font-semibold text-primary-300 hover:underline" @click="openPayslip(line)">Payslip</button></td></tr>
-                  </tbody>
-                  <tfoot class="border-t border-gray-700"><tr><th class="px-5 py-2 text-gray-300">Total</th><td class="px-5 py-2 text-right font-semibold text-emerald-200">{{money(totalNet)}}</td><td></td></tr></tfoot>
-                </table>
-              </div>
-            </div>
-          </section>
-          <PayrollPayslipsDesk v-if="embedded && activeRun && stage === 'payslips'" :key="activeRun.id" :run="activeRun" :practice="isPracticeRun" :can-send="payrollFinalizationEnabled || isPracticeRun" @changed="emit('changed')" />
-          <section v-if="!embedded && !activeRun"class="rounded-xl border border-gray-800 bg-gray-900 p-5"><h2 class="font-semibold text-gray-100">{{isPracticeRun?'4. Review practice payroll · TEST ONLY':'4. Review employee pay'}}</h2><p v-if="isPracticeRun && activeRun.status==='locked'" class="mt-2 text-sm text-emerald-300">Practice complete: attendance → calculation → approval → simulated payment → finish. No employee payslips released.</p><p class="mt-2 text-sm text-gray-400">No draft is open. Create one from the reviewed attendance batch, or open a saved run.</p><div class="mt-4 flex flex-wrap gap-2"><AppButton size="sm" :disabled="!runAttendanceBatch" @click="workflowStep = 1">Prepare draft</AppButton><AppButton size="sm" variant="secondary" @click="workflowStep = 6">Open saved runs</AppButton></div></section>
-          <section v-if="activeRun && !(embedded && ['approve', 'payslips'].includes(stage))" class="rounded-xl border border-gray-800 bg-gray-900 p-5">
-            <div class="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 class="font-semibold text-gray-100">{{embedded?(stage==='payslips'?'Employee payslips':'Employee pay register'):isPracticeRun?'4. Review practice payroll · TEST ONLY':'4. Review employee pay'}}</h2><p v-if="isPracticeRun && activeRun.status==='locked'" class="mt-2 text-sm text-emerald-300">Practice complete: attendance → calculation → approval → simulated payment → finish. No employee payslips released.</p><p class="mt-1 text-sm text-gray-400">{{shiftLabel(runScope(activeRun))}} · Payday {{ formatWorkDate(activeRun.payday || activeRun.pay_date) }}<button v-if="embedded && activeRun.status === 'draft'" type="button" class="ml-1 text-primary-300 hover:underline" :disabled="busy" @click="payDateForm = String(activeRun.payday || activeRun.pay_date || payDate).slice(0, 10)">Change</button> · {{ formatWorkRange(activeRun.period_start,activeRun.period_end) }} · {{ activeRun.status || 'preview' }}</p><p v-if="activeRun.status === 'draft'" class="mt-1 text-xs text-amber-300">Check overtime and holiday earnings against approved HR forms. Draft payslips are watermarked; email is disabled.</p></div><div class="flex flex-wrap items-center gap-2"><p class="mr-2 text-lg font-semibold text-emerald-300">{{ money(totalNet) }} net total</p><MoreMenu v-if="embedded" label="Download" :items="downloadItems" /><template v-else><AppButton v-if="canFinalizeRun && ['draft', 'preview', 'pending_review'].includes(String(activeRun.status || 'draft').toLowerCase())" size="sm" variant="success" :loading="busy" :disabled="approvalBlockers.length > 0" @click="changeRunState('approve', activeRun)">{{isPracticeRun?'Approve practice run':'Approve'}}</AppButton><AppButton v-if="activeRun.status === 'approved' || activeRun.status === 'locked'" size="sm" variant="secondary" :loading="busy" @click="exportPayment('payment')">Payment register CSV</AppButton><AppButton v-if="canFinalizeRun && activeRun.status === 'approved' && !activeRun.payment" size="sm" :loading="busy" @click="beginPayment">Mark as paid</AppButton><AppButton v-if="canFinalizeRun && activeRun.status === 'approved' && activeRun.payment" size="sm" variant="secondary" :loading="busy" @click="changeRunState('lock', activeRun)">{{isPracticeRun?'Finish practice run':'Close payroll & release payslips'}}</AppButton><AppButton v-if="payrollFinalizationEnabled && !isPracticeRun && activeRun.status === 'locked' && activeRun.payment" size="sm" :loading="busy" @click="emailAllPayslips">{{ sendProgress ? `Sending ${sendProgress}` : 'Email all payslips' }}</AppButton></template></div></div>
-            <div class="mb-4 flex flex-wrap gap-3 text-sm"><template v-if="!embedded"><button class="text-primary-300 underline" :disabled="busy" @click="exportPayment('register')">Export payroll register</button><button class="text-primary-300 underline" :disabled="busy" @click="exportPayment('remittance')">Export contribution report</button></template><span v-if="activeRun.payment" class="text-gray-400">Payment recorded: {{activeRun.payment.reference}} · {{activeRun.payment.paid_on}}</span></div>
-            <p v-if="reviewExceptionCount || reviewImportErrorCount" class="mb-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">Approval is blocked: {{ reviewExceptionCount }} unresolved scan day(s), {{ reviewImportErrorCount }} import error(s). Correct the timekeeping batch and recalculate this draft.</p>
-            <div v-if="currentLines.some(needsNightReview)" class="mb-4 rounded-lg border border-amber-800/40 p-3 text-sm text-amber-200">
-              Verify night differential for holiday work or work without actual punches. Enter one total night differential override; it replaces the automatic amount.
-              <button v-for="l in currentLines.filter(needsNightReview)" :key="l.id" class="ml-3 underline" @click="beginAdjust(l)">Review {{displayName(l)}}</button>
-            </div>
-            <div v-if="activeRun.status==='draft' && currentLines.some(l=>l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason)" class="mb-4 rounded-lg border border-amber-800/40 p-3 text-sm text-amber-200">
-              Someone was hired or left during this cutoff. Review basic pay and COLA against company policy, enter any needed adjustments under Charges, and verify each affected employee.
-              <button v-for="l in currentLines.filter(l=>l.details?.payBasisReview?.required && !l.details?.payBasisReview?.verifiedReason)" :key="l.id" class="ml-3 underline" @click="payBasisForm={line:l,reason:''}">Verify {{displayName(l)}}</button>
-            </div>
-            <p v-if="legacyHolidayLineCount" class="mb-4 rounded-lg border border-amber-800/40 bg-amber-950/20 p-3 text-xs text-amber-200">{{ legacyHolidayLineCount }} old full-holiday-pay line(s) need HR review. Open Adjust pay for each one, remove the old line, and record the holiday work in Attendance instead.</p>
-            <dl class="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7"><div v-for="summary in [{ label: 'Basic pay', value: registerTotals.basic }, { label: 'Extra earnings', value: registerTotals.extras }, { label: 'Charge earnings', value: registerTotals.chargeEarnings }, { label: 'Charges', value: registerTotals.charges }, { label: 'Time deductions', value: registerTotals.time }, { label: 'Contributions', value: registerTotals.statutory }, { label: 'Net pay', value: registerTotals.net }]" :key="summary.label" class="rounded-lg border border-gray-800 bg-gray-950/40 p-3"><dt class="text-xs text-gray-500">{{ summary.label }}</dt><dd class="mt-1 text-sm font-semibold text-gray-200">{{ money(summary.value) }}</dd></div></dl>
-            <div v-if="loadingRun" class="rounded-lg border border-gray-800 p-4 text-sm text-gray-400" role="status">Loading run details...</div>
-            <div v-else-if="!currentLines.length" class="rounded-lg border border-gray-800 p-4 text-sm text-gray-500">No employee line items are available.</div>
-            <div v-else class="overflow-x-auto rounded-lg border border-gray-800">
-              <table class="w-full min-w-[1020px] text-left text-sm">
-                <thead class="border-b border-gray-800 bg-gray-950/40 text-xs uppercase text-gray-500"><tr><th class="px-3 py-2">Employee</th><th class="px-3 py-2 text-right">Basic</th><th class="px-3 py-2 text-right">Extra / charge earnings</th><th class="px-3 py-2 text-right">Charges</th><th class="px-3 py-2 text-right">Time deductions</th><th class="px-3 py-2 text-right">Contributions</th><th class="px-3 py-2 text-right">Net pay</th><th class="px-3 py-2 text-right"><span class="sr-only">Actions</span></th></tr></thead>
-                <tbody class="divide-y divide-gray-800">
-                  <tr v-for="line in currentLines" :key="line.employee_id ?? line.id">
-                    <td class="px-3 py-3 font-medium text-gray-100">{{ displayName(line) }}<span v-if="activeRun.cutoff === 'second' && activeRun.include_contributions" class="mt-1 flex flex-wrap items-center gap-x-2 text-xs font-normal text-gray-500">15th pay {{ money(firstCutoffAmount(line)) }} · {{ firstCutoffLabel(line) }}<button v-if="activeRun.status === 'draft'" type="button" class="text-primary-300 hover:underline" @click="beginFirstCutoffEdit(line)">Change</button></span></td>
-                    <td class="px-3 py-3 text-right">{{ money(line.gross_salary) }}</td>
-                    <td class="px-3 py-3 text-right">{{ money(extraEarnings(line) + lineColaPay(line) + chargeEarnings(line)) }}</td>
-                    <td class="px-3 py-3 text-right">{{ money(chargeDeductions(line)) }}</td>
-                    <td class="px-3 py-3 text-right">{{ money(timeDeductions(line)) }}</td>
-                    <td class="px-3 py-3 text-right">{{ money(statutoryDeductions(line)) }}</td>
-                    <td class="px-3 py-3 text-right font-semibold text-emerald-300">{{ money(line.net_pay) }}</td>
-                    <td class="px-3 py-3"><div class="flex items-center justify-end gap-4 whitespace-nowrap text-sm font-semibold"><button type="button" class="text-primary-300 hover:underline" @click="openPayslip(line)">Payslip</button><button v-if="activeRun.status === 'draft'" type="button" class="rounded-lg border border-gray-700 px-3 py-1 text-gray-200 hover:border-primary-500 hover:text-primary-200" @click="beginAdjust(line)">Adjust pay</button></div></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p class="mt-3 text-xs text-gray-500">Open a payslip for the full absence, late, undertime, SSS, PhilHealth and Pag-IBIG breakdown.</p>
-            <details v-if="activeRun.cutoff === 'second' && activeRun.include_contributions" class="mt-5 rounded-lg border border-gray-800 p-4">
-              <summary class="cursor-pointer text-sm font-semibold text-gray-100">Remittance preview · employee and employer shares</summary>
-              <p class="mt-2 text-xs text-gray-400">Calculated from this payroll run. This is a review report, not proof that contributions have been remitted. Automatic tax is not enabled. Enter verified withholding through HR-approved charges.</p>
-              <div class="mt-3 overflow-x-auto"><table class="w-full min-w-[850px] text-right text-xs">
-                <thead class="border-b border-gray-700 text-gray-400"><tr><th class="p-2 text-left">Employee</th><th class="p-2">SSS employee</th><th class="p-2">SSS employer</th><th class="p-2">EC employer</th><th class="p-2">PHIC employee</th><th class="p-2">PHIC employer</th><th class="p-2">Pag-IBIG employee</th><th class="p-2">Pag-IBIG employer</th></tr></thead>
-                <tbody class="divide-y divide-gray-800"><tr v-for="line in currentLines" :key="`remit-${line.id}`"><th class="p-2 text-left font-medium text-gray-200">{{ displayName(line) }}</th><td class="p-2">{{ money(line.employee_sss) }}</td><td class="p-2">{{ money(line.employer_sss) }}</td><td class="p-2">{{ money(line.employer_ec) }}</td><td class="p-2">{{ money(line.employee_philhealth) }}</td><td class="p-2">{{ money(line.employer_philhealth) }}</td><td class="p-2">{{ money(line.employee_pagibig) }}</td><td class="p-2">{{ money(line.employer_pagibig) }}</td></tr></tbody>
-                <tfoot class="border-t border-gray-600 font-semibold text-gray-100"><tr><th class="p-2 text-left">Total</th><td class="p-2">{{ money(remittanceTotals.employee_sss) }}</td><td class="p-2">{{ money(remittanceTotals.employer_sss) }}</td><td class="p-2">{{ money(remittanceTotals.employer_ec) }}</td><td class="p-2">{{ money(remittanceTotals.employee_philhealth) }}</td><td class="p-2">{{ money(remittanceTotals.employer_philhealth) }}</td><td class="p-2">{{ money(remittanceTotals.employee_pagibig) }}</td><td class="p-2">{{ money(remittanceTotals.employer_pagibig) }}</td></tr></tfoot>
-              </table></div>
-            </details>
-          </section>
+          <PayrollFinalize v-if="embedded && activeRun && stage === 'approve'" :run="activeRun" :total="totalNet" :count="currentLines.length" :agencies="paySummary.agencies" :issues="payIssues" :warnings="approvalChecks.filter(check=>check.state==='warn')" :downloads="downloadItems" :busy="busy" :enabled="canFinalizeRun" :practice="isPracticeRun" @approve="changeRunState('approve',activeRun)" @payment="beginPayment" @finish="changeRunState('lock',activeRun)" @resolve="resolvePayIssue" @review="emit('navigate','review')" @payslips="emit('navigate','payslips')" />
+          <PayrollPayslipsDesk v-if="embedded && activeRun && stage === 'payslips'" :key="activeRun.id" :run="activeRun" :practice="isPracticeRun" :can-send="payrollFinalizationEnabled || isPracticeRun" />
+          <section v-if="!embedded && !activeRun"class="rounded-xl border border-gray-800 bg-gray-900 p-5"><h2 class="font-semibold text-gray-100">{{isPracticeRun?'4. Review practice payroll · TEST ONLY':'4. Review employee pay'}}</h2><p v-if="isPracticeRun && activeRun.status==='locked'" class="mt-2 text-sm text-emerald-300">Practice complete: attendance → calculation → approval → simulated payment → finish. Test payslips can now be sent to selected employees.</p><p class="mt-2 text-sm text-gray-400">No draft is open. Create one from the reviewed attendance batch, or open a saved run.</p><div class="mt-4 flex flex-wrap gap-2"><AppButton size="sm" :disabled="!runAttendanceBatch" @click="workflowStep = 1">Prepare draft</AppButton><AppButton size="sm" variant="secondary" @click="workflowStep = 6">Open saved runs</AppButton></div></section>
+          <PayrollRegister v-if="activeRun && (!embedded || stage === 'review')" :lines="currentLines" :editable="activeRun.status==='draft' && !draftReadOnly" :outdated="draftReadOnly" :downloads="reviewMenuItems" :payday="String(activeRun.payday||'').slice(0,10)!==standardPeriod(payrollMonth,cutoffType)?.payday?formatWorkDate(activeRun.payday):''" @preview="line=>openPayslip(line)" @adjust="beginAdjust" @verify="line=>payBasisForm={line,reason:''}" @attendance="line=>emit('navigate','attendance',{employee:line.employee_id})" />
           <div v-if="!embedded"><AppButton variant="secondary" @click="workflowStep = 6">View saved runs</AppButton></div>
-          <template v-if="embedded && !(loadingRun || attendanceLoading)">
+          <template v-if="embedded && !['approve','payslips'].includes(stage) && !(loadingRun || attendanceLoading)">
             <template v-if="!activeRun && !calculateRequested && !busy">
               <PayRunNextStep v-if="stage !== 'review'" tone="waiting" title="No draft yet" detail="Calculate and check pay first.">
                 <AppButton variant="secondary" @click="emit('navigate', 'review')">Go to Review pay</AppButton>
               </PayRunNextStep>
-              <PayRunNextStep v-else-if="runAttendanceBatch && attendanceResult?.review_state === 'confirmed'" title="Ready to calculate pay" :detail="`Payday ${formatWorkDate(payDate)} · saves a draft you can check and recalculate`">
-                <AppButton :loading="busy" :disabled="payDateError" @click="createPreview">Calculate pay</AppButton>
+              <PayRunNextStep v-else-if="runAttendanceBatch && attendanceResult?.review_state === 'confirmed'" :title="calculationError ? 'Attendance confirmed; pay calculation failed' : 'Ready to calculate pay'" :detail="calculationError || 'Saves a draft for review.'">
+                <AppButton :loading="busy" :disabled="payDateError" @click="createPreview">{{calculationError ? 'Retry calculation' : 'Calculate pay'}}</AppButton>
               </PayRunNextStep>
               <PayRunNextStep v-else tone="waiting" title="Confirm attendance first" detail="Pay is calculated from confirmed attendance for these work dates.">
                 <AppButton variant="secondary" @click="emit('navigate', 'attendance')">Go to Attendance</AppButton>
               </PayRunNextStep>
             </template>
-            <template v-else-if="stage === 'review'">
+            <template v-else-if="activeRun && stage === 'review' && !attendanceProblem">
               <PayRunNextStep v-if="activeRun.status === 'draft' && runOutdated" tone="waiting" title="Attendance changed after this draft was calculated" detail="Recalculate to use the corrected attendance. Earnings and charges you added are kept.">
                 <AppButton :loading="busy" :disabled="payDateError" @click="createPreview">Recalculate pay</AppButton>
               </PayRunNextStep>
-              <PayRunNextStep v-else-if="activeRun.status === 'draft'" :title="`Check the draft · ${money(totalNet)} net for ${currentLines.length} employees`" detail="Use Earnings or Charges to adjust anyone. Recalculate if attendance changed.">
+              <PayRunNextStep v-else-if="activeRun.status === 'draft'" title="Check the employee amounts" detail="Use Adjust pay for corrections. Recalculate after attendance changes.">
                 <AppButton variant="secondary" :loading="busy" :disabled="!runAttendanceBatch || attendanceResult?.review_state !== 'confirmed' || payDateError" title="Rebuild this draft from confirmed attendance; saved earnings and charges are kept" @click="createPreview">Recalculate</AppButton>
-                <AppButton @click="emit('navigate', 'approve')">Continue to approval →</AppButton>
+                <AppButton :disabled="busy || loadingRun || attendanceLoading || draftReadOnly || payIssues.length > 0" @click="emit('navigate', 'approve')">Continue to finalization →</AppButton>
               </PayRunNextStep>
               <PayRunNextStep v-else tone="done" :title="activeRun.status === 'locked' ? (isPracticeRun ? '✓ Practice finished' : '✓ Payroll closed') : '✓ Approved'" :detail="`${money(totalNet)} net for ${currentLines.length} employees · amounts are frozen`">
-                <AppButton v-if="activeRun.status === 'approved'" @click="emit('navigate', 'approve')">Go to Approve &amp; pay →</AppButton>
+                <AppButton v-if="activeRun.status === 'approved'" @click="emit('navigate', 'approve')">Go to Finalize payroll →</AppButton>
                 <AppButton v-else-if="!isPracticeRun" @click="emit('navigate', 'payslips')">View payslips →</AppButton>
               </PayRunNextStep>
             </template>
-            <template v-else-if="stage === 'approve'">
-              <PayRunNextStep v-if="activeRun.status === 'locked'" tone="done" :title="isPracticeRun ? '✓ Practice finished' : '✓ Payroll closed'" :detail="isPracticeRun ? 'Next, send test payslips to the people you choose.' : 'Payslips are available to employees.'">
-                <AppButton @click="emit('navigate', 'payslips')">Go to payslips →</AppButton>
-              </PayRunNextStep>
-              <PayRunNextStep v-else-if="!canFinalizeRun" tone="waiting" title="Approving real payroll is turned off for now" detail="To try approving, paying and closing, start a practice run from the Payroll page." />
-              <PayRunNextStep v-else-if="activeRun.status === 'draft' && approvalBlockers.length" tone="waiting" :title="`${approvalBlockers.length} ${approvalBlockers.length === 1 ? 'thing' : 'things'} to fix before approval`" detail="They are marked ✕ under Before you approve.">
-                <AppButton variant="secondary" @click="emit('navigate', 'review')">Open Review pay</AppButton>
-              </PayRunNextStep>
-              <PayRunNextStep v-else-if="activeRun.status === 'draft'" :title="isPracticeRun ? 'Approve the practice run' : 'Approve payroll'" :detail="`${money(totalNet)} net for ${currentLines.length} employees · approving freezes every amount`">
-                <AppButton variant="success" :loading="busy" @click="changeRunState('approve', activeRun)">{{isPracticeRun ? 'Approve practice run' : 'Approve payroll'}}</AppButton>
-              </PayRunNextStep>
-              <PayRunNextStep v-else-if="!activeRun.payment" title="Mark as paid" :detail="`Once ${money(totalNet)} has been sent to the ${currentLines.length} ${currentLines.length === 1 ? 'person' : 'people'} above`">
-                <AppButton :loading="busy" @click="beginPayment">Mark as paid</AppButton>
-              </PayRunNextStep>
-              <PayRunNextStep v-else :title="isPracticeRun ? 'Finish the practice run' : 'Close payroll'" :detail="isPracticeRun ? 'Then you choose who gets a test payslip.' : 'Locks the run and releases payslips to employees.'">
-                <AppButton :loading="busy" @click="changeRunState('lock', activeRun)">{{isPracticeRun ? 'Finish practice run' : 'Close payroll & release payslips'}}</AppButton>
-              </PayRunNextStep>
-            </template>
-            <template v-else-if="stage === 'payslips'">
-              <PayRunNextStep v-if="activeRun.status !== 'locked'" tone="waiting" :title="isPracticeRun ? 'Test payslips can be sent once the practice run is finished' : 'Payslips are released after payroll is closed'" detail="Approve, mark as paid, then finish.">
-                <AppButton variant="secondary" @click="emit('navigate', 'approve')">Go to Approve &amp; pay</AppButton>
-              </PayRunNextStep>
-              <PayRunNextStep v-else tone="done" :title="isPracticeRun ? '✓ Practice finished' : '✓ Payroll closed'" detail="Tick people above and press Send: each gets their payslip on their page and by email." />
-            </template>
+
           </template>
         </template>
       <PayrollAttendanceAdjustmentModal :show="Boolean(editingAttendanceDay)" :day="editingAttendanceDay" :saving="Boolean(savingAttendanceDay)" @close="editingAttendanceDay = null" @save="saveAttendanceAdjustment" />
     </template>
-    <div v-if="editingFirstCutoff" class="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" role="dialog" aria-modal="true" aria-label="Confirm 15th payroll amount" @click.self="editingFirstCutoff = null">
-      <div class="w-full max-w-lg rounded-xl border border-gray-700 bg-gray-900 p-5 shadow-2xl">
-        <h2 class="font-semibold text-gray-100">Confirm 15th payroll · {{ displayName(editingFirstCutoff.line) }}</h2>
-        <p class="mt-2 text-xs text-gray-400">The system uses an approved 15th run when available. Use this correction only when HR confirms a different amount or the earlier run is not saved. This affects the SSS bracket and net pay, not the current cutoff's basic salary.</p>
-        <label class="mt-4 block text-xs text-gray-300">15th SSS-eligible pay (₱)<input v-model.number="editingFirstCutoff.firstCutoffPay" type="number" min="0" max="10000000" step="0.01" class="form-control mt-1"></label>
-                <div class="mt-5 flex justify-end gap-2"><AppButton variant="secondary" @click="editingFirstCutoff = null">Cancel</AppButton><AppButton :loading="busy" @click="saveFirstCutoff">Save confirmed amount</AppButton></div>
-      </div>
-    </div>
     <AppModal :show="Boolean(payBasisForm)" title="Verify cutoff pay basis" @close="payBasisForm=null">
       <div v-if="payBasisForm" class="space-y-4"><p>{{displayName(payBasisForm.line)}} · Basic {{money(payBasisForm.line.gross_salary)}} · COLA {{money(payBasisForm.line.cola_pay)}}</p><p class="text-sm text-gray-400">Confirm the company's treatment for this hire, departure, or mid-cutoff salary change. Save any required adjustments under Charges first.</p></div>
       <template #footer><AppButton variant="secondary" @click="payBasisForm=null">Cancel</AppButton><AppButton :loading="busy" @click="savePayBasis">Verify cutoff pay</AppButton></template>
@@ -1182,7 +1077,7 @@ async function emailAllPayslips() {
         <p v-if="payDateFormError" class="text-xs text-amber-300">Choose a date after the last work date ({{ formatWorkDate(cutoffEnd) }}).</p></div>
       <template #footer><AppButton variant="secondary" @click="payDateForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="payDateFormError" @click="savePayDate">Recalculate with this date</AppButton></template>
     </AppModal>
-    <AppModal :show="Boolean(paymentForm)" title="Mark this payroll as paid" @close="paymentForm = null">
+    <AppModal :show="Boolean(paymentForm)" title="Record payroll payment" @close="paymentForm = null">
       <div v-if="paymentForm" class="space-y-5">
         <div class="rounded-lg border border-emerald-800/50 bg-emerald-950/15 p-4">
           <p class="text-sm text-gray-300">Have you sent this from the bank?</p>
@@ -1193,9 +1088,9 @@ async function emailAllPayslips() {
         <label class="block text-sm text-gray-300">Date you sent it<input v-model="paymentForm.paidOn" type="date" :max="new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)" class="form-control mt-1.5 max-w-xs"></label>
         <label class="block text-sm text-gray-300">Bank reference <span class="text-gray-500">(optional)</span><input v-model="paymentForm.reference" maxlength="200" placeholder="e.g. the transfer or batch number" class="form-control mt-1.5"><span class="mt-1 block text-xs text-gray-500">Helps you find the transfer later. Leave blank if there isn't one.</span></label>
       </div>
-      <template #footer><AppButton variant="secondary" @click="paymentForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="!paymentForm?.paidOn" @click="savePayment">Mark as paid</AppButton></template>
+      <template #footer><AppButton variant="secondary" @click="paymentForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="!paymentForm?.paidOn" @click="savePayment">Record payment</AppButton></template>
     </AppModal>
     <PayrollPayslipPreview v-if="selectedPayslip" :line="selectedPayslip.line" :run="selectedPayslip.run" :busy="busy" :can-edit="canManage && Boolean(selectedPayslip.line.id) && selectedPayslip.run.status === 'draft'" :managed="canManage" @close="selectedPayslip = null" @print="payslipPdf(false)" @download="payslipPdf(true)" @edit="beginAdjust(selectedPayslip.line)" />
-    <PayrollAdjustPanel v-if="adjusting && activeRun" :line="adjusting" :run="activeRun" :busy="busy" @close="adjusting = null" @save="saveAdjustments" />
+    <PayrollAdjustPanel v-if="adjusting && activeRun" :line="adjusting" :run="activeRun" :busy="busy" @close="adjusting = null; adjustmentsDirty = false" @dirty="adjustmentsDirty = $event" @save="saveAdjustments" />
   </div>
 </template>

@@ -1,7 +1,7 @@
 <script setup>
 import PayrollShiftTabs from '@/components/payroll/PayrollShiftTabs.vue'
 import {payrollShift,reviewScope,shiftLabel} from '@/utils/payrollScope'
-import {computed,nextTick,onMounted,ref,watch} from 'vue'
+import {computed,nextTick,onMounted,onActivated,ref,watch} from 'vue'
 import {standardPeriod,formatWorkRange,coversWorkDates,attendanceSelection} from '@/utils/payrollPeriods'
 import {clockTime,twelveHourText} from '@/utils/clockTime'
 import {useRoute,useRouter} from 'vue-router'
@@ -17,8 +17,8 @@ import {profileReady} from '@/utils/payRun'
 import {getPayrollProfiles} from '@/services/backendService'
 
 // Embedded inside a pay run: the run owns shift, practice mode and work dates, so their pickers are hidden.
-const props=defineProps({embedded:Boolean,payCalculated:Boolean,payFinal:Boolean,payOutdated:Boolean})
-const emit=defineEmits(['changed','continue'])
+const props=defineProps({embedded:Boolean,payCalculated:Boolean,payFinal:Boolean,payOutdated:Boolean,contextRevision:Number})
+const emit=defineEmits(['changed','continue','attendance-recheck'])
 const route=useRoute(),router=useRouter(),toast=useToastStore()
 const shift=ref(payrollShift(route.query.shift))
 watch(()=>route.query.shift,value=>{if(value!==undefined)shift.value=payrollShift(value)})
@@ -50,6 +50,21 @@ const monthName=key=>new Intl.DateTimeFormat('en-PH',{month:'long',timeZone:'UTC
 const spansMonths=computed(()=>Boolean(start.value&&end.value)&&start.value.slice(0,7)!==end.value.slice(0,7))
 let syncingRange=false
 const preview=ref(null),showPreview=ref(false),batch=ref(null),batches=ref([]),search=ref(''),showAllDays=ref(false)
+const reviewFilter=ref('needs')
+let mounted=false,cachedRevision=0
+async function refreshContext(){
+ if(!mounted||!props.embedded||cachedRevision===props.contextRevision)return
+ const revision=props.contextRevision
+ await run(async()=>{
+  await reload()
+  if(batch.value?.id)await open(batch.value.id)
+  cachedRevision=revision
+ })
+}
+onActivated(refreshContext)
+watch(() => batch.value?.scopeNeedsRefresh, value => {
+ if (batch.value) emit('attendance-recheck', Boolean(value))
+})
 const reviewing=ref(null),decision=ref({action:'acknowledge',reason:'',timeIn:'',timeOut:'',leaveId:null}),coverageReason=ref('')
 const leaveEntry=ref(null),leaveTypes=ref([])
 const correctingLeave=ref(null)
@@ -115,6 +130,13 @@ const toggled=ref(new Set())
 const isOpen=g=>Boolean(search.value.trim())||((g.pending>0)!==toggled.value.has(g.id))
 function toggleGroup(id){const next=new Set(toggled.value);next.has(id)?next.delete(id):next.add(id);toggled.value=next}
 const pending=computed(()=>(batch.value?.daily||[]).filter(d=>d.review_state==='pending').length)
+const needsReviewCount=computed(()=>new Set((batch.value?.daily||[]).filter(d=>d.review_state==='pending').map(d=>d.employee_id)).size)
+const visibleGroups=computed(()=>groups.value.filter(g=>reviewFilter.value==='all'||g.pending>0))
+function reviewNext(){const g=groups.value.find(g=>g.pending>0);const day=g?.days.find(d=>d.review_state==='pending')||batch.value?.daily.find(d=>d.review_state==='pending');if(day)review(day)}
+function focusEmployee(){
+ const day=batch.value?.daily?.find(d=>String(d.employee_id)===String(route.query.employee)&&(!route.query.date||d.work_date===route.query.date))
+ if(day){reviewFilter.value='all';search.value=day.employee_name;showAllDays.value=true}
+}
 const blocking=computed(()=>(batch.value?.issues||[]).filter(i=>i.code!=='file_coverage'))
 const hasCoverageIssue=computed(()=>(batch.value?.issues||[]).some(i=>i.code==='file_coverage'))
 const needsSetup=computed(()=>reviewing.value?.issue_codes?.some(c=>['missing_profile','missing_attendance_id','missing_hire_date','unsupported_schedule'].includes(c)))
@@ -137,6 +159,9 @@ async function open(id){await run(async()=>{
  start.value=loaded.period_start;end.value=loaded.period_end
  await nextTick();syncingRange=false
  practiceMode.value=loaded.isTest===true;if(loaded.employeeIds)selectedEmployees.value=loaded.employeeIds;batch.value=loaded;showImport.value=Boolean(loaded.needs_reimport);coverageReason.value=''
+ reviewFilter.value=loaded.daily.some(d=>d.review_state==='pending')?'needs':'all'
+ toggled.value=new Set(groups.value.filter(g=>g.pending>0).slice(1).map(g=>g.id))
+ focusEmployee()
  await router.replace({query:{...rangeQuery(),batch:id}})
 })}
 async function analyse(){await run(async()=>{preview.value=await attendanceUpload('preview',files.value,start.value,end.value,'',shift.value,practiceOptions());showPreview.value=true})}
@@ -145,6 +170,7 @@ async function save(alsoConfirm=false){await run(async()=>{
  showPreview.value=false;preview.value=null;showImport.value=false;router.replace({query:{...rangeQuery(),batch:batch.value.id}})
  if(alsoConfirm)batch.value=await attendanceReviewAction(batch.value.id,'confirm',{version:batch.value.review_version})
  await reloadChanged();toast.success(alsoConfirm?'Attendance confirmed':'Saved for HR review')
+ if(alsoConfirm&&props.embedded)emit('continue',{calculate:true})
 })}
 async function refresh(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'refresh',{version:batch.value.review_version});await reloadChanged();toast.success('Review refreshed from employee setup and official leave')})}
 // HR answers "what happened on this day?". Only the answers the review accepts for this kind of day are offered.
@@ -186,13 +212,20 @@ async function resolve(){await run(async()=>{
  batch.value=await attendanceReviewAction(batch.value.id,'review',{version:batch.value.review_version,employeeId:reviewing.value.employee_id,date:reviewing.value.work_date,decision:decision.value})
  reviewing.value=null;await reloadChanged();toast.success('HR verification saved')
 })}
-async function confirm(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'confirm',{version:batch.value.review_version,coverageReason:coverageReason.value});await reloadChanged();toast.success('Attendance confirmed for payroll')})}
+async function confirm(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'confirm',{version:batch.value.review_version,coverageReason:coverageReason.value});await reloadChanged();if(props.embedded)emit('continue',{calculate:true});else toast.success('Attendance confirmed for payroll')})}
 // Confirmed attendance can be reopened to fix a forgotten holiday or overtime until pay is approved; every decision is kept.
 async function reopen(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'reopen',{version:batch.value.review_version});await reloadChanged();toast.success('Attendance is open for corrections. Confirm it again when you’re done.')})}
+async function recheck(){await run(async()=>{
+ if(batch.value.review_state==='confirmed')batch.value=await attendanceReviewAction(batch.value.id,'reopen',{version:batch.value.review_version})
+ batch.value=await attendanceReviewAction(batch.value.id,'refresh',{version:batch.value.review_version})
+ reviewFilter.value=batch.value.daily.some(d=>d.review_state==='pending')?'needs':'all'
+ await reloadChanged()
+})}
 async function exportDtr(){await run(async()=>{const url=URL.createObjectURL(await getConfirmedAttendanceExport(batch.value.id));const a=document.createElement('a');a.href=url;a.download=`${batch.value.isTest?'TEST-ONLY-':''}attendance-${reviewScope(batch.value)}-${batch.value.id}-confirmed.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)})}
 function recordLeave(day){reviewing.value=null;leaveEntry.value={entry_type:'leave',employee_id:day.employee_id,start_date:day.work_date,end_date:day.work_date,coverage_start:day.overnight?'02:00':'14:00',coverage_end:day.overnight?'06:00':'18:00'}}
 async function saveLeave(entry){await run(async()=>{await createHrCalendarEntry(entry);leaveEntry.value=null;batch.value=await attendanceReviewAction(batch.value.id,'refresh',{version:batch.value.review_version});await reloadChanged();toast.success('Official leave recorded; attendance refreshed')})}
-onMounted(()=>run(async()=>{await reload();leaveTypes.value=await getLeaveTypes();if(route.query.batch)await open(route.query.batch)}))
+onMounted(()=>run(async()=>{await reload();leaveTypes.value=await getLeaveTypes();if(route.query.batch)await open(route.query.batch);mounted=true;cachedRevision=props.contextRevision}))
+watch(()=>[route.query.employee,route.query.date],focusEmployee)
 watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!busy.value)open(id)})
 </script>
 
@@ -227,10 +260,14 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
   </section>
   <section v-if="batch && !batch.needs_reimport" class="rounded-xl border border-gray-800 p-5">
    <div class="flex flex-wrap items-start justify-between gap-3"><div><h2 class="font-semibold text-gray-100">{{isConfirmed?'Attendance':'Review attendance'}}</h2><p class="mt-1 text-sm text-gray-400">{{formatWorkRange(batch.period_start,batch.period_end)}} · {{batch.file_name}}</p></div><MoreMenu :items="moreItems" /></div>
+   <div v-if="isConfirmed && batch.scopeNeedsRefresh && !payFinal" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3" style="border-color:var(--warning-border);background:var(--warning-bg);color:var(--warning-text)" role="status" aria-label="Attendance recheck">
+    <div><p class="text-sm font-semibold">Attendance needs a recheck</p><p class="mt-1 text-xs leading-5">Employee setup or leave changed after confirmation. Edit attendance, reload employee setup and leave, then confirm again.</p></div>
+    <AppButton variant="secondary" :loading="busy" @click="recheck">Recheck attendance</AppButton>
+   </div>
    <div v-if="batch.issues?.length && !isConfirmed" class="mt-4 rounded-lg border border-amber-800/50 p-3 text-sm text-amber-200"><p v-for="i in batch.issues" :key="i.message">{{i.message}}</p></div>
-   <div class="my-4 flex flex-wrap items-center gap-4"><input v-model="search" aria-label="Search attendance" placeholder="Search employee, ID or date" class="form-control max-w-sm"><label class="text-sm"><input v-model="showAllDays" type="checkbox"> Show days without issues</label><span v-if="!isConfirmed" class="text-xs text-gray-500">Turn this on to add overtime or holiday work on a normal day.</span></div>
+   <div class="my-4 flex flex-wrap items-center gap-3"><input v-model="search" aria-label="Search attendance" placeholder="Search employee, ID or date" class="form-control max-w-sm"><div class="flex gap-1" role="group" aria-label="Attendance review filter"><button v-for="item in [{key:'needs',label:`Needs review (${needsReviewCount})`},{key:'all',label:'All employees'}]" :key="item.key" class="rounded-lg px-3 py-2 text-xs font-semibold" :class="reviewFilter===item.key?'bg-primary-500 text-gray-950':'bg-gray-800 text-gray-400'" :aria-pressed="reviewFilter===item.key" @click="reviewFilter=item.key">{{item.label}}</button></div><label class="text-xs text-gray-500"><input v-model="showAllDays" type="checkbox"> Show all dates</label></div>
    <div class="divide-y divide-gray-800 rounded-lg border border-gray-800">
-    <div v-for="g in groups" :key="g.id">
+    <div v-for="g in visibleGroups" :key="g.id">
      <button type="button" class="flex w-full flex-wrap items-center justify-between gap-3 p-3 text-left hover:bg-gray-900/60" :aria-expanded="isOpen(g)" @click="toggleGroup(g.id)">
       <span class="flex min-w-0 items-start gap-3"><span class="mt-0.5 text-gray-500" aria-hidden="true">{{isOpen(g)?'▾':'▸'}}</span><span class="min-w-0"><span class="block font-semibold text-gray-100">{{g.name}}</span><span class="block text-xs text-gray-500">Employee ID {{g.code}} · Attendance ID {{g.personId||'Not mapped'}}</span></span></span>
       <span class="flex flex-wrap items-center gap-3 text-xs"><span class="text-gray-400">{{groupSummary(g)}}</span><span v-if="g.pending" class="rounded-full border border-amber-700/60 px-2 py-0.5 font-semibold text-amber-300">{{g.pending}} to decide</span><span v-else-if="!isConfirmed" class="font-semibold text-emerald-300">✓ Nothing to decide</span></span>
@@ -254,10 +291,10 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
       <p v-else class="px-4 py-3 pl-10 text-sm text-gray-500">Every day matches the schedule.{{isConfirmed?'':' Turn on “Show days without issues” to add overtime.'}}</p>
      </div>
     </div>
-    <p v-if="!groups.length" class="p-4 text-sm text-gray-400">No employees match this search.</p>
+    <p v-if="!visibleGroups.length" class="p-4 text-sm text-gray-400">{{reviewFilter==='needs'?'No employees need a decision. Use All employees to inspect recorded deductions.':'No employees match this search.'}}</p>
    </div>
   </section>
-  <template v-if="batch && !batch.needs_reimport && !showImport">
+  <template v-if="batch && !batch.needs_reimport && !showImport && !(isConfirmed && batch.scopeNeedsRefresh && !payFinal)">
    <PayRunNextStep v-if="isConfirmed" tone="done" title="✓ Attendance confirmed" :detail="totalsText">
     <AppButton v-if="embedded && !payFinal" variant="outline" :loading="busy" @click="reopen">Edit attendance</AppButton><AppButton v-if="embedded && payCalculated" @click="emit('continue',{calculate:false})">Review pay →</AppButton><AppButton v-else-if="embedded" @click="emit('continue',{calculate:true})">{{payOutdated?'Recalculate pay':'Calculate pay'}}</AppButton><AppButton v-else @click="router.push(payrollTarget)">Continue to payroll →</AppButton>
    </PayRunNextStep>
@@ -268,10 +305,10 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
     <AppButton :loading="busy" @click="refresh">Reload</AppButton>
    </PayRunNextStep>
    <PayRunNextStep v-else-if="pending" :title="`${pending} ${pending===1?'day needs':'days need'} a decision`" detail="Open each employee marked “to decide”. Late days with both scans are already deducted as recorded.">
-    <AppButton disabled>Confirm attendance</AppButton>
+    <AppButton :disabled="busy" @click="reviewNext">Review next employee</AppButton>
    </PayRunNextStep>
    <PayRunNextStep v-else title="All days are decided" :detail="hasCoverageIssue?`${totalsText} · The file may not cover every date; confirming accepts it as complete.`:totalsText">
-    <AppButton :loading="busy" :disabled="!batch.daily?.length" @click="confirm">Confirm attendance</AppButton>
+    <AppButton :loading="busy" :disabled="!batch.daily?.length" @click="confirm">{{embedded?'Confirm & calculate pay':'Confirm attendance'}}</AppButton>
    </PayRunNextStep>
   </template>
   <details v-if="!embedded || visibleBatches.length" class="rounded-xl border border-gray-800 bg-gray-950/20 p-5"><summary class="cursor-pointer text-sm font-semibold text-gray-300">{{embedded?'Other files for these work dates':'Previous attendance imports'}} <span class="ml-2 font-normal text-gray-500">{{visibleBatches.length}}</span></summary>
@@ -294,11 +331,11 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
     <p v-else class="rounded-lg bg-emerald-950/20 p-4 text-sm text-emerald-200">All scheduled dates are clear. You can confirm this attendance.</p>
     <p class="text-xs text-gray-400">{{preview.summary.flaggedDays?'Save and review opens every date that needs a decision. Payroll stays blocked until they are decided.':preview.summary.lateUndertime?'Nothing needs a decision. Save and review to excuse any late days before confirming.':'No payroll deductions are created by this preview.'}}</p>
    </div>
-   <template #footer><AppButton variant="secondary" :disabled="busy" @click="showPreview=false">Back to import</AppButton><AppButton v-if="preview?.summary.flaggedDays||preview?.issues.length||preview?.summary.lateUndertime" :loading="busy" @click="save(false)">Save &amp; review dates →</AppButton><AppButton v-else :loading="busy" :disabled="!preview?.daily.length" @click="save(true)">Confirm attendance →</AppButton></template>
+   <template #footer><AppButton variant="secondary" :disabled="busy" @click="showPreview=false">Back to import</AppButton><AppButton v-if="preview?.summary.flaggedDays||preview?.issues.length||preview?.summary.lateUndertime" :loading="busy" @click="save(false)">Save &amp; review dates →</AppButton><AppButton v-else :loading="busy" :disabled="!preview?.daily.length" @click="save(true)">{{embedded?'Confirm & calculate pay →':'Confirm attendance →'}}</AppButton></template>
   </AppModal>
   <AppModal :show="Boolean(reviewing)" title="Verify employee attendance" size="lg" @close="reviewing=null">
    <div v-if="reviewing" class="space-y-4"><p class="font-medium">{{reviewing.employee_name}} · {{reviewing.work_date}}</p><p class="text-sm text-gray-400">{{reviewing.issue_codes.map(c=>labels[c]||c).join(' · ')}}</p>
-    <div v-if="needsSetup" class="text-sm"><p>Complete employee dates, salary, schedule, and ID mapping first. Refresh this review afterward.</p><RouterLink :to="{path:'/compensation',query:{employee:reviewing.employee_id,shift}}" class="text-primary-300 underline">Open employee pay setup</RouterLink><RouterLink to="/employees" class="ml-4 text-primary-300 underline">Employee records</RouterLink></div>
+    <div v-if="needsSetup" class="text-sm"><p>Complete employee dates, salary, schedule, and ID mapping first. Refresh this review afterward.</p><RouterLink :to="{path:'/compensation',query:{employee:reviewing.employee_id,shift,returnTo:route.fullPath}}" class="text-primary-300 underline">Open employee pay setup</RouterLink><RouterLink to="/employees" class="ml-4 text-primary-300 underline">Employee records</RouterLink></div>
     <template v-else><p class="rounded-lg bg-gray-950/60 px-3 py-2 text-sm text-gray-300">{{recordedSummary}}</p><fieldset><legend class="text-sm font-semibold text-gray-100">What happened on this day?</legend><div class="mt-2 space-y-2"><label v-for="option in decisionOptions" :key="option.value" class="flex cursor-pointer gap-3 rounded-lg border p-3" :class="decision.action===option.value?'border-primary-500 bg-primary-950/20':'border-gray-800 hover:border-gray-600'"><input v-model="decision.action" type="radio" name="attendance-decision" :value="option.value" class="mt-1"><span><span class="block text-sm font-medium text-gray-100">{{option.title}}</span><span class="mt-0.5 block text-xs leading-5 text-gray-400">{{option.hint}}</span></span></label></div></fieldset>
      <div v-if="decision.action==='actual_times'" class="grid grid-cols-2 gap-3"><label class="text-sm">Actual time-in<input v-model="decision.timeIn" type="time" class="form-control mt-1"></label><label class="text-sm">Actual time-out{{reviewing.overnight?' (next day for morning hours)':''}}<input v-model="decision.timeOut" type="time" class="form-control mt-1"></label></div>
      <label v-if="decision.action==='link_leave'" class="block text-sm">Official approved leave<select v-model="decision.leaveId" class="form-control mt-1"><option :value="null">Choose a record</option><option v-for="l in reviewing.leaves?.filter(l=>l.status==='approved')" :key="l.id" :value="l.id">{{l.leave_type_name}} · {{l.start_date}} – {{l.end_date}} · {{l.leave_pay_type}}</option></select></label>

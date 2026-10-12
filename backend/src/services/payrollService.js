@@ -8,6 +8,7 @@ const EARNING_LABELS = Object.freeze({ overtime: 'Approved overtime', night_diff
   holiday_premium: 'WSH/RD premium (30%)', other: 'Other earning' })
 const {
   calculateContributions,
+  normalizeContributionSettings,
   calculatePayrollLine,
   calculateSssAssessablePay,
   calculateThirteenthMonthAccrual,
@@ -63,6 +64,7 @@ function normalizeProfile(row) {
     employee_id: Number(row.employee_id),
     monthly_basic_salary: Number(row.monthly_basic_salary),
     monthly_cola: Number(row.monthly_cola ?? 0),
+    contribution_settings: normalizeContributionSettings(row.contribution_settings ?? undefined),
     daily_fare_rate: Number(row.daily_fare_rate),
     unpaid_break_minutes: Number(row.unpaid_break_minutes),
     daily_rate_divisor: Number(row.daily_rate_divisor),
@@ -198,7 +200,7 @@ function createPayrollService({ db }) {
       `SELECT e.id AS employee_id, e.employee_code, e.first_name, e.last_name, e.department, e.shift,
               EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = e.id AND ceo_account.role = 'ceo') AS is_ceo,
               p.id AS profile_id, p.effective_from, p.effective_to, p.monthly_basic_salary, p.monthly_cola,
-              p.daily_fare_rate, p.work_start_time, p.work_end_time, p.unpaid_break_minutes,
+              p.daily_fare_rate, p.contribution_settings, p.work_start_time, p.work_end_time, p.unpaid_break_minutes,
               p.workdays, p.daily_rate_divisor, bio.person_id AS biometric_person_id, e.date_hired,
               (SELECT MIN(first.effective_from) FROM payroll_employee_profiles first WHERE first.employee_id = e.id) AS first_effective_from
        FROM employees e
@@ -225,6 +227,7 @@ function createPayrollService({ db }) {
       profile_id: row.profile_id == null ? null : Number(row.profile_id),
       monthly_basic_salary: row.monthly_basic_salary == null ? null : Number(row.monthly_basic_salary),
       monthly_cola: row.monthly_cola == null ? 0 : Number(row.monthly_cola),
+      contribution_settings: normalizeContributionSettings(row.contribution_settings ?? undefined),
       daily_fare_rate: row.daily_fare_rate == null ? null : Number(row.daily_fare_rate),
       unpaid_break_minutes: row.unpaid_break_minutes == null ? null : Number(row.unpaid_break_minutes),
       daily_rate_divisor: row.daily_rate_divisor == null ? null : Number(row.daily_rate_divisor),
@@ -238,6 +241,9 @@ function createPayrollService({ db }) {
     const monthlySalary = Number(input.monthlyBasicSalary ?? input.monthly_basic_salary)
     const suppliedMonthlyCola = input.monthlyCola ?? input.monthly_cola
     const suppliedDailyFare = input.dailyFareRate ?? input.daily_fare_rate
+    const suppliedContributions = Object.hasOwn(input, 'contributionSettings')
+      ? input.contributionSettings : input.contribution_settings
+    if (suppliedContributions !== undefined) normalizeContributionSettings(suppliedContributions)
     const biometricIdProvided = Object.hasOwn(input, 'biometricPersonId') || Object.hasOwn(input, 'biometric_person_id')
     const biometricPersonId = biometricIdProvided
       ? String(input.biometricPersonId ?? input.biometric_person_id ?? '').trim().replace(/^'/, '')
@@ -262,7 +268,7 @@ function createPayrollService({ db }) {
       if (!employeeResult.rows[0]) throw serviceError('Employee was not found', 404)
       const { rows } = await tx.query(
         `SELECT id, effective_from, effective_to, monthly_cola, daily_fare_rate, daily_rate_divisor,
-                workdays, work_start_time, work_end_time, unpaid_break_minutes
+                workdays, work_start_time, work_end_time, unpaid_break_minutes, contribution_settings
          FROM payroll_employee_profiles
          WHERE employee_id = $1
          ORDER BY effective_from
@@ -277,6 +283,7 @@ function createPayrollService({ db }) {
       const effectiveTo = later ? dateMinusOne(dateKey(later.effective_from)) : null
       const previousProfile = [...rows].reverse().find((row) => dateKey(row.effective_from) <= effectiveFrom)
       const inheritedProfile = sameDate || previousProfile
+      const contributionSettings = normalizeContributionSettings(suppliedContributions, inheritedProfile?.contribution_settings)
       const dailyFare = suppliedDailyFare == null
         ? Number(inheritedProfile?.daily_fare_rate ?? 0)
         : Number(suppliedDailyFare)
@@ -311,18 +318,19 @@ function createPayrollService({ db }) {
           `UPDATE payroll_employee_profiles
            SET effective_to = $1, monthly_basic_salary = $2, daily_fare_rate = $3,
                work_start_time = $4, work_end_time = $5, unpaid_break_minutes = $6,
-               workdays = $7::smallint[], daily_rate_divisor = $8, monthly_cola = $9
+               workdays = $7::smallint[], daily_rate_divisor = $8, monthly_cola = $9,
+               contribution_settings = $11::jsonb
            WHERE id = $10
            RETURNING *`,
-          [effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, sameDate.id]
+          [effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, sameDate.id, JSON.stringify(contributionSettings)]
         )
         : await tx.query(
           `INSERT INTO payroll_employee_profiles
              (employee_id, effective_from, effective_to, monthly_basic_salary, daily_fare_rate,
-              work_start_time, work_end_time, unpaid_break_minutes, workdays, daily_rate_divisor, monthly_cola, created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::smallint[], $10, $11, $12)
+              work_start_time, work_end_time, unpaid_break_minutes, workdays, daily_rate_divisor, monthly_cola, created_by, contribution_settings)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::smallint[], $10, $11, $12, $13::jsonb)
            RETURNING *`,
-          [employeeId, effectiveFrom, effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, fields.userId]
+          [employeeId, effectiveFrom, effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, fields.userId, JSON.stringify(contributionSettings)]
         )
       if (biometricIdProvided) {
         if (biometricPersonId) {
@@ -720,7 +728,7 @@ function createPayrollService({ db }) {
                 EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = employee.id AND ceo_account.role = 'ceo') AS is_ceo,
                 profile.id AS profile_id, profile.effective_from, profile.effective_to,
                 profile.monthly_basic_salary, profile.monthly_cola, profile.daily_fare_rate, profile.work_start_time,
-                profile.work_end_time, profile.unpaid_break_minutes, profile.workdays, profile.daily_rate_divisor
+                profile.work_end_time, profile.unpaid_break_minutes, profile.workdays, profile.daily_rate_divisor, profile.contribution_settings
          FROM employees employee
          LEFT JOIN LATERAL (
            -- The salary currently set applies to the whole period (see loadContext in attendanceReviewService).
@@ -836,6 +844,7 @@ function createPayrollService({ db }) {
         const lineInput = {
           monthlyBasicSalary: profile.monthly_basic_salary,
           monthlyCola: profile.monthly_cola,
+          contributionSettings: profile.contribution_settings,
           dailyRateDivisor: profile.daily_rate_divisor,
           // A 6-hour schedule's daily rate pays 6 hours, so its hourly rate is daily ÷ 6 (the 8-hour salary's rate).
           paidHoursPerDay: scheduledPaidMinutes(profile) / 60,
@@ -857,12 +866,11 @@ function createPayrollService({ db }) {
             basicAdjustment: basicAdjustmentTotal(firstCutoffLine.details?.charges || []),
             manualEarnings: effectiveEarnings(firstCutoffLine.details) }).monthlyCompensation
           : baseLine.grossSalary
-        const sssAssessment = cutoff === 'second' && includeContributions
+        const sssAssessment = cutoff === 'second' && includeContributions && profile.contribution_settings.sss
           ? calculateSssAssessablePay({ firstCutoffPay, grossSalary: baseLine.grossSalary,
             absenceDeduction: baseLine.absenceDeduction, lateDeduction: baseLine.lateDeduction,
             undertimeDeduction: baseLine.undertimeDeduction, manualEarnings: automaticEarnings }) : null
-        const line = sssAssessment
-          ? computeLineWithLeave({ ...lineInput, sssCompensation: sssAssessment.monthlyCompensation }) : baseLine
+        const line = computeLineWithLeave({ ...lineInput, sssCompensation: sssAssessment?.monthlyCompensation })
         const details = {
           ...night,
           automaticEarnings,
@@ -870,6 +878,7 @@ function createPayrollService({ db }) {
           payBasisReview: {required:Boolean(employee.date_hired>periodStart || (employee.last_working_date && employee.last_working_date<periodEnd)),
             reason:'Hired or left during the cutoff; verify basic pay and COLA proration against company policy',verifiedReason:null},
           contributionBasis: line.contributionBasis,
+          contributionSettings: profile.contribution_settings,
           sssAssessment: sssAssessment ? { ...sssAssessment,
             firstCutoffSource: firstCutoffLine ? `saved-first-cutoff-${firstCutoffLine.first_cutoff_status}` : 'assumed-half-basic',
             firstCutoffRunId: firstCutoffLine?.first_cutoff_run_id ?? null } : null,
@@ -918,7 +927,7 @@ function createPayrollService({ db }) {
         if(!line)continue
         if(previous.details?.manualEarnings?.length)await nested.updateManualEarnings(run.id,line.id,previous.details.manualEarnings,actor)
         if(previous.details?.charges?.length)await nested.updateCharges(run.id,line.id,previous.details.charges,actor)
-        if(previous.details?.sssAssessment?.firstCutoffSource==='hr-override'&&cutoff==='second'&&includeContributions)await nested.overrideFirstCutoffPay(run.id,line.id,previous.details.sssAssessment.firstCutoffPay,previous.details.sssAssessment.overrideReason||'Retained HR-confirmed first-cutoff pay during recalculation',actor)
+        if(previous.details?.sssAssessment?.firstCutoffSource==='hr-override'&&cutoff==='second'&&includeContributions&&normalizeContributionSettings(line.details?.contributionSettings).sss)await nested.overrideFirstCutoffPay(run.id,line.id,previous.details.sssAssessment.firstCutoffPay,previous.details.sssAssessment.overrideReason||'Retained HR-confirmed first-cutoff pay during recalculation',actor)
       }
       await appendRunEvent(tx, run.id, existingRun ? 'draft_refreshed' : 'draft_created', actor, {
         employeeCount: employeesResult.rows.length,
@@ -1009,7 +1018,8 @@ function createPayrollService({ db }) {
         }).holidayPremium }
       })
       const previous = Array.isArray(line.details?.manualEarnings) ? line.details.manualEarnings : []
-      const sssAssessment = line.cutoff === 'second' && line.include_contributions
+      const contributionSettings = normalizeContributionSettings(line.details?.contributionSettings)
+      const sssAssessment = line.cutoff === 'second' && line.include_contributions && contributionSettings.sss
         ? calculateSssAssessablePay({
           firstCutoffPay: line.details?.sssAssessment?.firstCutoffPay ?? Number(line.monthly_basic_salary) / 2,
           grossSalary: line.gross_salary, absenceDeduction: line.absence_deduction,
@@ -1018,7 +1028,7 @@ function createPayrollService({ db }) {
           manualEarnings: effectiveEarnings(line.details, recalculated),
         }) : null
       const sssContributions = sssAssessment
-        ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation }) : null
+        ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation, contributionSettings }) : null
       const employeeSss = sssContributions?.sssEmployee ?? Number(line.employee_sss || 0)
       const netPay = draftNetPay(line, { manualEarnings: recalculated, employeeSss })
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
@@ -1054,7 +1064,8 @@ function createPayrollService({ db }) {
       if (!line) return null
       if (line.status !== 'draft') throw serviceError('Only draft payroll charges can be changed', 409)
       const previous = Array.isArray(line.details?.charges) ? line.details.charges : []
-      const sssAssessment = line.cutoff === 'second' && line.include_contributions
+      const contributionSettings = normalizeContributionSettings(line.details?.contributionSettings)
+      const sssAssessment = line.cutoff === 'second' && line.include_contributions && contributionSettings.sss
         ? calculateSssAssessablePay({
           firstCutoffPay: line.details?.sssAssessment?.firstCutoffPay ?? Number(line.monthly_basic_salary) / 2,
           grossSalary: line.gross_salary, absenceDeduction: line.absence_deduction,
@@ -1063,7 +1074,7 @@ function createPayrollService({ db }) {
           manualEarnings: effectiveEarnings(line.details),
         }) : null
       const sssContributions = sssAssessment
-        ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation }) : null
+        ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation, contributionSettings }) : null
       const employeeSss = sssContributions?.sssEmployee ?? Number(line.employee_sss || 0)
       const netPay = draftNetPay(line, { charges: normalized, employeeSss })
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
@@ -1109,6 +1120,8 @@ function createPayrollService({ db }) {
       if (line.status !== 'draft' || line.cutoff !== 'second' || !line.include_contributions) {
         throw serviceError('First-cutoff pay can only be corrected on a month-end draft with contributions', 409)
       }
+      const contributionSettings = normalizeContributionSettings(line.details?.contributionSettings)
+      if (!contributionSettings.sss) throw serviceError('SSS ID is pending for this draft. Enable SSS in Pay & schedules and recalculate before entering 15th pay', 409)
       const previous = line.details?.sssAssessment || null
       const sssAssessment = calculateSssAssessablePay({
         firstCutoffPay, grossSalary: line.gross_salary, absenceDeduction: line.absence_deduction,
@@ -1118,6 +1131,7 @@ function createPayrollService({ db }) {
       })
       const contributions = calculateContributions(line.monthly_basic_salary, {
         sssCompensation: sssAssessment.monthlyCompensation,
+        contributionSettings,
       })
       const netPay = draftNetPay(line, { employeeSss: contributions.sssEmployee })
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
@@ -1154,6 +1168,18 @@ function createPayrollService({ db }) {
       const batch = await requireConfirmedAttendance(tx,run.attendance_batch_id,dateKey(run.period_start),dateKey(run.period_end),run.rule_snapshot?.payrollScope || 'all')
       if(Boolean(batch.context.isTest)!==Boolean(run.rule_snapshot?.isTest))throw serviceError('Practice and real attendance cannot be mixed',409)
       if (run.rule_snapshot?.attendanceContextHash !== batch.context_hash || Number(run.rule_snapshot?.attendanceReviewVersion) !== Number(batch.review_version)) throw serviceError('Recalculate this draft from the confirmed attendance version before approval',409)
+      // Contribution-only edits do not affect attendance. Compare the saved pay
+      // snapshot with the latest setup so a stale draft cannot be approved.
+      if (run.cutoff === 'second' && run.include_contributions) {
+        const contributions = await tx.query(`SELECT l.employee_code, l.details, p.contribution_settings
+          FROM payroll_run_lines l
+          LEFT JOIN LATERAL (SELECT contribution_settings FROM payroll_employee_profiles
+            WHERE employee_id=l.employee_id ORDER BY effective_from DESC,id DESC LIMIT 1) p ON TRUE
+          WHERE l.payroll_run_id=$1`, [Number(runId)])
+        const changed = contributions.rows.find(line => JSON.stringify(normalizeContributionSettings(line.details?.contributionSettings)) !==
+          JSON.stringify(normalizeContributionSettings(line.contribution_settings ?? undefined)))
+        if (changed) throw serviceError(`Government contribution setup changed for ${changed.employee_code}. Recalculate this draft before approval`, 409)
+      }
       const batchResult = await tx.query(
         'SELECT error_count FROM payroll_attendance_import_batches WHERE id = $1',
         [run.attendance_batch_id]

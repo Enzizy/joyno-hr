@@ -11,6 +11,7 @@ import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import EmployeeWorkspaceNav from '@/components/employees/EmployeeWorkspaceNav.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { usePersistentFilters } from '@/composables/usePersistentFilters'
 import EmployeeDetailsDrawer from '@/components/employees/EmployeeDetailsDrawer.vue'
@@ -256,9 +257,10 @@ async function submitAwol() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Employee Management">
+    <PageHeader title="Employees">
       <template #actions><AppButton @click="openCreate">Add employee</AppButton></template>
     </PageHeader>
+    <EmployeeWorkspaceNav />
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-4">
       <div class="grid gap-3 xl:grid-cols-[minmax(220px,1.6fr)_repeat(4,minmax(100px,1fr))_auto] xl:items-end">
         <div>

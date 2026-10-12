@@ -67,7 +67,26 @@ function calculateSssAssessablePay({ firstCutoffPay, grossSalary, absenceDeducti
   }
 }
 
-function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025, sssCompensation } = {}) {
+const CONTRIBUTION_KEYS = Object.freeze(['sss', 'philhealth', 'pagibig'])
+
+function normalizeContributionSettings(value, fallback = {}) {
+  if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) {
+    throw new TypeError('contributionSettings must contain government contribution checkboxes')
+  }
+  if (value && Object.keys(value).some(key => !CONTRIBUTION_KEYS.includes(key))) {
+    throw new TypeError('Unknown government contribution setting')
+  }
+  return Object.fromEntries(CONTRIBUTION_KEYS.map(key => {
+    const enabled = value?.[key] ?? fallback?.[key] ?? true
+    if (value && Object.hasOwn(value, key) && typeof value[key] !== 'boolean') {
+      throw new TypeError(`${key} contribution setting must be true or false`)
+    }
+    return [key, enabled]
+  }))
+}
+
+function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025, sssCompensation, contributionSettings } = {}) {
+  const enabled = normalizeContributionSettings(contributionSettings)
   const salary = finiteNumber(monthlyBasicSalary, 'monthlyBasicSalary')
   if (salary < 0) throw new RangeError('monthlyBasicSalary cannot be negative')
   if (effectiveYear < 2025) throw new RangeError('Only the 2025+ SSS contribution schedule is implemented')
@@ -86,17 +105,17 @@ function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025, sssC
 
   return {
     schedule: DEFAULTS.contributionSchedule,
-    sssCompensation: roundMoney(sssBasis),
-    sssMsc,
-    sssEmployee,
-    sssEmployer,
-    sssEmployerEc,
-    philHealthBasis,
-    philHealthEmployee: roundMoney(philHealthTotal / 2),
-    philHealthEmployer: roundMoney(philHealthTotal / 2),
-    pagIbigBasis,
-    pagIbigEmployee: roundMoney(pagIbigBasis * pagIbigEmployeeRate),
-    pagIbigEmployer: roundMoney(pagIbigBasis * DEFAULTS.pagIbigEmployerRate),
+    sssCompensation: enabled.sss ? roundMoney(sssBasis) : 0,
+    sssMsc: enabled.sss ? sssMsc : 0,
+    sssEmployee: enabled.sss ? sssEmployee : 0,
+    sssEmployer: enabled.sss ? sssEmployer : 0,
+    sssEmployerEc: enabled.sss ? sssEmployerEc : 0,
+    philHealthBasis: enabled.philhealth ? philHealthBasis : 0,
+    philHealthEmployee: enabled.philhealth ? roundMoney(philHealthTotal / 2) : 0,
+    philHealthEmployer: enabled.philhealth ? roundMoney(philHealthTotal / 2) : 0,
+    pagIbigBasis: enabled.pagibig ? pagIbigBasis : 0,
+    pagIbigEmployee: enabled.pagibig ? roundMoney(pagIbigBasis * pagIbigEmployeeRate) : 0,
+    pagIbigEmployer: enabled.pagibig ? roundMoney(pagIbigBasis * DEFAULTS.pagIbigEmployerRate) : 0,
   }
 }
 
@@ -205,7 +224,9 @@ function calculatePayrollLine({
   workdays = [1, 2, 3, 4, 5],
   effectiveYear = 2025,
   sssCompensation,
+  contributionSettings,
 }) {
+  const enabledContributions = normalizeContributionSettings(contributionSettings)
   const monthlySalary = finiteNumber(monthlyBasicSalary, 'monthlyBasicSalary')
   const cola = finiteNumber(monthlyCola, 'monthlyCola')
   const divisor = finiteNumber(dailyRateDivisor, 'dailyRateDivisor')
@@ -228,7 +249,7 @@ function calculatePayrollLine({
     workdays,
   })
   const contributionValues = cutoff === 'second' && includeContributions
-    ? calculateContributions(monthlySalary, { effectiveYear, sssCompensation })
+    ? calculateContributions(monthlySalary, { effectiveYear, sssCompensation, contributionSettings: enabledContributions })
     : {
       schedule: DEFAULTS.contributionSchedule,
       sssCompensation: 0,
@@ -286,6 +307,7 @@ module.exports = {
   calculateThirteenthMonthAccrual,
   calculateWorkedSpecialHoliday,
   calculatePayrollLine,
+  normalizeContributionSettings,
   getSssMonthlySalaryCredit,
   roundMoney,
 }

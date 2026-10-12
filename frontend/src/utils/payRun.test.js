@@ -77,16 +77,39 @@ test('reopened attendance holds the draft, and corrected attendance asks for a r
   assert.equal(stage(current, 'approve').state, 'todo')
 })
 
+test('attendance recheck holds a draft but does not change approved historical pay', () => {
+  const reviews = [{ id: 4, payroll_scope: 'day', review_state: 'confirmed', period_start: period.start, period_end: period.end }]
+  const run = { id: 9, status: 'draft', attendance_batch_id: 4, period_start: period.start,
+    period_end: period.end, rule_snapshot: { payrollScope: 'day' } }
+  const stages = payRunStages({ period, shift: 'day', reviews, runs: [run], attendanceNeedsRecheck: true, finalizationEnabled: true })
+  assert.equal(stage(stages, 'attendance').detail, 'Needs recheck')
+  assert.equal(currentStageKey(stages), 'attendance')
+  assert.deepEqual([stage(stages, 'review').state, stage(stages, 'approve').state], ['locked', 'locked'])
+  const approved = payRunStages({ period, shift: 'day', reviews, runs: [{...run, status: 'approved'}], attendanceNeedsRecheck: true })
+  assert.equal(stage(approved, 'attendance').state, 'done')
+  assert.equal(stage(approved, 'review').detail, 'Approved')
+})
+
 test('payment and closing drive the last stages; practice runs release test payslips', () => {
   const run = status => [{ id: 9, status, has_payment: status !== 'approved', period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { payrollScope: 'day', isTest: true } }]
   const approved = payRunStages({ period, shift: 'day', practice: true, profiles: [ready], runs: [{ ...run('approved')[0], has_payment: false }] })
-  assert.equal(stage(approved, 'approve').detail, 'Mark as paid')
+  assert.equal(stage(approved, 'approve').detail, 'Record payment')
   assert.equal(currentStageKey(approved), 'approve')
   const finished = payRunStages({ period, shift: 'day', practice: true, profiles: [ready], runs: run('locked') })
   assert.equal(stage(finished, 'payslips').detail, 'Ready to send')
   assert.deepEqual(runSummary(finished), { label: 'Practice finished', tone: 'success' })
   const closed = payRunStages({ period, shift: 'day', profiles: [ready], runs: [{ ...run('locked')[0], rule_snapshot: { payrollScope: 'day' } }], finalizationEnabled: true })
   assert.equal(runSummary(closed).label, 'Payslips released')
+})
+
+test('future stages stay unavailable, while a saved stale draft can be inspected', () => {
+  const blank=payRunStages({period,shift:'day'})
+  assert.deepEqual(blank.map(item=>item.available),[true,false,false,false])
+  const draft={id:9,status:'draft',period_start:period.start,period_end:period.end,rule_snapshot:{payrollScope:'day'}}
+  const stale=payRunStages({period,shift:'day',runs:[draft],attendanceNeedsRecheck:true,finalizationEnabled:true})
+  assert.deepEqual(stale.map(item=>item.available),[true,true,false,false])
+  const closed=payRunStages({period,shift:'day',runs:[{...draft,status:'locked',has_payment:true}]})
+  assert.deepEqual(closed.map(item=>item.available),[true,true,true,true])
 })
 
 test('runs are matched by shift, practice flag and exact work dates', () => {

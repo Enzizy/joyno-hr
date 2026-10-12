@@ -7,7 +7,7 @@ const { MANAGEMENT_ROLES } = require('../constants/roles')
 const { RELEASED_PAYSLIP_SQL, payslipEmail, payslipFilename, renderPayslipPdf, renderPayslipsPdf } = require('../services/payrollPayslipService')
 const { dateKey } = require('../services/payrollAttendanceService')
 const { parseAttendanceCsv, decodeAttendanceCsv, isAttendanceScan, parseManilaTimestamp, manilaDateParts, listWeekdays, computeDailyAttendance } = require('../services/payrollAttendanceService')
-const { calculatePayrollLine, calculateSssAssessablePay, calculateWorkedSpecialHoliday } = require('../services/payrollCalculationService')
+const { calculatePayrollLine, calculateSssAssessablePay, calculateWorkedSpecialHoliday, normalizeContributionSettings } = require('../services/payrollCalculationService')
 const { validatePayrollPeriod } = require('../services/payrollScheduleService')
 const {csvRows}=require('../services/hrmsCsvService')
 
@@ -140,14 +140,16 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         ...(specialHoliday.overtimePay ? [{ type: 'overtime', amount: specialHoliday.overtimePay,
           note: `${specialHolidayOvertimeHours} special-holiday overtime hour(s) at 130% x 130% (test)` }] : []),
       ]
-      const base = calculatePayrollLine({ monthlyBasicSalary, monthlyCola, cutoff, attendance: days })
-      const sssAssessment = cutoff === 'second' ? calculateSssAssessablePay({
+      const currentProfile = (await payrollService.listProfiles({employeeId}))[0]
+      const contributionSettings = normalizeContributionSettings(currentProfile?.contribution_settings)
+      const base = calculatePayrollLine({ monthlyBasicSalary, monthlyCola, cutoff, attendance: days, contributionSettings })
+      const sssAssessment = cutoff === 'second' && contributionSettings.sss ? calculateSssAssessablePay({
         firstCutoffPay, grossSalary: base.grossSalary, absenceDeduction: base.absenceDeduction,
         lateDeduction: base.lateDeduction, undertimeDeduction: base.undertimeDeduction, manualEarnings: effectiveEarnings(night,manualEarnings),
       }) : null
       const calculated = cutoff === 'second'
         ? calculatePayrollLine({ monthlyBasicSalary, monthlyCola, cutoff, includeContributions: true, attendance: days,
-          sssCompensation: sssAssessment.monthlyCompensation }) : base
+          sssCompensation: sssAssessment?.monthlyCompensation, contributionSettings }) : base
       const extraTotal = specialHoliday.total + night.nightDifferential.amount
       const line = {
         employee_id: employee.id, employee_code: employee.employee_code,
@@ -160,7 +162,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         employee_sss: calculated.employeeSss, employee_philhealth: calculated.employeePhilhealth,
         employee_pagibig: calculated.employeePagibig,
         net_pay: Math.round(Math.max(0, calculated.grossSalary + calculated.colaPay + extraTotal - calculated.employeeDeductions) * 100) / 100,
-        details: { ...night, manualEarnings, contributionBasis: calculated.contributionBasis,
+        details: { ...night, manualEarnings, contributionBasis: calculated.contributionBasis, contributionSettings,
           sssAssessment: sssAssessment ? { ...sssAssessment,
             firstCutoffSource: firstCutoffPayInput === undefined || firstCutoffPayInput === '' ? 'assumed-half-basic' : 'entered' } : null },
       }
@@ -438,7 +440,10 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
                 (SELECT array_agg(DISTINCT LOWER(TRIM(account.email))) FROM users account
                   WHERE account.employee_id = line.employee_id AND NULLIF(TRIM(account.email), '') IS NOT NULL) AS emails,
                 (SELECT MAX(sent.created_at) FROM payroll_run_events sent WHERE sent.payroll_run_id = line.payroll_run_id
-                  AND sent.action = 'payslip_emailed' AND sent.metadata->>'lineId' = line.id::text) AS sent_at
+                  AND sent.action = 'payslip_emailed' AND sent.metadata->>'lineId' = line.id::text) AS sent_at,
+                (SELECT failed.metadata->>'reason' FROM payroll_run_events failed WHERE failed.payroll_run_id = line.payroll_run_id
+                  AND failed.action = 'payslip_email_failed' AND failed.metadata->>'lineId' = line.id::text
+                  ORDER BY failed.created_at DESC,failed.id DESC LIMIT 1) AS failure_reason
          FROM payroll_run_lines line WHERE line.payroll_run_id = $1 ORDER BY line.id`, [runId])
       const removed = (await db.query(
         `SELECT MIN(created_at) AS removed_at FROM payroll_run_events WHERE payroll_run_id = $1 AND action = 'test_payslips_removed'`, [runId])).rows[0]
@@ -446,6 +451,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         // Practice runs only: when HR took the test payslips off the employees' pages.
         testPayslipsRemovedAt: removed?.removed_at || null,
         lines: rows.map((row) => ({ lineId: row.line_id, sentAt: row.sent_at,
+          failed: row.sent_at ? null : row.failure_reason || null,
           email: row.emails?.length === 1 ? row.emails[0] : null,
           emailProblem: !row.emails?.length ? 'No account email' : row.emails.length > 1 ? 'More than one account email' : null })),
       })
@@ -489,6 +495,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       return res.status(403).json({ message: 'Payslip email is disabled until payroll calculations are verified and approval is enabled' })
     }
     if (typeof deliverPayslipEmail !== 'function') return res.status(503).json({ message: 'Email delivery is unavailable' })
+    let emailAttempted=false,emailAccepted=false
     try {
       const result = await db.transaction(async (tx) => {
         await tx.query('SELECT pg_advisory_xact_lock($1, $2)', [716211, lineId])
@@ -518,6 +525,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
           throw Object.assign(new Error(recipients.rows.length ? 'Employee has multiple account emails; resolve before sending' : 'Employee has no account email'), { statusCode: 422 })
         }
         const pdf = await renderPayslipPdf(payslip)
+        emailAttempted=true
         await deliverPayslipEmail({
           to: recipients.rows[0].email,
           subject: `${isTest ? '[TEST] ' : ''}Payslip for ${dateKey(payslip.run.payday)}`,
@@ -526,6 +534,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
           attachments: [{ filename: payslipFilename(payslip.run, payslip.line), content: pdf, contentType: 'application/pdf' }],
           requireDelivery: true,
         })
+        emailAccepted=true
         await tx.query(
           `INSERT INTO payroll_run_events (payroll_run_id, action, actor_user_id, actor_role, actor_name, metadata)
            VALUES ($1, 'payslip_emailed', $2, $3, $4, $5::jsonb)`,
@@ -537,6 +546,14 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
       if (result.status === 'not_found') return res.status(404).json({ message: 'Payslip not found' })
       return res.json(result)
     } catch (error) {
+      if(emailAttempted && !emailAccepted) {
+        const reason=error?.message==='Email delivery is not configured' ? error.message : 'Email service could not accept this payslip. Check delivery and retry.'
+        try {
+          await db.query(`INSERT INTO payroll_run_events(payroll_run_id,action,actor_user_id,actor_role,actor_name,metadata)
+            VALUES($1,'payslip_email_failed',$2,$3,$4,$5::jsonb)`,
+            [runId,req.user.id,req.user.role,req.user.name||null,JSON.stringify({lineId,reason})])
+        } catch(auditError) {console.error('Payslip failure audit could not be saved:',auditError.code||'unknown')}
+      }
       if (error?.message === 'Email delivery is not configured') {
         return res.status(503).json({ message: 'Email delivery is not configured' })
       }

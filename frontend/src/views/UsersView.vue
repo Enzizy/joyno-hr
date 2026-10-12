@@ -11,6 +11,7 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { usePersistentFilters } from '@/composables/usePersistentFilters'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import SettingsWorkspaceNav from '@/components/settings/SettingsWorkspaceNav.vue'
 import UserAccountDrawer from '@/components/employees/UserAccountDrawer.vue'
 import { getRolePresentation } from '@/utils/rolePresentation'
 
@@ -157,9 +158,10 @@ async function removeUser() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="User Accounts">
+    <PageHeader title="Accounts">
       <template #actions><AppButton @click="openAdd">Add user</AppButton></template>
     </PageHeader>
+    <SettingsWorkspaceNav />
     <section class="filter-panel" aria-label="User filters">
       <div class="grid gap-4 md:grid-cols-[minmax(0,1fr)_13rem_auto] md:items-end">
         <AppInput

@@ -141,7 +141,7 @@ test('workbook SSS lookup includes both cutoff net basics and overtime, but not 
   assert.equal(contributions.pagIbigEmployee, 200)
 })
 
-test('month-end draft uses saved first-cutoff eligible pay for the SSS bracket', async () => {
+test('month-end SSS reads actual 15th net basic, OT and ND, excluding allowances and personal deductions', async () => {
   const run = { id: 3, period_start: '2026-09-11', period_end: '2026-09-25',
     payday: '2026-09-30', status: 'draft', cutoff: 'second' }
   let insertedLine
@@ -154,9 +154,15 @@ test('month-end draft uses saved first-cutoff eligible pay for the SSS bracket',
       daily_rate_divisor: 261, workdays: [1, 2, 3, 4, 5], effective_from: '2026-01-01' }] }
     if (sql.includes('FROM payroll_run_lines line JOIN payroll_runs run')) {
       assert.equal(params[0], '2026-09-10')
-      return { rows: [{ employee_id: 12, gross_salary: '7500', absence_deduction: '0',
-        late_deduction: '0', undertime_deduction: '0', first_cutoff_status: 'approved',
-        details: { manualEarnings: [{ type: 'overtime', amount: 600 }] } }] }
+      return { rows: [{ employee_id: 12, gross_salary: '7500', absence_deduction: '800',
+        late_deduction: '200', undertime_deduction: '100', first_cutoff_status: 'approved',
+        cola_pay: '1000', net_pay: '1',
+        details: {
+          automaticEarnings: [{ type: 'night_differential', amount: 100 }],
+          manualEarnings: [{ type: 'overtime', amount: 600 }, { type: 'holiday_premium', amount: 900 }],
+          charges: [{ type: 'basic_pay_adjustment', amount: 100 },
+            { type: 'other_non_taxable_earning', amount: 500 }, { type: 'cash_advance', amount: 1000 }],
+        } }] }
     }
     if (sql.includes('INSERT INTO payroll_runs')) return { rows: [run] }
     if (sql.includes('INSERT INTO payroll_run_lines')) { insertedLine = params; return { rows: [] } }
@@ -169,12 +175,42 @@ test('month-end draft uses saved first-cutoff eligible pay for the SSS bracket',
   } } })
   await service.previewRun({ periodStart: run.period_start, periodEnd: run.period_end,
     payday: run.payday, cutoff: 'second', includeContributions: true,attendanceBatchId:7 })
-  assert.equal(insertedLine[16], 775)
+  assert.equal(insertedLine[16], 725)
   assert.equal(insertedLine[26], 500)
   const details = JSON.parse(insertedLine[25])
-  assert.equal(details.sssAssessment.firstCutoffPay, 8100)
+  assert.equal(details.sssAssessment.firstCutoffPay, 7200)
   assert.equal(details.sssAssessment.firstCutoffSource, 'saved-first-cutoff-approved')
-  assert.equal(details.sssAssessment.monthlyCompensation, 15600)
+  assert.equal(details.sssAssessment.monthlyCompensation, 14700)
+})
+
+test('SSS employee shares match all ten populated Remittance examples', () => {
+  // FOR TESTING.xlsm Remittance F9:G18 (cutoff bases), Q9:Q18 (EE including MPF).
+  const examples = [
+    [12500, 11350.57, 1200], [4629.31, 5814.18, 525],
+    [7175.29, 7264.37, 725], [7500, 7500, 750],
+    [7500, 6810.34, 725], [7500, 9699.31, 850],
+    [6336.21, 4732.76, 550], [8685.34, 9559.48, 900],
+    [7155.17, 8390.8, 775], [5172.416436781609, 5603.45, 550],
+  ]
+  for (const [firstCutoffPay, grossSalary, expectedSss] of examples) {
+    const assessment = calculateSssAssessablePay({ firstCutoffPay, grossSalary })
+    assert.equal(calculateContributions(15000, {
+      sssCompensation: assessment.monthlyCompensation,
+    }).sssEmployee, expectedSss)
+  }
+})
+
+test('month-end assessment adds current OT and ND after missed-time deductions', () => {
+  const assessment = calculateSssAssessablePay({ firstCutoffPay: 7200, grossSalary: 7500,
+    absenceDeduction: 800, lateDeduction: 200, undertimeDeduction: 100,
+    manualEarnings: [{ type: 'overtime', amount: 600 },
+      { type: 'night_differential', amount: 200 }, { type: 'other_earning', amount: 1000 }],
+  })
+  assert.deepEqual(assessment, { firstCutoffPay: 7200, secondCutoffNetBasic: 6400,
+    overtimePay: 600, nightDifferentialPay: 200, monthlyCompensation: 14400 })
+  assert.equal(calculateContributions(15000, {
+    sssCompensation: assessment.monthlyCompensation,
+  }).sssEmployee, 725)
 })
 
 test('a 6-hour night is paid 6 of 8 hours of the salary HR entered', async () => {
@@ -579,6 +615,7 @@ test('month-end approval accepts half the monthly salary as the 15th pay without
     if (sql.includes('FROM payroll_attendance_import_batches')) return { rows: [{ error_count: 0 }] }
     if (sql.includes('FROM payroll_daily_attendance')) return { rows: [{ count: 0 }] }
     if (sql.includes('SELECT 1 FROM payroll_run_lines')) return { rows: [] }
+    if (sql.includes('SELECT l.employee_code, l.details, p.contribution_settings')) return {rows:[]}
     if (sql.includes('SELECT employee_code FROM payroll_run_lines')) return { rows: [{ employee_code: 'IT-12' }] }
     if (sql.includes('UPDATE payroll_runs')) { updated = true; return { rows: [{ id: 1, status: 'approved', cutoff: 'second', period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30' }] } }
     throw new Error(`Unexpected query: ${sql}`)

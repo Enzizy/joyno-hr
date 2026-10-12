@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { getAuditLogs } from '@/services/backendService'
 import AppTable from '@/components/ui/AppTable.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
+import SettingsWorkspaceNav from '@/components/settings/SettingsWorkspaceNav.vue'
 
 const list = ref([])
 const loading = ref(false)
@@ -106,7 +107,8 @@ async function prevPage() {
 
 <template>
   <div class="space-y-6">
-    <PageHeader title="Audit Logs" />
+    <PageHeader title="Audit log" />
+    <SettingsWorkspaceNav />
     <div class="space-y-3 md:hidden">
       <div v-if="loading" class="space-y-3"><div v-for="item in 4" :key="item" class="h-32 animate-pulse rounded-xl bg-gray-800" /></div>
       <div v-else-if="!rows.length" class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-8 text-center text-sm text-gray-500">No audit logs.</div>

@@ -29,6 +29,12 @@ export const AGENCY_FOR_DEDUCTION = Object.freeze({
 
 export const adjustmentLabel = type => DEDUCTION_TYPES[type] || ADDITION_TYPES[type] || OTHER_LABELS[type] || type
 
+// The API stores ordinary deductions as positive amounts; only basic corrections are signed.
+export function payChargePayload({key,source,direction,...entry}) {
+  const amount=Math.abs(Number(entry.amount))
+  return {...entry,amount:entry.type==='basic_pay_adjustment' && direction==='deduct' ? -amount : amount}
+}
+
 // Every adjustment on a pay line, signed: deductions negative, additions positive.
 export function lineAdjustments(line) {
   const charges = Array.isArray(line?.details?.charges) ? line.details.charges : Array.isArray(line?.charges) ? line.charges : []

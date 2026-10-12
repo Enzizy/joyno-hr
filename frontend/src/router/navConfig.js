@@ -1,76 +1,44 @@
 import { ALL_ROLES, MANAGEMENT_ROLES, isRoleAllowed } from '@/utils/roles'
 import { payrollEnabled } from '@/config/features'
 
+// Navigation describes HR jobs. Existing screens and URLs remain available during the payroll trial.
 export const navGroups = [
+  { name: 'Home', icon: 'dashboard', path: '/', roles: ALL_ROLES },
   {
-    name: 'Home',
-    icon: 'dashboard',
-    path: '/',
-    roles: ALL_ROLES,
+    name: 'Employees', icon: 'users', path: '/employees', roles: MANAGEMENT_ROLES,
+    activePaths: ['/employees', '/compensation'],
+    related: [{ path: '/compensation', name: 'Pay & schedules', icon: 'pay', hidden: !payrollEnabled }],
   },
+  { name: 'Payroll', employeeName: 'My payslips', icon: 'pay', path: '/payroll', roles: ALL_ROLES, hidden: !payrollEnabled },
   {
-    name: 'People',
-    icon: 'users',
-    roles: MANAGEMENT_ROLES,
-    children: [
-      { path: '/employees', name: 'Employees', icon: 'users', roles: MANAGEMENT_ROLES },
-      { path: '/compensation', name: 'Pay & schedules', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
-      { path: '/users', name: 'User accounts', icon: 'user-cog', roles: MANAGEMENT_ROLES },
-    ],
-  },
-  {
-    name: 'Work',
-    icon: 'task',
-    roles: ALL_ROLES,
-    children: [
-      { path: '/my-tasks', name: 'My tasks', icon: 'task', roles: ['employee'] },
-      { path: '/leads', name: 'Leads', icon: 'lead', roles: MANAGEMENT_ROLES, hidden: true },
-      { path: '/clients', name: 'Clients', icon: 'client', roles: MANAGEMENT_ROLES, hidden: true },
-      { path: '/services', name: 'Services', icon: 'service', roles: MANAGEMENT_ROLES, hidden: true },
-      { path: '/tasks', name: 'Tasks & meetings', icon: 'task', roles: MANAGEMENT_ROLES },
-      { path: '/automation', name: 'Automation', icon: 'automation', roles: MANAGEMENT_ROLES, hidden: true },
-    ],
-  },
-  {
-    name: 'Announcements',
-    icon: 'announcement',
-    path: '/announcements',
-    roles: ALL_ROLES,
-  },
-  {
-    name: 'Leave',
-    icon: 'leave',
-    roles: ALL_ROLES,
+    name: 'Leave', icon: 'leave', roles: ALL_ROLES,
     children: [
       { path: '/leave-request', name: 'My leave', icon: 'leave', roles: ALL_ROLES },
-      { path: '/leave-calendar', name: 'Team calendar', icon: 'chart', roles: MANAGEMENT_ROLES },
       { path: '/leave-approvals', name: 'Approvals', icon: 'check', roles: MANAGEMENT_ROLES },
+      { path: '/leave-calendar', name: 'Team calendar', icon: 'leave', roles: MANAGEMENT_ROLES },
+    ],
+  },
+  { name: 'Tasks & meetings', icon: 'task', path: '/tasks', roles: MANAGEMENT_ROLES },
+  { name: 'My tasks', icon: 'task', path: '/my-tasks', roles: ['employee'] },
+  { name: 'Announcements', icon: 'announcement', path: '/announcements', roles: ALL_ROLES },
+  {
+    name: 'Reports', icon: 'chart', path: '/reports', roles: MANAGEMENT_ROLES,
+    related: [
+      { path: '/reports/leave', name: 'Leave reports', icon: 'leave' },
+      { path: '/reports/payroll', name: 'Payroll reports', icon: 'pay', hidden: !payrollEnabled },
+      { path: '/reports/attendance', name: 'Attendance reports', icon: 'chart', hidden: !payrollEnabled },
     ],
   },
   {
-    name: 'Payroll',
-    icon: 'pay',
-    path: '/payroll',
-    roles: ALL_ROLES,
-    hidden: !payrollEnabled,
-  },
-  {
-    name: 'Insights',
-    icon: 'chart',
-    roles: ALL_ROLES,
-    children: [
-      { path: '/reports', name: 'Leave reports', icon: 'chart', roles: MANAGEMENT_ROLES },
+    name: 'Settings', icon: 'settings', path: '/settings', roles: MANAGEMENT_ROLES,
+    activePaths: ['/settings', '/users', '/audit-logs'],
+    related: [
+      { path: '/settings/leave', name: 'Leave policy', icon: 'leave' },
+      { path: '/users', name: 'Accounts', icon: 'user-cog' },
+      { path: '/audit-logs', name: 'Audit log', icon: 'audit' },
     ],
   },
-  {
-    name: 'Administration',
-    icon: 'settings',
-    roles: MANAGEMENT_ROLES,
-    children: [
-      { path: '/settings', name: 'System settings', icon: 'settings', roles: MANAGEMENT_ROLES },
-      { path: '/audit-logs', name: 'Audit logs', icon: 'audit', roles: MANAGEMENT_ROLES },
-    ],
-  },
+  { name: 'Profile', icon: 'users', path: '/profile', roles: ['employee'] },
 ]
 
 function roleAllowed(item, role) {
@@ -79,17 +47,19 @@ function roleAllowed(item, role) {
 
 export function getNavForRole(role) {
   return navGroups
-    .filter((group) => !group.hidden && roleAllowed(group, role))
-    .map((group) => ({
+    .filter(group => !group.hidden && roleAllowed(group, role))
+    .map(group => ({
       ...group,
-      children: group.children?.filter((child) => !child.hidden && roleAllowed(child, role)) || [],
+      name: role === 'employee' ? group.employeeName || group.name : group.name,
+      children: group.children?.filter(child => !child.hidden && roleAllowed(child, role)) || [],
+      related: group.related?.filter(child => !child.hidden && roleAllowed(child, role)) || [],
     }))
-    .filter((group) => group.path || group.children.length)
+    .filter(group => group.path || group.children.length)
 }
 
 export function getSearchNavForRole(role) {
-  return getNavForRole(role).flatMap((group) => {
-    if (group.path) return [{ path: group.path, name: group.name, icon: group.icon }]
-    return group.children.map((child) => ({ ...child, group: group.name }))
-  })
+  return getNavForRole(role).flatMap(group => [
+    ...(group.path ? [{ path: group.path, name: group.name, icon: group.icon }] : []),
+    ...[...group.children, ...group.related].map(child => ({ ...child, group: group.name })),
+  ])
 }

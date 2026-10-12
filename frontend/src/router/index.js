@@ -122,10 +122,20 @@ const routes = [
       {
         path: 'reports',
         name: 'Reports',
+        component: () => import('@/views/ReportsHubView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo'] },
+      },
+      {
+        path: 'reports/leave',
+        name: 'LeaveReports',
         component: () => import('@/views/ReportsView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
       ...(payrollEnabled ? [{
+        path: 'reports/payroll', name: 'PayrollReports', component: () => import('@/views/OperationalReportsView.vue'), meta: { roles: ['admin','hr','ceo'], reportKind: 'payroll' },
+      }, {
+        path: 'reports/attendance', name: 'AttendanceReports', component: () => import('@/views/OperationalReportsView.vue'), meta: { roles: ['admin','hr','ceo'], reportKind: 'attendance' },
+      }, {
         // Attendance is now stage 2 of a pay run; older links land on the matching run.
         path: 'attendance', name: 'Attendance', redirect: attendanceRedirect,
       }, {
@@ -154,6 +164,12 @@ const routes = [
       {
         path: 'settings',
         name: 'Settings',
+        component: () => import('@/views/SettingsHubView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo'] },
+      },
+      {
+        path: 'settings/leave',
+        name: 'LeavePolicy',
         component: () => import('@/views/SettingsView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },

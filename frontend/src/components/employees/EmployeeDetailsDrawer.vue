@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, watch } from 'vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
+import { payrollEnabled } from '@/config/features'
 
 const props = defineProps({ show: Boolean, employee: { type: Object, default: null }, user: { type: Object, default: null }, activities: { type: Array, default: () => [] }, loading: Boolean })
 const emit = defineEmits(['close', 'edit', 'awol', 'manage-account'])
@@ -69,7 +70,7 @@ onBeforeUnmount(() => {
         </header>
 
         <div class="min-h-0 flex-1 overflow-y-auto">
-          <section class="border-b border-gray-800 p-5"><h3 class="text-sm font-semibold text-gray-200">Employment</h3><dl class="mt-4 space-y-3 text-sm"><div class="flex justify-between gap-4"><dt class="text-gray-500">Department</dt><dd class="text-right text-gray-200">{{ employee?.department || 'Unassigned' }}</dd></div><div class="flex justify-between gap-4"><dt class="text-gray-500">Position</dt><dd class="text-right text-gray-200">{{ employee?.position || 'Not recorded' }}</dd></div><div class="flex justify-between gap-4"><dt class="text-gray-500">Shift</dt><dd class="capitalize text-gray-200">{{ employee?.shift || 'day' }}</dd></div><div class="flex justify-between gap-4"><dt class="text-gray-500">Date hired</dt><dd class="text-gray-200">{{ formatDate(employee?.date_hired) }}</dd></div></dl></section>
+          <section class="border-b border-gray-800 p-5"><h3 class="text-sm font-semibold text-gray-200">Employment</h3><dl class="mt-4 space-y-3 text-sm"><div class="flex justify-between gap-4"><dt class="text-gray-500">Department</dt><dd class="text-right text-gray-200">{{ employee?.department || 'Unassigned' }}</dd></div><div class="flex justify-between gap-4"><dt class="text-gray-500">Position</dt><dd class="text-right text-gray-200">{{ employee?.position || 'Not recorded' }}</dd></div><div class="flex justify-between gap-4"><dt class="text-gray-500">Shift</dt><dd class="capitalize text-gray-200">{{ employee?.shift || 'day' }}</dd></div><div class="flex justify-between gap-4"><dt class="text-gray-500">Date hired</dt><dd class="text-gray-200">{{ formatDate(employee?.date_hired) }}</dd></div></dl><RouterLink v-if="payrollEnabled && employee?.id" :to="{path:'/compensation',query:{employee:String(employee.id),shift:employee.shift==='night'?'night':'day'}}" class="mt-4 inline-flex text-sm font-semibold text-primary-300 hover:underline" @click="emit('close')">Open pay & schedule →</RouterLink></section>
 
           <section class="border-b border-gray-800 p-5">
             <div class="flex items-center justify-between gap-3">

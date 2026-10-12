@@ -112,10 +112,10 @@ function begin() {
 <template>
   <PayrollView v-if="!canManage" />
   <div v-else class="space-y-6">
-    <PageHeader title="Payroll">
+    <PageHeader title="Paydays">
       <template #actions>
         <AppButton variant="outline" @click="router.push('/compensation')">Employee pay setup</AppButton>
-        <AppButton variant="outline" @click="openStart()">Record pay</AppButton>
+        <AppButton @click="openStart()">Open payday</AppButton>
       </template>
     </PageHeader>
 
@@ -130,12 +130,12 @@ function begin() {
         </div>
       </section>
 
-      <section class="overflow-hidden rounded-xl border border-primary-800/50 bg-primary-950/10">
+      <section class="payday-card">
         <div class="p-5">
-          <p class="text-xs font-semibold uppercase tracking-wide text-primary-300">Next payday · {{ daysFromToday(next.payday) === 0 ? 'today' : `in ${plural(daysFromToday(next.payday), 'day')}` }}</p>
+          <div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs font-semibold uppercase tracking-wide text-primary-300">Next payday</p><StatusBadge variant="info">{{ daysFromToday(next.payday) === 0 ? 'Today' : `In ${plural(daysFromToday(next.payday), 'day')}` }}</StatusBadge></div>
           <h2 class="mt-1 text-2xl font-semibold text-gray-100">{{ longDate(next.payday) }}</h2>
-          <p class="mt-1 text-sm text-gray-400">Work dates {{ formatWorkRange(next.start, next.end) }} · {{ attendanceClosed ? 'attendance is closed' : closesIn === 0 ? 'attendance closes today' : `attendance closes in ${plural(closesIn, 'day')}` }}{{ next.cutoff === 'second' ? ' · includes SSS, PhilHealth and Pag-IBIG' : '' }}</p>
-          <ol class="mt-5 grid gap-2 sm:grid-cols-4" aria-label="Payday steps">
+          <div class="mt-4 grid gap-3 border-t border-gray-800 pt-4 sm:grid-cols-2"><div><p class="text-xs text-gray-500">Attendance dates</p><p class="mt-1 text-sm font-medium text-gray-300">{{ formatWorkRange(next.start, next.end) }}</p></div><div><p class="text-xs text-gray-500">{{ next.cutoff === 'second' ? 'Month-end payroll' : '15th payroll' }}</p><p class="mt-1 text-sm text-gray-300">{{ attendanceClosed ? 'Ready for attendance upload' : closesIn === 0 ? 'Attendance closes today' : `Attendance closes in ${plural(closesIn, 'day')}` }}</p><p v-if="next.cutoff === 'second'" class="mt-1 text-xs text-gray-500">Includes SSS, PhilHealth & Pag-IBIG</p></div></div>
+          <ol class="mt-5 grid grid-cols-2 gap-4 rounded-xl bg-gray-950/60 p-4 sm:grid-cols-4" aria-label="Payday steps">
             <li v-for="(step, index) in PAYDAY_STEPS" :key="step" class="flex items-start gap-2.5">
               <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold" :class="index < progress ? 'border-emerald-500 bg-emerald-500 text-gray-950' : index === progress ? 'border-primary-500 text-primary-300' : 'border-gray-700 text-gray-500'">{{ index < progress ? '✓' : index + 1 }}</span>
               <span class="min-w-0"><span class="block text-sm font-semibold" :class="index <= progress ? 'text-gray-100' : 'text-gray-500'">{{ step }}</span><span class="block text-xs text-gray-500">{{ stepDetail(index) }}</span></span>
@@ -147,7 +147,7 @@ function begin() {
             <div class="w-28 shrink-0 text-sm font-semibold text-gray-100">{{ shiftLabel(shift) }}</div>
             <template v-if="readiness[shift]?.total">
               <div class="min-w-[12rem] flex-1">
-                <p class="text-sm text-gray-300"><span class="font-semibold" :class="readiness[shift].ready === readiness[shift].total ? 'text-emerald-300' : 'text-gray-100'">{{ readiness[shift].ready }} of {{ readiness[shift].total }}</span> ready to pay</p>
+                <p class="text-sm text-gray-300"><span class="font-semibold" :class="readiness[shift].ready === readiness[shift].total ? 'text-emerald-300' : 'text-gray-100'">{{ readiness[shift].ready }} of {{ readiness[shift].total }}</span> employees set up</p>
                 <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-gray-800"><div class="h-full rounded-full" :class="readiness[shift].ready === readiness[shift].total ? 'bg-emerald-500' : 'bg-primary-500'" :style="{ width: `${Math.round(readiness[shift].ready / readiness[shift].total * 100)}%` }" /></div>
               </div>
               <AppButton v-if="readiness[shift].notSetUp.length && shiftAction(shift).kind !== 'setup'" size="sm" variant="outline" @click="router.push(setupLink(shift))">Set up {{ readiness[shift].notSetUp.length }} more →</AppButton>
@@ -164,7 +164,7 @@ function begin() {
       </section>
 
       <section class="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
-        <div class="border-b border-gray-800 px-5 py-3"><h2 class="font-semibold text-gray-100">Payroll history</h2></div>
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-800 px-5 py-4"><h2 class="font-semibold text-gray-100">Previous paydays</h2><RouterLink to="/reports/payroll" class="text-xs font-semibold text-primary-300 hover:underline">Reports & exports →</RouterLink></div>
         <p v-if="!historyPaydays.length" class="px-5 py-4 text-sm text-gray-500">Your first payroll will appear here once its attendance is uploaded.</p>
         <div v-else class="overflow-x-auto">
           <table class="w-full min-w-[640px] text-left text-sm">
@@ -186,11 +186,11 @@ function begin() {
       </details>
     </template>
 
-    <AppModal :show="Boolean(starting)" title="Record pay" @close="starting = null">
+    <AppModal :show="Boolean(starting)" title="Choose a payday" @close="starting = null">
       <div v-if="starting" class="space-y-5">
         <label class="block text-sm text-gray-300">Payday<select v-model="starting.payday" class="form-control mt-2"><option v-for="option in startOptions" :key="option.payday" :value="option.payday">{{ formatWorkDate(option.payday) }} · {{ option.period.cutoff === 'first' ? '15th payday' : 'month-end payday' }}</option></select></label>
-        <p class="-mt-3 text-xs text-gray-500">Work dates {{ formatWorkRange(periodForPayday(starting.payday).start, periodForPayday(starting.payday).end) }}{{ periodForPayday(starting.payday).cutoff === 'second' ? ' · SSS, PhilHealth and Pag-IBIG included' : '' }}</p>
-        <fieldset><legend class="text-sm text-gray-300">Shift</legend><div class="mt-2 grid gap-2 sm:grid-cols-2"><label v-for="shift in SHIFTS" :key="shift" class="flex cursor-pointer gap-3 rounded-lg border p-3 text-sm" :class="starting.shift === shift ? 'border-primary-500 bg-primary-950/20' : 'border-gray-800'"><input v-model="starting.shift" type="radio" :value="shift" class="mt-1"><span><span class="block font-semibold text-gray-100">{{ shiftLabel(shift) }}</span><span class="block text-xs text-gray-500">{{ shift === 'day' ? '9 AM – 6 PM' : '9 PM – 6 AM' }} · {{ plural(profiles[shift].length, 'employee') }}</span></span></label></div></fieldset>
+        <p class="-mt-3 text-xs text-gray-500">Work dates {{ formatWorkRange(periodForPayday(starting.payday).start, periodForPayday(starting.payday).end) }}{{ periodForPayday(starting.payday).cutoff === 'second' ? ' · government contributions per employee setup' : '' }}</p>
+        <fieldset><legend class="text-sm text-gray-300">Shift</legend><div class="mt-2 grid gap-2 sm:grid-cols-2"><label v-for="shift in SHIFTS" :key="shift" class="flex cursor-pointer gap-3 rounded-lg border p-3 text-sm" :class="starting.shift === shift ? 'border-primary-500 bg-primary-500/10' : 'border-gray-800'"><input v-model="starting.shift" type="radio" :value="shift" class="mt-1"><span><span class="block font-semibold text-gray-100">{{ shiftLabel(shift) }}</span><span class="block text-xs text-gray-500">{{ plural(profiles[shift].length, 'employee') }}</span></span></label></div></fieldset>
       </div>
       <template #footer><AppButton variant="secondary" @click="starting = null">Cancel</AppButton><AppButton @click="begin">Continue →</AppButton></template>
     </AppModal>

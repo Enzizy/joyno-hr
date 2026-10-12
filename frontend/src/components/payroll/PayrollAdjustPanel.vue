@@ -1,8 +1,8 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import { effectiveEarnings } from '@/utils/payrollEarnings'
-import { ADDITION_TYPES, DEDUCTION_TYPES } from '@/utils/payrollAdjustments'
+import { ADDITION_TYPES, DEDUCTION_TYPES, payChargePayload } from '@/utils/payrollAdjustments'
 
 // One place to change a person's pay for this payday. Amounts that come from salary and
 // attendance are shown read-only; HR adds loans, allowances and corrections as adjustments.
@@ -12,7 +12,7 @@ const props = defineProps({
   run: { type: Object, required: true },
   busy: Boolean,
 })
-const emit = defineEmits(['close', 'save'])
+const emit = defineEmits(['close', 'save', 'dirty'])
 
 const DEDUCTIONS = Object.entries(DEDUCTION_TYPES).map(([type, label]) => ({ source: 'charge', type, label }))
 // The non-taxable allowance is stored as a charge; "Other earning" as a manual earning.
@@ -51,6 +51,22 @@ const signedAmount = item => (Number(item.amount) || 0) * (isDeduction(item) || 
 
 // From salary and attendance (read-only).
 const details = computed(() => props.line.details || {})
+const canCorrectPreviousPay = computed(() => props.run.status === 'draft' && props.run.cutoff === 'second' &&
+  props.run.include_contributions && details.value.contributionSettings?.sss !== false)
+const initialFirstCutoffPay = Number(props.line.details?.sssAssessment?.firstCutoffPay ?? Number(props.line.monthly_basic_salary || 0) / 2)
+const firstCutoffPay = ref(initialFirstCutoffPay)
+const firstCutoffReason = ref('')
+const firstCutoffChanged = computed(() => canCorrectPreviousPay.value &&
+  (firstCutoffPay.value === '' || firstCutoffPay.value == null || Number(firstCutoffPay.value) !== initialFirstCutoffPay))
+const invalidFirstCutoff = computed(() => firstCutoffChanged.value &&
+  (firstCutoffPay.value === '' || firstCutoffPay.value == null || !Number.isFinite(Number(firstCutoffPay.value)) ||
+    Number(firstCutoffPay.value) < 0 || Number(firstCutoffPay.value) > 10000000 ||
+    Math.abs(Number(firstCutoffPay.value) * 100 - Math.round(Number(firstCutoffPay.value) * 100)) > 0.000001))
+const firstCutoffSource = computed(() => {
+  const source = details.value.sssAssessment?.firstCutoffSource
+  return source === 'hr-override' ? 'Previously corrected by HR' : source?.startsWith('saved-first-cutoff-')
+    ? 'From the approved 15th payroll' : 'Default: half of monthly basic pay'
+})
 const manualTypes = computed(() => new Set(items.value.filter(item => item.source === 'earning').map(item => item.type)))
 const baseRows = computed(() => {
   const line = props.line
@@ -67,7 +83,7 @@ const baseRows = computed(() => {
   const lateUndertime = Number(line.late_deduction || 0) + Number(line.undertime_deduction || 0)
   if (lateUndertime) rows.push({ label: 'Late and undertime', amount: -lateUndertime })
   const contributions = Number(line.employee_sss || 0) + Number(line.employee_philhealth || 0) + Number(line.employee_pagibig || 0)
-  if (contributions) rows.push({ label: 'SSS · PhilHealth · Pag-IBIG', amount: -contributions })
+  if (contributions) rows.push({ label: [['SSS',line.employee_sss],['PhilHealth',line.employee_philhealth],['Pag-IBIG',line.employee_pagibig]].filter(([,amount])=>Number(amount)>0).map(([label])=>label).join(' · '), amount: -contributions })
   return rows
 })
 
@@ -80,9 +96,18 @@ const original = items.value.map(item => ({ ...item }))
 const netAfter = computed(() => Number(props.line.net_pay || 0)
   + earningsTotal(toEarnings(items.value)) - earningsTotal(toEarnings(original))
   + chargesTotal(toCharges(items.value)) - chargesTotal(toCharges(original)))
-const changed = computed(() => JSON.stringify(items.value.map(({ key, ...rest }) => rest)) !== JSON.stringify(original.map(({ key, ...rest }) => rest)))
-const sssMayChange = computed(() => props.run.cutoff === 'second' && props.run.include_contributions &&
-  items.value.some(item => ['basic_pay_adjustment', 'night_differential', 'overtime'].includes(item.type)))
+const changed = computed(() => firstCutoffChanged.value || JSON.stringify(items.value.map(({ key, ...rest }) => rest)) !== JSON.stringify(original.map(({ key, ...rest }) => rest)))
+watch(changed,value=>emit('dirty',value),{immediate:true})
+onBeforeUnmount(()=>emit('dirty',false))
+const warnBeforeUnload = event => {
+  if (!changed.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', warnBeforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnload))
+const sssMayChange = computed(() => props.run.cutoff === 'second' && props.run.include_contributions && details.value.contributionSettings?.sss !== false &&
+  (firstCutoffChanged.value || items.value.some(item => ['basic_pay_adjustment', 'night_differential', 'overtime'].includes(item.type))))
 
 // The + Add menu.
 const showNight = computed(() => Boolean(details.value.nightDifferential && (Number(details.value.nightDifferential.paidMinutes) > 0 || details.value.nightDifferential.reviewRequired)))
@@ -112,13 +137,16 @@ function remove(item) { items.value = items.value.filter(entry => entry !== item
 const hasLegacy = computed(() => items.value.some(item => item.type === 'special_holiday_pay'))
 const invalid = computed(() => items.value.some(item => item.type === 'night_differential' ? !(Number(item.amount) >= 0) || item.amount === '' : !(Number(item.amount) > 0)))
 function save() {
-  if (invalid.value || hasLegacy.value) return
+  if (invalid.value || invalidFirstCutoff.value || hasLegacy.value) return
   const strip = ({ key, source, direction, ...rest }) => rest
   emit('save', {
     earnings: toEarnings(items.value).map(item => ({ ...strip(item), amount: Number(item.amount) })),
-    charges: toCharges(items.value).map(item => ({ ...strip(item), amount: signedAmount(item) })),
+    charges: toCharges(items.value).map(payChargePayload),
     earningsChanged: JSON.stringify(toEarnings(items.value).map(strip)) !== JSON.stringify(toEarnings(original).map(strip)),
-    chargesChanged: JSON.stringify(toCharges(items.value).map(item => ({ ...strip(item), amount: signedAmount(item) }))) !== JSON.stringify(toCharges(original).map(item => ({ ...strip(item), amount: signedAmount(item) }))),
+    chargesChanged: JSON.stringify(toCharges(items.value).map(payChargePayload)) !== JSON.stringify(toCharges(original).map(payChargePayload)),
+    firstCutoffChanged: firstCutoffChanged.value,
+    firstCutoffPay: Number(firstCutoffPay.value),
+    firstCutoffReason: firstCutoffReason.value.trim(),
   })
 }
 </script>
@@ -133,13 +161,14 @@ function save() {
 
       <div class="flex-1 space-y-6 overflow-y-auto px-5 py-5">
         <section>
-          <div class="flex items-baseline justify-between gap-3"><h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">From salary and attendance</h3><span class="text-xs text-gray-500">Change these in Attendance</span></div>
+          <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500">From setup and confirmed attendance</h3>
           <dl class="mt-2 divide-y divide-gray-800 rounded-lg border border-gray-800">
             <div v-for="row in baseRows" :key="row.label" class="flex items-center justify-between gap-3 px-3 py-2 text-sm">
               <dt class="text-gray-300"><span :class="row.replaced ? 'text-gray-500 line-through' : ''">{{ row.label }}</span><span v-if="row.replaced" class="ml-1 text-xs text-amber-300">replaced below</span></dt>
               <dd class="whitespace-nowrap font-medium" :class="row.replaced ? 'text-gray-500 line-through' : row.amount < 0 ? 'text-red-300' : 'text-gray-100'">{{ row.amount < 0 ? '−' : '' }}{{ money(Math.abs(row.amount)) }}</dd>
             </div>
           </dl>
+          <p v-if="Object.values(details.contributionSettings || {}).includes(false)" class="mt-2 text-xs text-gray-500">ID pending: {{[['sss','SSS'],['philhealth','PhilHealth'],['pagibig','Pag-IBIG']].filter(([key])=>details.contributionSettings[key]===false).map(([,label])=>label).join(', ')}}. These contributions are excluded.</p>
         </section>
 
         <section>
@@ -174,6 +203,15 @@ function save() {
           </ul>
           <p v-if="hasLegacy" class="mt-2 text-xs text-amber-200">Remove the old full-holiday-pay line before saving. Record holiday work in Attendance instead.</p>
         </section>
+        <details v-if="canCorrectPreviousPay" class="rounded-lg border border-gray-800">
+          <summary class="cursor-pointer px-3 py-3 text-sm font-semibold text-gray-300">Correct previous payroll amount</summary>
+          <div class="space-y-3 border-t border-gray-800 px-3 py-3">
+            <p class="text-xs leading-5 text-gray-400">{{firstCutoffSource}}. Only change this if the 15th amount used for SSS differs after attendance deductions, overtime or night differential. Exclude COLA, allowances and loan deductions.</p>
+            <label class="block text-xs text-gray-300">15th amount used for SSS (₱)<input v-model.number="firstCutoffPay" type="number" min="0" max="10000000" step="0.01" class="form-control mt-1" :disabled="busy"></label>
+            <label class="block text-xs text-gray-300">Reason (optional)<input v-model="firstCutoffReason" type="text" maxlength="200" placeholder="e.g. Earlier payroll was recorded outside the system" class="form-control mt-1" :disabled="busy"></label>
+            <p class="text-xs text-gray-500">Saving recalculates month-end SSS and net pay.</p>
+          </div>
+        </details>
       </div>
 
       <footer class="border-t border-gray-800 bg-gray-950/60 px-5 py-4">
@@ -181,9 +219,10 @@ function save() {
           <span class="text-sm text-gray-400">Net pay</span>
           <span class="text-right"><span v-if="changed" class="mr-2 text-sm text-gray-500 line-through">{{ money(line.net_pay) }}</span><span class="text-xl font-semibold text-emerald-300">{{ changed ? '≈ ' : '' }}{{ money(changed ? netAfter : line.net_pay) }}</span></span>
         </div>
-        <p v-if="changed && sssMayChange" class="mt-1 text-right text-xs text-gray-500">SSS is rechecked when you save and may move one bracket.</p>
+        <p v-if="changed && sssMayChange" class="mt-1 text-right text-xs text-gray-500">SSS and net pay are recalculated when you save.</p>
         <p v-if="invalid" class="mt-2 text-xs text-amber-300">Enter an amount on each adjustment, or remove it.</p>
-        <div class="mt-3 flex justify-end gap-2"><AppButton variant="secondary" @click="emit('close')">Cancel</AppButton><AppButton :loading="busy" :disabled="!changed || invalid || hasLegacy" @click="save">Save</AppButton></div>
+        <p v-if="invalidFirstCutoff" class="mt-2 text-xs text-amber-300">Enter a valid 15th amount in pesos and centavos, including zero if no eligible pay was earned.</p>
+        <div class="mt-3 flex justify-end gap-2"><AppButton variant="secondary" @click="emit('close')">Cancel</AppButton><AppButton :loading="busy" :disabled="!changed || invalid || invalidFirstCutoff || hasLegacy" @click="save">Save</AppButton></div>
       </footer>
     </div>
   </div>

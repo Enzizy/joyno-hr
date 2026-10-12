@@ -158,6 +158,48 @@ test('paid and closed payslip email uses the linked account and does not resend 
   }
 })
 
+test('email failures remain visible after reload and clear after a successful retry without resending', async () => {
+  const previous=process.env.PAYROLL_FINALIZATION_ENABLED
+  process.env.PAYROLL_FINALIZATION_ENABLED='true'
+  let attempts=0,sent=false,failure=null
+  const row={id:8,employee_id:12,employee_name:'Fixture Employee',gross_salary:7500,net_pay:7500,details:{},
+    payroll_run_id:4,run_id:4,period_start:'2026-09-11',period_end:'2026-09-25',payday:'2026-09-30',cutoff:'second',status:'locked'}
+  const db={transaction:fn=>fn(db),async query(sql,params=[]){
+    if(sql.includes('SELECT line.id AS line_id'))return {rows:[{line_id:8,emails:['fixture@example.test'],sent_at:sent?'2026-10-12T00:00:00Z':null,failure_reason:failure}]}
+    if(sql.includes('SELECT MIN(created_at) AS removed_at'))return {rows:[]}
+    if(sql.includes('pg_advisory'))return {rows:[]}
+    if(sql.includes('FROM payroll_run_lines line'))return {rows:[row]}
+    if(sql.includes('SELECT 1 FROM payroll_run_events'))return {rows:sent?[{exists:1}]:[]}
+    if(sql.includes('FROM payroll_payments'))return {rows:[{exists:1}]}
+    if(sql.includes('SELECT DISTINCT LOWER(TRIM(email))'))return {rows:[{email:'fixture@example.test'}]}
+    if(sql.includes('INSERT INTO payroll_run_events')){
+      if(sql.includes('payslip_email_failed')){const data=JSON.parse(params[4]);assert.equal(data.lineId,8);failure=data.reason}
+      else sent=true
+      return {rows:[]}
+    }
+    throw Error(`Unexpected query: ${sql}`)
+  }}
+  const app=express()
+  app.use(createPayrollRouter({db,payrollService:{},authRequired:(req,res,next)=>{req.user={id:1,role:'hr'};next()},
+    requireRole:()=> (req,res,next)=>next(),deliverPayslipEmail:async()=>{attempts++;if(attempts===1)throw Object.assign(Error('private-provider-details'),{statusCode:503})}}))
+  const server=app.listen(0)
+  try {
+    const root=`http://127.0.0.1:${server.address().port}/api/payroll/runs/4`
+    assert.equal((await fetch(`${root}/payslips/8/send`,{method:'POST'})).status,500)
+    assert.equal(sent,false)
+    assert.ok(failure)
+    assert.ok(!failure.includes('private-provider-details'))
+    assert.equal((await (await fetch(`${root}/payslip-deliveries`)).json()).lines[0].failed,failure)
+    assert.equal((await (await fetch(`${root}/payslips/8/send`,{method:'POST'})).json()).status,'sent')
+    assert.equal((await (await fetch(`${root}/payslip-deliveries`)).json()).lines[0].failed,null)
+    assert.equal((await (await fetch(`${root}/payslips/8/send`,{method:'POST'})).json()).status,'already_sent')
+    assert.equal(attempts,2)
+  } finally {
+    await new Promise(resolve=>server.close(resolve))
+    if(previous===undefined)delete process.env.PAYROLL_FINALIZATION_ENABLED;else process.env.PAYROLL_FINALIZATION_ENABLED=previous
+  }
+})
+
 // Sends one practice payslip with the given environment and run state; returns the response and any email sent.
 async function sendPracticePayslip({ nodeEnv, removed = false }) {
   const previous = { env: process.env.NODE_ENV, flag: process.env.PAYROLL_FINALIZATION_ENABLED }
@@ -215,6 +257,7 @@ test('removed test payslips cannot be sent again', async () => {
 
 test('one-employee CSV preview includes manual earnings and does not write to the database', async () => {
   const app = express()
+  let contributionSettings = {sss:true,philhealth:true,pagibig:true}
   const queries = []
   const db = { async query(sql) {
     queries.push(sql)
@@ -222,7 +265,7 @@ test('one-employee CSV preview includes manual earnings and does not write to th
     if (!sql.includes('FROM employees')) return {rows:[]}
     return { rows: [{ id: 12, employee_code: 'IT-12', first_name: 'Sample', last_name: 'Employee' }] }
   } }
-  app.use(createPayrollRouter({ db, payrollService: {},
+  app.use(createPayrollRouter({ db, payrollService: {listProfiles:async()=>[{contribution_settings:contributionSettings}]},
     authRequired: (req, res, next) => { req.user = { id: 1, role: 'hr' }; next() },
     requireRole: () => (req, res, next) => next(),
   }))
@@ -267,6 +310,14 @@ test('one-employee CSV preview includes manual earnings and does not write to th
     assert.equal(partial.specialHoliday.holidayPremium, 181.03)
     assert.equal(partial.line.details.manualEarnings[0].approvedHours, 7)
     assert.equal(queries.length, 9)
+    contributionSettings = {sss:false,philhealth:false,pagibig:true}
+    const pendingResponse = await fetch(`http://127.0.0.1:${server.address().port}/api/payroll/test/employee-preview`, {method:'POST',body})
+    assert.equal(pendingResponse.status,200)
+    const pending = await pendingResponse.json()
+    assert.equal(pending.line.employee_sss,0)
+    assert.equal(pending.line.employee_philhealth,0)
+    assert.equal(pending.line.employee_pagibig,200)
+    assert.equal(pending.sssAssessment,null)
   } finally {
     await new Promise((resolve) => server.close(resolve))
   }
@@ -278,7 +329,7 @@ test('one-employee night preview uses Employee Management shift and next-morning
     queries.push(sql);assert.match(sql,/^SELECT/)
     return {rows:sql.includes('FROM employees')?[{id:12,employee_code:'N-12',first_name:'Night',last_name:'Fixture',shift:'night'}]:[]}
   }}
-  app.use(createPayrollRouter({db,payrollService:{},authRequired:(req,res,next)=>{req.user={id:1,role:'hr'};next()},requireRole:()=> (req,res,next)=>next()}))
+  app.use(createPayrollRouter({db,payrollService:{listProfiles:async()=>[]},authRequired:(req,res,next)=>{req.user={id:1,role:'hr'};next()},requireRole:()=> (req,res,next)=>next()}))
   const server=app.listen(0)
   try {
     const body=new FormData()
