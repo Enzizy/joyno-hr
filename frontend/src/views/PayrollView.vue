@@ -937,7 +937,7 @@ async function emailAllPayslips() {
     </template>
 
     <template v-else-if="canManage">
-        <section v-if="attendanceProblem && (!activeRun || activeRun.status === 'draft') && !['test','approve','payslips'].includes(stage)" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3" style="border-color:var(--warning-border);background:var(--warning-bg);color:var(--warning-text)" role="status" aria-label="Attendance recheck">
+        <section v-if="!embedded && attendanceProblem && (!activeRun || activeRun.status === 'draft') && !['test','approve','payslips'].includes(stage)" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3" style="border-color:var(--warning-border);background:var(--warning-bg);color:var(--warning-text)" role="status" aria-label="Attendance recheck">
           <div class="min-w-0"><h2 class="text-sm font-semibold">{{attendanceProblem.title}}</h2><p class="mt-1 max-w-2xl text-xs leading-5">{{attendanceProblem.detail}}</p></div>
           <AppButton v-if="embedded" variant="secondary" @click="emit('navigate', 'attendance')">Go to Attendance</AppButton>
           <RouterLink v-else :to="attendanceTarget" class="shrink-0 text-sm font-semibold underline">Go to Attendance</RouterLink>
@@ -1038,7 +1038,10 @@ async function emailAllPayslips() {
           <PayrollRegister v-if="activeRun && (!embedded || stage === 'review')" :lines="currentLines" :editable="activeRun.status==='draft' && !draftReadOnly" :outdated="draftReadOnly" :downloads="reviewMenuItems" :payday="String(activeRun.payday||'').slice(0,10)!==standardPeriod(payrollMonth,cutoffType)?.payday?formatWorkDate(activeRun.payday):''" @preview="line=>openPayslip(line)" @adjust="beginAdjust" @verify="line=>payBasisForm={line,reason:''}" @attendance="line=>emit('navigate','attendance',{employee:line.employee_id})" />
           <div v-if="!embedded"><AppButton variant="secondary" @click="workflowStep = 6">View saved runs</AppButton></div>
           <template v-if="embedded && !['approve','payslips'].includes(stage) && !(loadingRun || attendanceLoading)">
-            <template v-if="!activeRun && !calculateRequested && !busy">
+            <PayRunNextStep v-if="attendanceProblem && (!activeRun || activeRun.status==='draft')" tone="waiting" :title="attendanceProblem.title" :detail="attendanceProblem.detail">
+              <AppButton variant="secondary" @click="emit('navigate','attendance')">Go to Attendance</AppButton>
+            </PayRunNextStep>
+            <template v-else-if="!activeRun && !calculateRequested && !busy">
               <PayRunNextStep v-if="stage !== 'review'" tone="waiting" title="No draft yet" detail="Calculate and check pay first.">
                 <AppButton variant="secondary" @click="emit('navigate', 'review')">Go to Review pay</AppButton>
               </PayRunNextStep>
@@ -1053,7 +1056,7 @@ async function emailAllPayslips() {
               <PayRunNextStep v-if="activeRun.status === 'draft' && runOutdated" tone="waiting" title="Attendance changed after this draft was calculated" detail="Recalculate to use the corrected attendance. Earnings and charges you added are kept.">
                 <AppButton :loading="busy" :disabled="payDateError" @click="createPreview">Recalculate pay</AppButton>
               </PayRunNextStep>
-              <PayRunNextStep v-else-if="activeRun.status === 'draft'" title="Check the employee amounts" detail="Use Adjust pay for corrections. Recalculate after attendance changes.">
+              <PayRunNextStep v-else-if="activeRun.status === 'draft'" floating title="Check the employee amounts" detail="Use Adjust pay for corrections. Recalculate after attendance changes.">
                 <AppButton variant="secondary" :loading="busy" :disabled="!runAttendanceBatch || attendanceResult?.review_state !== 'confirmed' || payDateError" title="Rebuild this draft from confirmed attendance; saved earnings and charges are kept" @click="createPreview">Recalculate</AppButton>
                 <AppButton :disabled="busy || loadingRun || attendanceLoading || draftReadOnly || payIssues.length > 0" @click="emit('navigate', 'approve')">Continue to finalization →</AppButton>
               </PayRunNextStep>

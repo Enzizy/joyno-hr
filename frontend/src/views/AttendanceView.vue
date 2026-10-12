@@ -260,10 +260,6 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
   </section>
   <section v-if="batch && !batch.needs_reimport" class="rounded-xl border border-gray-800 p-5">
    <div class="flex flex-wrap items-start justify-between gap-3"><div><h2 class="font-semibold text-gray-100">{{isConfirmed?'Attendance':'Review attendance'}}</h2><p class="mt-1 text-sm text-gray-400">{{formatWorkRange(batch.period_start,batch.period_end)}} · {{batch.file_name}}</p></div><MoreMenu :items="moreItems" /></div>
-   <div v-if="isConfirmed && batch.scopeNeedsRefresh && !payFinal" class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3" style="border-color:var(--warning-border);background:var(--warning-bg);color:var(--warning-text)" role="status" aria-label="Attendance recheck">
-    <div><p class="text-sm font-semibold">Attendance needs a recheck</p><p class="mt-1 text-xs leading-5">Employee setup or leave changed after confirmation. Edit attendance, reload employee setup and leave, then confirm again.</p></div>
-    <AppButton variant="secondary" :loading="busy" @click="recheck">Recheck attendance</AppButton>
-   </div>
    <div v-if="batch.issues?.length && !isConfirmed" class="mt-4 rounded-lg border border-amber-800/50 p-3 text-sm text-amber-200"><p v-for="i in batch.issues" :key="i.message">{{i.message}}</p></div>
    <div class="my-4 flex flex-wrap items-center gap-3"><input v-model="search" aria-label="Search attendance" placeholder="Search employee, ID or date" class="form-control max-w-sm"><div class="flex gap-1" role="group" aria-label="Attendance review filter"><button v-for="item in [{key:'needs',label:`Needs review (${needsReviewCount})`},{key:'all',label:'All employees'}]" :key="item.key" class="rounded-lg px-3 py-2 text-xs font-semibold" :class="reviewFilter===item.key?'bg-primary-500 text-gray-950':'bg-gray-800 text-gray-400'" :aria-pressed="reviewFilter===item.key" @click="reviewFilter=item.key">{{item.label}}</button></div><label class="text-xs text-gray-500"><input v-model="showAllDays" type="checkbox"> Show all dates</label></div>
    <div class="divide-y divide-gray-800 rounded-lg border border-gray-800">
@@ -294,8 +290,14 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
     <p v-if="!visibleGroups.length" class="p-4 text-sm text-gray-400">{{reviewFilter==='needs'?'No employees need a decision. Use All employees to inspect recorded deductions.':'No employees match this search.'}}</p>
    </div>
   </section>
-  <template v-if="batch && !batch.needs_reimport && !showImport && !(isConfirmed && batch.scopeNeedsRefresh && !payFinal)">
-   <PayRunNextStep v-if="isConfirmed" tone="done" title="✓ Attendance confirmed" :detail="totalsText">
+  <details v-if="!embedded || visibleBatches.length" class="rounded-xl border border-gray-800 bg-gray-950/20 p-5"><summary class="cursor-pointer text-sm font-semibold text-gray-300">{{embedded?'Other files for these work dates':'Previous attendance imports'}} <span class="ml-2 font-normal text-gray-500">{{visibleBatches.length}}</span></summary>
+   <div class="mt-4 space-y-2"><button v-for="b in visibleBatches" :key="b.id" class="flex w-full flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-left text-sm" :class="batch?.id===b.id?'border-primary-500':'border-gray-800 hover:border-gray-600'" @click="open(b.id)"><span><span class="block font-medium text-gray-200">{{formatWorkRange(b.period_start,b.period_end)}}</span><span class="mt-1 block text-xs text-gray-500">{{b.file_name||`Import ${b.id}`}}</span></span><span class="text-xs" :class="b.review_state==='confirmed'?'text-emerald-300':'text-amber-300'">{{b.needs_reimport?'Original CSV needed':b.review_state==='confirmed'?'Confirmed':`${b.pending_days} days to verify`}} →</span></button><p v-if="!visibleBatches.length" class="text-sm text-gray-500">No attendance imported yet.</p></div>
+  </details>
+  <template v-if="batch && !batch.needs_reimport && !showImport">
+   <PayRunNextStep v-if="isConfirmed && batch.scopeNeedsRefresh && !payFinal" tone="waiting" title="Attendance needs a recheck" detail="Employee setup or leave changed. Reload the review and confirm again; your decisions are kept.">
+    <AppButton variant="secondary" :loading="busy" @click="recheck">Recheck attendance</AppButton>
+   </PayRunNextStep>
+   <PayRunNextStep v-else-if="isConfirmed" tone="done" title="✓ Attendance confirmed" :detail="totalsText">
     <AppButton v-if="embedded && !payFinal" variant="outline" :loading="busy" @click="reopen">Edit attendance</AppButton><AppButton v-if="embedded && payCalculated" @click="emit('continue',{calculate:false})">Review pay →</AppButton><AppButton v-else-if="embedded" @click="emit('continue',{calculate:true})">{{payOutdated?'Recalculate pay':'Calculate pay'}}</AppButton><AppButton v-else @click="router.push(payrollTarget)">Continue to payroll →</AppButton>
    </PayRunNextStep>
    <PayRunNextStep v-else-if="blocking.length" tone="waiting" title="Fix the problems listed above before confirming" detail="Map the missing Attendance IDs or correct the file, then reload employee setup.">
@@ -311,9 +313,7 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
     <AppButton :loading="busy" :disabled="!batch.daily?.length" @click="confirm">{{embedded?'Confirm & calculate pay':'Confirm attendance'}}</AppButton>
    </PayRunNextStep>
   </template>
-  <details v-if="!embedded || visibleBatches.length" class="rounded-xl border border-gray-800 bg-gray-950/20 p-5"><summary class="cursor-pointer text-sm font-semibold text-gray-300">{{embedded?'Other files for these work dates':'Previous attendance imports'}} <span class="ml-2 font-normal text-gray-500">{{visibleBatches.length}}</span></summary>
-   <div class="mt-4 space-y-2"><button v-for="b in visibleBatches" :key="b.id" class="flex w-full flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-left text-sm" :class="batch?.id===b.id?'border-primary-500':'border-gray-800 hover:border-gray-600'" @click="open(b.id)"><span><span class="block font-medium text-gray-200">{{formatWorkRange(b.period_start,b.period_end)}}</span><span class="mt-1 block text-xs text-gray-500">{{b.file_name||`Import ${b.id}`}}</span></span><span class="text-xs" :class="b.review_state==='confirmed'?'text-emerald-300':'text-amber-300'">{{b.needs_reimport?'Original CSV needed':b.review_state==='confirmed'?'Confirmed':`${b.pending_days} days to verify`}} →</span></button><p v-if="!visibleBatches.length" class="text-sm text-gray-500">No attendance imported yet.</p></div>
-  </details>
+
   <AppModal :show="showHistory" title="Change history" size="lg" @close="showHistory=false">
    <ol v-if="batch" class="max-h-[60vh] divide-y divide-gray-800 overflow-auto">
     <li v-for="event in batch.events" :key="event.id" class="py-2.5 text-sm"><p class="text-gray-200">{{eventText(event)}}</p><p class="mt-0.5 text-xs text-gray-500">{{event.actor_name}} · {{new Date(event.created_at).toLocaleString('en-PH',{timeZone:'Asia/Manila',dateStyle:'medium',timeStyle:'short'})}}</p></li>

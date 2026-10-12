@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import MoreMenu from '@/components/ui/MoreMenu.vue'
+import PayRunNextStep from '@/components/payroll/PayRunNextStep.vue'
 import { getPayrollPayslipPdf, getPayrollPayslipsPdf, getPayslipDeliveries, removeTestPayslips, sendPayrollPayslip } from '@/services/api'
 import { useToastStore } from '@/stores/toastStore'
 
@@ -188,14 +189,7 @@ async function removeFromPages() {
     <p v-else-if="released" class="rounded-xl border border-emerald-800/50 bg-emerald-950/15 px-4 py-3 text-sm text-emerald-200">Payroll complete · payslips available in My payslips. Email is optional.</p>
     <p v-else-if="!released" class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-400">These are draft payslips. They can be sent once payroll is closed.</p>
 
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <div><h2 class="font-semibold text-gray-100">Payslips</h2><p class="text-sm text-gray-400">{{ ticked.length ? `${ticked.length} of ${lines.length} selected` : 'Choose recipients below' }}<span v-if="progress"> · Sending {{ progress }}</span></p></div>
-      <div class="flex flex-wrap gap-2">
-        <AppButton size="sm" variant="secondary" :disabled="busy || !ticked.length" :title="copies===2?'Signing sheet: two copies per Legal page':'Employee copy'" @click="printTicked">Print selected</AppButton>
-        <AppButton size="sm" variant="secondary" :disabled="busy || !ticked.length" :title="copies===2?'Signing sheet: two copies per Legal page':'Employee copy'" @click="saveTicked">Download PDF</AppButton>
-        <AppButton size="sm" :disabled="busy || !ticked.length || Boolean(sendBlocked)" :title="sendBlocked || 'Emails selected employees their own payslip'" @click="askToSend(ticked)">Email selected ({{ticked.length}})</AppButton>
-      </div>
-    </div>
+    <h2 class="font-semibold text-gray-100">Payslips</h2>
     <p class="-mt-2 text-right text-xs text-gray-500">{{ sendBlocked || 'Email sent means accepted by the email service; inbox delivery is not confirmed.' }}</p>
 
     <div class="flex flex-wrap items-center gap-3"><div role="group" aria-label="Email filter" class="flex gap-1"><button v-for="item in [{key:'all',label:'All'},{key:'pending',label:'Not emailed'},{key:'issues',label:'Email issues'}]" :key="item.key" class="rounded-lg px-3 py-2 text-xs font-semibold" :class="emailFilter===item.key?'bg-primary-500 text-gray-950':'bg-gray-800 text-gray-400'" :aria-pressed="emailFilter===item.key" @click="emailFilter=item.key">{{item.label}}</button></div><label class="flex items-center gap-2 text-xs text-gray-500">PDF format<select v-model.number="copies" class="form-control w-auto"><option :value="2">Signing sheet · two copies</option><option :value="1">Employee copy</option></select></label></div>
@@ -228,6 +222,12 @@ async function removeFromPages() {
         </div>
       </div>
     </div>
+
+    <PayRunNextStep :title="ticked.length ? `${ticked.length} of ${lines.length} selected` : 'Select employees for payslip actions'" :detail="progress?`Sending ${progress}`:copies===2?'Signing sheet · two copies per Legal page':'Employee copy · one copy'">
+      <AppButton size="sm" variant="secondary" :disabled="busy || !ticked.length" @click="printTicked">Print selected</AppButton>
+      <AppButton size="sm" variant="secondary" :disabled="busy || !ticked.length" @click="saveTicked">Download PDF</AppButton>
+      <AppButton size="sm" :disabled="busy || !ticked.length || Boolean(sendBlocked)" :title="sendBlocked || 'Emails selected employees their own payslip'" @click="askToSend(ticked)">Email selected ({{ticked.length}})</AppButton>
+    </PayRunNextStep>
 
     <AppModal :show="Boolean(confirmSend)" :title="practice ? 'Email test payslips' : 'Email payslips'" @close="confirmSend = null">
       <div v-if="confirmSend" class="space-y-4 text-sm">
