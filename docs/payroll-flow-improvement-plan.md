@@ -177,3 +177,9 @@ Verification:
 No actual attendance decisions, approvals, payments or emails were submitted during browser verification. The working tree remains uncommitted and these changes have not been deployed. Existing salary/leave snapshot recheck rules are retained; the previously identified real stale draft still requires HR review. Employee-profile merging, shift-run merging, and separating attendance-only from pay-only snapshot invalidation remain after the October 15 trial.
 
 For repeatable UI verification, `frontend/tests/payrollFlowMock.cjs` starts an in-memory API on `127.0.0.1:3301`. Run a separate Vite process on `127.0.0.1:5175` with process-only `VITE_API_BASE_URL=http://127.0.0.1:3301`, `VITE_PAYROLL_ENABLED=true` and `VITE_PAYROLL_FINALIZATION_ENABLED=true`. Keep this fixture separate from the normal app/API; it is not a real payroll source.
+
+## One-step release · 12 October 2026
+
+HR found stage 3 too many clicks: Continue, Approve payroll, Record payment, the payment pop-up, then Finish payroll. Stage 3 is now **Approve & release**. Its one button, **Approve & release payroll**, opens one confirmation with the net total, the date paid and an optional bank reference; **Release payroll** then approves, records the payment and closes the run, and opens Payslips. The server steps and their audit history are unchanged: the page runs only the steps still missing, so an interrupted release shows **Finish releasing** and completes from where it stopped.
+
+Payslips no longer need a selection first. With nobody ticked, the bar offers **Print all**, **Download all** and **Email all (N not yet emailed)**; ticking people narrows the same actions to them. Practice runs still require picking recipients. Verified by clicking through attendance → review → release → email against the in-memory test API at desktop and phone widths.

@@ -373,21 +373,34 @@ async function chooseAttendance(id) {
   finally { if (request === attendanceRequest) attendanceLoading.value = false }
 }
 
-function beginPayment() {
+// Release = approve, record the payment and close, in one confirmation. Each stays its own audited
+// server step; release runs only the steps still missing, so a retry finishes an interrupted release.
+function beginRelease() {
+  if (activeRun.value?.payment) { release(); return }
   // The money usually goes out on the payday; if that is still ahead, today. Practice references are labelled by the server.
   const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
   const payday = String(activeRun.value?.payday || activeRun.value?.pay_date || '').slice(0, 10)
   paymentForm.value = { reference: '', paidOn: payday && payday < today ? payday : today }
 }
-async function savePayment() {
+async function release() {
   busy.value = true
+  let run = activeRun.value
+  const keep = updated => { run = updated.run || updated; activeRun.value = run; preview.value = run }
   try {
-    const updated = await recordPayrollPayment(activeRun.value.id, { ...paymentForm.value, expectedTotal: totalNet.value })
-    activeRun.value = updated; preview.value = updated; paymentForm.value = null
-    toast.success(isPracticeRun.value?'Simulated payment recorded. Finish the practice run next.':'Payment recorded. Finish payroll next.')
+    if (run.status === 'draft') keep(await approvePayrollRun(run.id))
+    if (!run.payment) keep(await recordPayrollPayment(run.id, { ...paymentForm.value, expectedTotal: totalNet.value }))
+    if (run.status !== 'locked') keep(await lockPayrollRun(run.id))
+    paymentForm.value = null
+    toast.success(isPracticeRun.value ? 'Practice payroll finished. Pick who gets a test payslip.' : 'Payroll released. Every payslip is in My payslips.')
     await refreshRuns()
     emit('changed')
-  } catch (error) { toast.error(error.message) } finally { busy.value = false }
+    if (props.embedded) emit('navigate', 'payslips', { refresh: true })
+  } catch (error) {
+    paymentForm.value = null
+    toast.error(`${error.message || 'Unable to release payroll.'} Press the button again to finish releasing.`)
+    await refreshRuns()
+    emit('changed')
+  } finally { busy.value = false }
 }
 async function exportPayment(type='payment') {
   busy.value = true
@@ -580,7 +593,7 @@ async function createPreview() {
     preview.value = result.run || result
     activeRun.value = preview.value
     workflowStep.value = 4
-    toast.success(isPracticeRun.value?'Practice payroll saved. Review the test amounts before simulated approval.':'Draft payroll saved. Review every employee and amount before finalization.')
+    toast.success(isPracticeRun.value?'Practice payroll saved. Review the test amounts before simulated approval.':'Draft payroll saved. Check every employee, then release.')
     await refreshRuns()
     emit('changed')
   } catch (error) {
@@ -595,24 +608,6 @@ async function refreshRuns() {
     runs.value = listFrom(await getPayrollRuns(), 'items')
   } catch (error) {
     toast.error(error.message || 'Unable to refresh payroll runs.')
-  }
-}
-
-async function changeRunState(action, run) {
-  busy.value = true
-  try {
-    const result = action === 'approve' ? await approvePayrollRun(run.id) : await lockPayrollRun(run.id)
-    const updated = result.run || result
-    preview.value = updated
-    activeRun.value = updated
-    toast.success(isPracticeRun.value ? (action==='approve'?'Practice payroll approved.':'Practice complete. Test payslips can now be sent to selected employees.') : action === 'approve' ? 'Payroll approved.' : 'Payroll complete. Payslips are available in My payslips.')
-    await refreshRuns()
-    emit('changed')
-    if (action === 'lock' && props.embedded) emit('navigate','payslips',{refresh:true})
-  } catch (error) {
-    toast.error(error.message || `Unable to ${action} payroll.`)
-  } finally {
-    busy.value = false
   }
 }
 
@@ -718,7 +713,7 @@ const draftReadOnly = computed(() => activeRun.value?.status === 'draft' &&
 const payIssues = computed(() => {
   const issues=[]
   if (attendanceProblem.value || !runAttendanceBatch.value || attendanceResult.value?.review_state!=='confirmed') {
-    issues.push({key:'attendance',text:attendanceProblem.value?.title || 'Confirm attendance before finalization',action:'attendance',actionLabel:'Go to Attendance'})
+    issues.push({key:'attendance',text:attendanceProblem.value?.title || 'Confirm attendance before release',action:'attendance',actionLabel:'Go to Attendance'})
   } else if (runOutdated.value) issues.push({key:'recalculate',text:'Attendance changed; recalculate this draft',action:'recalculate',actionLabel:'Recalculate pay'})
   for (const line of currentLines.value) {
     if (needsNightReview(line)) issues.push({key:`night-${line.id}`,text:`${displayName(line)} · verify night differential`,action:'adjust',line,actionLabel:'Adjust pay'})
@@ -1032,7 +1027,7 @@ async function emailAllPayslips() {
             <p class="mt-2 text-sm text-gray-400">It will use the confirmed attendance <span class="text-gray-200">{{attendanceResult.file_name}}</span>{{cutoffType === 'second' ? ', with SSS, PhilHealth and Pag-IBIG' : ''}}. Calculating saves a draft you can check and recalculate. Nobody is paid or notified.</p>
             <details v-if="eligibleReviews.length > 1" class="mt-3 text-xs text-gray-400"><summary class="cursor-pointer">Use a different confirmed file</summary><label class="mt-2 block">Confirmed attendance file<select :value="runAttendanceBatch" class="form-control mt-2" @change="chooseAttendance($event.target.value)"><option v-for="b in eligibleReviews" :key="b.id" :value="b.id">{{b.file_name}} · Review {{b.id}}</option></select></label></details>
           </section>
-          <PayrollFinalize v-if="embedded && activeRun && stage === 'approve'" :run="activeRun" :total="totalNet" :count="currentLines.length" :agencies="paySummary.agencies" :issues="payIssues" :warnings="approvalChecks.filter(check=>check.state==='warn')" :downloads="downloadItems" :busy="busy" :enabled="canFinalizeRun" :practice="isPracticeRun" @approve="changeRunState('approve',activeRun)" @payment="beginPayment" @finish="changeRunState('lock',activeRun)" @resolve="resolvePayIssue" @review="emit('navigate','review')" @payslips="emit('navigate','payslips')" />
+          <PayrollFinalize v-if="embedded && activeRun && stage === 'approve'" :run="activeRun" :total="totalNet" :count="currentLines.length" :agencies="paySummary.agencies" :issues="payIssues" :warnings="approvalChecks.filter(check=>check.state==='warn')" :downloads="downloadItems" :busy="busy" :enabled="canFinalizeRun" :practice="isPracticeRun" @release="beginRelease" @resolve="resolvePayIssue" @review="emit('navigate','review')" @payslips="emit('navigate','payslips')" />
           <PayrollPayslipsDesk v-if="embedded && activeRun && stage === 'payslips'" :key="activeRun.id" :run="activeRun" :practice="isPracticeRun" :can-send="payrollFinalizationEnabled || isPracticeRun" />
           <section v-if="!embedded && !activeRun"class="rounded-xl border border-gray-800 bg-gray-900 p-5"><h2 class="font-semibold text-gray-100">{{isPracticeRun?'4. Review practice payroll · TEST ONLY':'4. Review employee pay'}}</h2><p v-if="isPracticeRun && activeRun.status==='locked'" class="mt-2 text-sm text-emerald-300">Practice complete: attendance → calculation → approval → simulated payment → finish. Test payslips can now be sent to selected employees.</p><p class="mt-2 text-sm text-gray-400">No draft is open. Create one from the reviewed attendance batch, or open a saved run.</p><div class="mt-4 flex flex-wrap gap-2"><AppButton size="sm" :disabled="!runAttendanceBatch" @click="workflowStep = 1">Prepare draft</AppButton><AppButton size="sm" variant="secondary" @click="workflowStep = 6">Open saved runs</AppButton></div></section>
           <PayrollRegister v-if="activeRun && (!embedded || stage === 'review')" :lines="currentLines" :editable="activeRun.status==='draft' && !draftReadOnly" :outdated="draftReadOnly" :downloads="reviewMenuItems" :payday="String(activeRun.payday||'').slice(0,10)!==standardPeriod(payrollMonth,cutoffType)?.payday?formatWorkDate(activeRun.payday):''" @preview="line=>openPayslip(line)" @adjust="beginAdjust" @verify="line=>payBasisForm={line,reason:''}" @attendance="line=>emit('navigate','attendance',{employee:line.employee_id})" />
@@ -1058,10 +1053,10 @@ async function emailAllPayslips() {
               </PayRunNextStep>
               <PayRunNextStep v-else-if="activeRun.status === 'draft'" floating title="Check the employee amounts" detail="Use Adjust pay for corrections. Recalculate after attendance changes.">
                 <AppButton variant="secondary" :loading="busy" :disabled="!runAttendanceBatch || attendanceResult?.review_state !== 'confirmed' || payDateError" title="Rebuild this draft from confirmed attendance; saved earnings and charges are kept" @click="createPreview">Recalculate</AppButton>
-                <AppButton :disabled="busy || loadingRun || attendanceLoading || draftReadOnly || payIssues.length > 0" @click="emit('navigate', 'approve')">Continue to finalization →</AppButton>
+                <AppButton :disabled="busy || loadingRun || attendanceLoading || draftReadOnly || payIssues.length > 0" @click="emit('navigate', 'approve')">Continue to release →</AppButton>
               </PayRunNextStep>
               <PayRunNextStep v-else tone="done" :title="activeRun.status === 'locked' ? (isPracticeRun ? '✓ Practice finished' : '✓ Payroll closed') : '✓ Approved'" :detail="`${money(totalNet)} net for ${currentLines.length} employees · amounts are frozen`">
-                <AppButton v-if="activeRun.status === 'approved'" @click="emit('navigate', 'approve')">Go to Finalize payroll →</AppButton>
+                <AppButton v-if="activeRun.status === 'approved'" @click="emit('navigate', 'approve')">Finish releasing →</AppButton>
                 <AppButton v-else-if="!isPracticeRun" @click="emit('navigate', 'payslips')">View payslips →</AppButton>
               </PayRunNextStep>
             </template>
@@ -1080,18 +1075,18 @@ async function emailAllPayslips() {
         <p v-if="payDateFormError" class="text-xs text-amber-300">Choose a date after the last work date ({{ formatWorkDate(cutoffEnd) }}).</p></div>
       <template #footer><AppButton variant="secondary" @click="payDateForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="payDateFormError" @click="savePayDate">Recalculate with this date</AppButton></template>
     </AppModal>
-    <AppModal :show="Boolean(paymentForm)" title="Record payroll payment" @close="paymentForm = null">
+    <AppModal :show="Boolean(paymentForm)" :title="isPracticeRun ? 'Release practice payroll' : 'Approve & release payroll'" @close="paymentForm = null">
       <div v-if="paymentForm" class="space-y-5">
         <div class="rounded-lg border border-emerald-800/50 bg-emerald-950/15 p-4">
-          <p class="text-sm text-gray-300">Have you sent this from the bank?</p>
+          <p class="text-sm text-gray-300">Net pay</p>
           <p class="mt-1 text-2xl font-semibold text-emerald-200">{{ money(totalNet) }}</p>
           <p class="text-sm text-gray-400">to {{ currentLines.length }} {{ currentLines.length === 1 ? 'employee' : 'employees' }}</p>
         </div>
-        <p class="text-sm text-gray-400">{{ isPracticeRun ? 'Practice: nothing is actually paid. This only tries the step.' : 'The system does not move money. This records that you paid, so payroll can be closed.' }}</p>
-        <label class="block text-sm text-gray-300">Date you sent it<input v-model="paymentForm.paidOn" type="date" :max="new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)" class="form-control mt-1.5 max-w-xs"></label>
+        <p class="text-sm text-gray-400">{{ isPracticeRun ? 'Practice: nothing is paid. You pick who gets a test payslip next.' : 'This locks the amounts, records the payment and puts every payslip in My payslips. The system does not send money.' }}</p>
+        <label class="block text-sm text-gray-300">Date paid<input v-model="paymentForm.paidOn" type="date" :max="new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)" class="form-control mt-1.5 max-w-xs"></label>
         <label class="block text-sm text-gray-300">Bank reference <span class="text-gray-500">(optional)</span><input v-model="paymentForm.reference" maxlength="200" placeholder="e.g. the transfer or batch number" class="form-control mt-1.5"><span class="mt-1 block text-xs text-gray-500">Helps you find the transfer later. Leave blank if there isn't one.</span></label>
       </div>
-      <template #footer><AppButton variant="secondary" @click="paymentForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="!paymentForm?.paidOn" @click="savePayment">Record payment</AppButton></template>
+      <template #footer><AppButton variant="secondary" @click="paymentForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="!paymentForm?.paidOn" @click="release">{{ isPracticeRun ? 'Release practice payroll' : 'Release payroll' }}</AppButton></template>
     </AppModal>
     <PayrollPayslipPreview v-if="selectedPayslip" :line="selectedPayslip.line" :run="selectedPayslip.run" :busy="busy" :can-edit="canManage && Boolean(selectedPayslip.line.id) && selectedPayslip.run.status === 'draft'" :managed="canManage" @close="selectedPayslip = null" @print="payslipPdf(false)" @download="payslipPdf(true)" @edit="beginAdjust(selectedPayslip.line)" />
     <PayrollAdjustPanel v-if="adjusting && activeRun" :line="adjusting" :run="activeRun" :busy="busy" @close="adjusting = null; adjustmentsDirty = false" @dirty="adjustmentsDirty = $event" @save="saveAdjustments" />

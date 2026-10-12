@@ -90,16 +90,20 @@ test('attendance recheck holds a draft but does not change approved historical p
   assert.equal(stage(approved, 'review').detail, 'Approved')
 })
 
-test('payment and closing drive the last stages; practice runs release test payslips', () => {
+test('one release approves, pays and closes; an interrupted release is finished from the same step', () => {
   const run = status => [{ id: 9, status, has_payment: status !== 'approved', period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { payrollScope: 'day', isTest: true } }]
   const approved = payRunStages({ period, shift: 'day', practice: true, profiles: [ready], runs: [{ ...run('approved')[0], has_payment: false }] })
-  assert.equal(stage(approved, 'approve').detail, 'Record payment')
+  assert.equal(stage(approved, 'approve').detail, 'Finish releasing')
   assert.equal(currentStageKey(approved), 'approve')
   const finished = payRunStages({ period, shift: 'day', practice: true, profiles: [ready], runs: run('locked') })
   assert.equal(stage(finished, 'payslips').detail, 'Ready to send')
   assert.deepEqual(runSummary(finished), { label: 'Practice finished', tone: 'success' })
   const closed = payRunStages({ period, shift: 'day', profiles: [ready], runs: [{ ...run('locked')[0], rule_snapshot: { payrollScope: 'day' } }], finalizationEnabled: true })
   assert.equal(runSummary(closed).label, 'Payslips released')
+  assert.equal(stage(closed, 'approve').detail, 'Released')
+  assert.equal(stage(closed, 'payslips').detail, 'In My payslips')
+  const toRelease = payRunStages({ period, shift: 'day', reviews: [{ id: 4, payroll_scope: 'day', review_state: 'confirmed', period_start: '2026-09-11', period_end: '2026-09-25' }], runs: [{ ...run('draft')[0], rule_snapshot: { payrollScope: 'day' } }], finalizationEnabled: true })
+  assert.equal(stage(toRelease, 'approve').detail, 'Ready to release')
 })
 
 test('future stages stay unavailable, while a saved stale draft can be inspected', () => {
@@ -158,8 +162,9 @@ test('payday progress waits for the cutoff, then follows the least advanced shif
   const oct15 = periodForPayday('2026-10-15')
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-07' }), 0)
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-10' }), 0)
-  const stages = (attendance, approve, payslips) => [{ key: 'attendance', state: attendance }, { key: 'approve', state: approve }, { key: 'payslips', state: payslips }]
+  const stages = (attendance, approve, payslips, review = 'todo') => [{ key: 'attendance', state: attendance }, { key: 'review', state: review }, { key: 'approve', state: approve }, { key: 'payslips', state: payslips }]
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-11', stagesByShift: [stages('todo', 'locked', 'locked')] }), 1)
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-13', stagesByShift: [stages('done', 'todo', 'locked'), stages('done', 'done', 'done')] }), 2)
+  assert.equal(paydayProgress({ period: oct15, today: '2026-10-14', stagesByShift: [stages('done', 'todo', 'locked', 'done')] }), 3)
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-15', stagesByShift: [stages('done', 'done', 'done')] }), 4)
 })

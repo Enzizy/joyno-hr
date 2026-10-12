@@ -45,7 +45,7 @@ const current = computed(() => lines.value.find((line) => line.id === currentId.
 const ticked = computed(() => lines.value.filter((line) => selected.value.has(line.id)))
 const allShownTicked = computed(() => shown.value.length > 0 && shown.value.every((line) => selected.value.has(line.id)))
 const sendBlocked = computed(() => !props.canSend ? 'Sending real payslips is turned off for now.'
-  : !released.value ? (props.practice ? 'Finish the practice run first.' : 'Close payroll first.')
+  : !released.value ? (props.practice ? 'Finish the practice run first.' : 'Release payroll first.')
   : removedAt.value ? 'These test payslips were removed from employee pages.' : '')
 const delivery = (line) => deliveries.value.get(line.id) || {}
 const sentCount = computed(() => lines.value.filter((line) => delivery(line).sentAt).length)
@@ -132,8 +132,13 @@ async function savePdf(load, name) {
 const code = (line) => String(line.employee_code || line.id).replace(/[^a-zA-Z0-9_-]/g, '_')
 const printOne = () => openPdf(() => getPayrollPayslipPdf(props.run.id, current.value.id, { copies: Number(copies.value) }))
 const saveOne = () => savePdf(() => getPayrollPayslipPdf(props.run.id, current.value.id, { copies: Number(copies.value) }), `${props.practice ? 'TEST-' : ''}payslip-${code(current.value)}-${String(props.run.payday).slice(0, 10)}.pdf`)
-const printTicked = () => openPdf(() => getPayrollPayslipsPdf(props.run.id, { lineIds: ticked.value.map((line) => line.id), copies: Number(copies.value) }))
-const saveTicked = () => savePdf(() => getPayrollPayslipsPdf(props.run.id, { lineIds: ticked.value.map((line) => line.id), copies: Number(copies.value) }), `${fileStem.value}.pdf`)
+// With nobody ticked, actions apply to everyone (practice runs always need a pick: test payslips go only to chosen people).
+const targets = computed(() => ticked.value.length ? ticked.value : props.practice ? [] : lines.value)
+const unsentTargets = computed(() => targets.value.filter((line) => !delivery(line).sentAt))
+const scope = computed(() => ticked.value.length ? 'selected' : 'all')
+const emailLabel = computed(() => ticked.value.length ? `Email selected (${ticked.value.length})` : props.practice ? 'Email selected' : unsentTargets.value.length ? `Email all (${unsentTargets.value.length})` : 'Everyone emailed')
+const printTargets = () => openPdf(() => getPayrollPayslipsPdf(props.run.id, { lineIds: targets.value.map((line) => line.id), copies: Number(copies.value) }))
+const saveTargets = () => savePdf(() => getPayrollPayslipsPdf(props.run.id, { lineIds: targets.value.map((line) => line.id), copies: Number(copies.value) }), `${fileStem.value}.pdf`)
 const previewActions=computed(()=>[{label:'Print this payslip',onSelect:printOne},{label:'Download this PDF',onSelect:saveOne}])
 
 // Sending: always confirm the exact people and addresses first; already-sent payslips are skipped.
@@ -165,7 +170,7 @@ async function send() {
   await loadDeliveries()
   emit('changed')
   selected.value = new Set(ticked.value.filter(line=>!delivery(line).sentAt).map(line=>line.id))
-  toast[failed ? 'warning' : 'success'](failed ? `${sent} emailed, ${failed} failed. Failed recipients stay selected for retry.` : `${sent} ${sent === 1 ? 'payslip' : 'payslips'} emailed.`)
+  toast[failed ? 'warning' : 'success'](failed ? `${sent} emailed, ${failed} failed. Press Email again to retry only the ones that failed.` : `${sent} ${sent === 1 ? 'payslip' : 'payslips'} emailed.`)
 }
 async function removeFromPages() {
   confirmRemove.value = false
@@ -186,11 +191,11 @@ async function removeFromPages() {
         <span class="block text-xs text-sky-300">{{ removedAt ? `Removed from employee pages ${stamp(removedAt)}.` : `${sentCount} of ${lines.length} sent so far.` }}</span></p>
       <AppButton v-if="sentCount && !removedAt" size="sm" variant="secondary" :disabled="busy" @click="confirmRemove = true">Remove from employee pages</AppButton>
     </div>
-    <p v-else-if="released" class="rounded-xl border border-emerald-800/50 bg-emerald-950/15 px-4 py-3 text-sm text-emerald-200">Payroll complete · payslips available in My payslips. Email is optional.</p>
-    <p v-else-if="!released" class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-400">These are draft payslips. They can be sent once payroll is closed.</p>
+    <p v-else-if="released" class="rounded-xl border border-emerald-800/50 bg-emerald-950/15 px-4 py-3 text-sm text-emerald-200">Payroll released · every employee can see their payslip in My payslips. Emailing is optional.</p>
+    <p v-else-if="!released" class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-400">These are draft payslips. They can be emailed once payroll is released.</p>
 
     <h2 class="font-semibold text-gray-100">Payslips</h2>
-    <p class="-mt-2 text-right text-xs text-gray-500">{{ sendBlocked || 'Email sent means accepted by the email service; inbox delivery is not confirmed.' }}</p>
+    <p v-if="sendBlocked && released" class="-mt-2 text-xs text-gray-500">{{ sendBlocked }}</p>
 
     <div class="flex flex-wrap items-center gap-3"><div role="group" aria-label="Email filter" class="flex gap-1"><button v-for="item in [{key:'all',label:'All'},{key:'pending',label:'Not emailed'},{key:'issues',label:'Email issues'}]" :key="item.key" class="rounded-lg px-3 py-2 text-xs font-semibold" :class="emailFilter===item.key?'bg-primary-500 text-gray-950':'bg-gray-800 text-gray-400'" :aria-pressed="emailFilter===item.key" @click="emailFilter=item.key">{{item.label}}</button></div><label class="flex items-center gap-2 text-xs text-gray-500">PDF format<select v-model.number="copies" class="form-control w-auto"><option :value="2">Signing sheet · two copies</option><option :value="1">Employee copy</option></select></label></div>
     <div class="grid gap-4 lg:grid-cols-[minmax(0,22rem)_1fr]">
@@ -223,10 +228,11 @@ async function removeFromPages() {
       </div>
     </div>
 
-    <PayRunNextStep :title="ticked.length ? `${ticked.length} of ${lines.length} selected` : 'Select employees for payslip actions'" :detail="progress?`Sending ${progress}`:copies===2?'Signing sheet · two copies per Legal page':'Employee copy · one copy'">
-      <AppButton size="sm" variant="secondary" :disabled="busy || !ticked.length" @click="printTicked">Print selected</AppButton>
-      <AppButton size="sm" variant="secondary" :disabled="busy || !ticked.length" @click="saveTicked">Download PDF</AppButton>
-      <AppButton size="sm" :disabled="busy || !ticked.length || Boolean(sendBlocked)" :title="sendBlocked || 'Emails selected employees their own payslip'" @click="askToSend(ticked)">Email selected ({{ticked.length}})</AppButton>
+    <PayRunNextStep :title="ticked.length ? `${ticked.length} of ${lines.length} selected` : practice ? 'Tick who gets a test payslip' : `${lines.length} payslips · ${sentCount} emailed`" :detail="progress?`Sending ${progress}`:copies===2?'PDF: signing sheet, two copies per Legal page':'PDF: employee copy'">
+      <AppButton v-if="ticked.length" size="sm" variant="outline" :disabled="busy" @click="selected = new Set()">Clear selection</AppButton>
+      <AppButton size="sm" variant="secondary" :disabled="busy || !targets.length" @click="printTargets">Print {{scope}}</AppButton>
+      <AppButton size="sm" variant="secondary" :disabled="busy || !targets.length" @click="saveTargets">Download {{scope}}</AppButton>
+      <AppButton size="sm" :disabled="busy || !unsentTargets.length || Boolean(sendBlocked)" :title="sendBlocked || 'Emails each employee their own payslip'" @click="askToSend(targets)">{{emailLabel}}</AppButton>
     </PayRunNextStep>
 
     <AppModal :show="Boolean(confirmSend)" :title="practice ? 'Email test payslips' : 'Email payslips'" @close="confirmSend = null">
