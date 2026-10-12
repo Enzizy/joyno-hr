@@ -141,7 +141,7 @@ const stageDetailClass = stage => stage.state === 'done' ? 'text-emerald-300' : 
         </div>
       </header>
 
-      <nav class="grid grid-cols-2 gap-2 md:grid-cols-4" aria-label="Pay run stages">
+      <nav class="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-label="Pay run stages">
         <button v-for="(stage, index) in stages" :key="stage.key" type="button" class="pay-run-step" :class="stageClass(stage)" :disabled="loading || Boolean(loadError) || !stage.available" :aria-current="step === stage.key ? 'step' : undefined" @click="goto(stage.key)">
           <span class="pay-run-step__number" :style="stage.state==='done'?{color:'var(--success-text)',background:'var(--success-bg)'}:{}">{{stage.state==='done'?'✓':index + 1}}</span>
           <span class="min-w-0"><span class="block text-sm font-semibold text-gray-100">{{stage.label}}</span><span class="mt-1 block text-xs" :class="stageDetailClass(stage)">{{loading ? 'Checking…' : stage.detail}}</span></span>

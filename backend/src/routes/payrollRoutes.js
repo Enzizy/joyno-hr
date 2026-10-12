@@ -507,8 +507,11 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
           throw Object.assign(new Error('Payslip email is disabled until payroll calculations are verified and approval is enabled'), { statusCode: 403 })
         }
         if (isTest && payslip.line.test_payslips_removed) throw Object.assign(new Error('These test payslips were removed from employee pages'), { statusCode: 409 })
-        if (payslip.run.status !== 'locked' || !(await tx.query('SELECT 1 FROM payroll_payments WHERE payroll_run_id=$1',[runId])).rows.length) {
-          throw Object.assign(new Error('Record payment and close payroll before emailing payslips'), { statusCode: 409 })
+        // Approved pay is final, so real payslips can be emailed before or after they are released to My payslips.
+        // Practice payslips still wait for the practice run to finish.
+        const released = payslip.run.status === 'locked' && (await tx.query('SELECT 1 FROM payroll_payments WHERE payroll_run_id=$1',[runId])).rows.length > 0
+        if (isTest ? !released : !['approved', 'locked'].includes(payslip.run.status)) {
+          throw Object.assign(new Error(isTest ? 'Finish the practice run before emailing test payslips' : 'Approve pay before emailing payslips'), { statusCode: 409 })
         }
         const sent = await tx.query(
           `SELECT 1 FROM payroll_run_events
@@ -530,7 +533,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
           to: recipients.rows[0].email,
           subject: `${isTest ? '[TEST] ' : ''}Payslip for ${dateKey(payslip.run.payday)}`,
           // The payslip is in the message itself; the PDF is attached for saving or printing.
-          ...(({ html, text }) => ({ bodyHtml: html, text }))(payslipEmail({ ...payslip, payslipsUrl })),
+          ...(({ html, text }) => ({ bodyHtml: html, text }))(payslipEmail({ ...payslip, payslipsUrl: released ? payslipsUrl : '' })),
           attachments: [{ filename: payslipFilename(payslip.run, payslip.line), content: pdf, contentType: 'application/pdf' }],
           requireDelivery: true,
         })

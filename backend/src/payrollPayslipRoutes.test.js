@@ -158,6 +158,49 @@ test('paid and closed payslip email uses the linked account and does not resend 
   }
 })
 
+test('approved pay can be emailed before release, without the My payslips link; drafts cannot', async () => {
+  const previous = process.env.PAYROLL_FINALIZATION_ENABLED
+  process.env.PAYROLL_FINALIZATION_ENABLED = 'true'
+  let status = 'approved', emails = []
+  const db = {
+    transaction: async (callback) => callback(db),
+    async query(sql) {
+      if (sql.includes('pg_advisory_xact_lock')) return { rows: [] }
+      if (sql.includes('FROM payroll_run_lines line')) return { rows: [{
+        id: 8, employee_id: 12, employee_code: 'IT-12', employee_name: 'Sample Employee',
+        gross_salary: 7500, net_pay: 7500, details: {}, payroll_run_id: 4, run_id: 4,
+        period_start: '2026-09-11', period_end: '2026-09-25', payday: '2026-09-30', cutoff: 'second', status,
+      }] }
+      if (sql.includes('SELECT 1 FROM payroll_run_events')) return { rows: [] }
+      if (sql.includes('FROM payroll_payments')) return { rows: [] }
+      if (sql.includes('SELECT DISTINCT LOWER(TRIM(email))')) return { rows: [{ email: 'employee@example.test' }] }
+      if (sql.includes('INSERT INTO payroll_run_events')) return { rows: [] }
+      throw new Error(`Unexpected query: ${sql}`)
+    },
+  }
+  const app = express()
+  app.use(createPayrollRouter({ db, payrollService: {}, payslipsUrl: 'https://hr.example.test/payroll',
+    authRequired: (req, res, next) => { req.user = { id: 1, role: 'hr' }; next() }, requireRole: () => (req, res, next) => next(),
+    deliverPayslipEmail: async (email) => { emails.push(email) } }))
+  const server = app.listen(0)
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/api/payroll/runs/4/payslips/8/send`
+    const approved = await fetch(url, { method: 'POST' })
+    assert.equal(approved.status, 200)
+    assert.equal(emails.length, 1)
+    assert.ok(!emails[0].bodyHtml.includes('hr.example.test'), 'unreleased payslips must not link to My payslips')
+    status = 'draft'
+    const draft = await fetch(url, { method: 'POST' })
+    assert.equal(draft.status, 409)
+    assert.match((await draft.json()).message, /Approve pay/)
+    assert.equal(emails.length, 1)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+    if (previous === undefined) delete process.env.PAYROLL_FINALIZATION_ENABLED
+    else process.env.PAYROLL_FINALIZATION_ENABLED = previous
+  }
+})
+
 test('email failures remain visible after reload and clear after a successful retry without resending', async () => {
   const previous=process.env.PAYROLL_FINALIZATION_ENABLED
   process.env.PAYROLL_FINALIZATION_ENABLED='true'

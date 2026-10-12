@@ -4,26 +4,30 @@ import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
 import MoreMenu from '@/components/ui/MoreMenu.vue'
 import PayRunNextStep from '@/components/payroll/PayRunNextStep.vue'
-import { getPayrollPayslipPdf, getPayrollPayslipsPdf, getPayslipDeliveries, removeTestPayslips, sendPayrollPayslip } from '@/services/api'
+import { getPayrollPayslipPdf, getPayrollPayslipsPdf, getPayslipDeliveries, lockPayrollRun, recordPayrollPayment, removeTestPayslips, sendPayrollPayslip } from '@/services/api'
 import { useToastStore } from '@/stores/toastStore'
 
 // The workbook's PAYSLIP01 (everyone) and PAYSLIP02 (one person, by filter) in one page:
 // a searchable list with send status on the left, the selected payslip on the right.
 // HR chooses an employee copy or a two-copy signing sheet. Email contains one employee copy.
-// Paid, closed real payroll is already available in My payslips; email is optional.
-// Practice payslips become visible only to selected recipients after a successful send.
+// After approval HR chooses how payslips go out: release to My payslips (recording the date paid)
+// and/or email, in either order. Practice payslips become visible only to selected recipients after a send.
 const props = defineProps({
   run: { type: Object, required: true },
   practice: Boolean,
   canSend: Boolean,
+  canRelease: Boolean,
 })
-const emit = defineEmits(['changed'])
+const emit = defineEmits(['changed', 'review'])
 const toast = useToastStore()
 
 const money = (value) => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const stamp = (value) => value ? new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
 const lines = computed(() => [...(props.run.lines || [])].sort((a, b) => String(a.employee_name).localeCompare(String(b.employee_name))))
 const released = computed(() => props.run.status === 'locked' && Boolean(props.run.payment))
+const approved = computed(() => ['approved', 'locked'].includes(props.run.status))
+const netTotal = computed(() => Math.round(lines.value.reduce((sum, line) => sum + Number(line.net_pay || 0), 0) * 100) / 100)
+const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
 const deliveries = ref(new Map())
 const removedAt = ref(null)
 const search = ref('')
@@ -44,9 +48,10 @@ const shown = computed(() => {
 const current = computed(() => lines.value.find((line) => line.id === currentId.value) || null)
 const ticked = computed(() => lines.value.filter((line) => selected.value.has(line.id)))
 const allShownTicked = computed(() => shown.value.length > 0 && shown.value.every((line) => selected.value.has(line.id)))
+// Approved real pay can be emailed before or after release. Practice payslips wait for the practice run to finish.
 const sendBlocked = computed(() => !props.canSend ? 'Sending real payslips is turned off for now.'
-  : !released.value ? (props.practice ? 'Finish the practice run first.' : 'Release payroll first.')
-  : removedAt.value ? 'These test payslips were removed from employee pages.' : '')
+  : props.practice ? (!released.value ? 'Finish the practice run first.' : removedAt.value ? 'These test payslips were removed from employee pages.' : '')
+  : !approved.value ? 'Approve pay first.' : '')
 const delivery = (line) => deliveries.value.get(line.id) || {}
 const sentCount = computed(() => lines.value.filter((line) => delivery(line).sentAt).length)
 function statusOf(line) {
@@ -141,6 +146,28 @@ const printTargets = () => openPdf(() => getPayrollPayslipsPdf(props.run.id, { l
 const saveTargets = () => savePdf(() => getPayrollPayslipsPdf(props.run.id, { lineIds: targets.value.map((line) => line.id), copies: Number(copies.value) }), `${fileStem.value}.pdf`)
 const previewActions=computed(()=>[{label:'Print this payslip',onSelect:printOne},{label:'Download this PDF',onSelect:saveOne}])
 
+const releaseForm = ref(null)
+function beginRelease() {
+  const payday = String(props.run.payday || '').slice(0, 10)
+  releaseForm.value = { reference: '', paidOn: payday && payday < today ? payday : today, alsoEmail: false, paid: Boolean(props.run.payment) }
+}
+async function release() {
+  const form = releaseForm.value
+  busy.value = true
+  let run = props.run
+  try {
+    if (!run.payment) { const paid = await recordPayrollPayment(run.id, { paidOn: form.paidOn, reference: form.reference, expectedTotal: netTotal.value }); run = paid.run || paid }
+    if (run.status !== 'locked') { const locked = await lockPayrollRun(run.id); run = locked.run || locked }
+    releaseForm.value = null
+    emit('changed', run)
+    toast.success(props.practice ? 'Practice run finished. Tick who gets a test payslip.' : 'Released. Every employee can see their payslip in My payslips.')
+    if (form.alsoEmail && !props.practice) askToSend(lines.value)
+  } catch (error) {
+    toast.error(error.message || 'Unable to release payslips.')
+    emit('changed')
+  } finally { busy.value = false }
+}
+
 // Sending: always confirm the exact people and addresses first; already-sent payslips are skipped.
 function askToSend(list) {
   const pending = list.filter((line) => !delivery(line).sentAt)
@@ -189,13 +216,22 @@ async function removeFromPages() {
     <div v-if="practice" class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-800/50 bg-sky-950/20 px-4 py-3 text-sm">
       <p class="text-sky-100"><strong>Test payslips.</strong> Only selected recipients get a test payslip in My payslips and by email. Each is marked as a test, and emails start with [TEST].
         <span class="block text-xs text-sky-300">{{ removedAt ? `Removed from employee pages ${stamp(removedAt)}.` : `${sentCount} of ${lines.length} sent so far.` }}</span></p>
-      <AppButton v-if="sentCount && !removedAt" size="sm" variant="secondary" :disabled="busy" @click="confirmRemove = true">Remove from employee pages</AppButton>
+      <AppButton v-if="!released && approved" size="sm" :disabled="busy || !canRelease" @click="beginRelease">Finish practice run</AppButton>
+      <AppButton v-else-if="sentCount && !removedAt" size="sm" variant="secondary" :disabled="busy" @click="confirmRemove = true">Remove from employee pages</AppButton>
     </div>
-    <p v-else-if="released" class="rounded-xl border border-emerald-800/50 bg-emerald-950/15 px-4 py-3 text-sm text-emerald-200">Payroll released · every employee can see their payslip in My payslips. Emailing is optional.</p>
-    <p v-else-if="!released" class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-400">These are draft payslips. They can be emailed once payroll is released.</p>
+    <p v-else-if="released" class="rounded-xl border border-emerald-800/50 bg-emerald-950/15 px-4 py-3 text-sm text-emerald-200">Released to My payslips {{ stamp(run.locked_at) }} · every employee can see their payslip. Emailing is optional.</p>
+    <section v-else-if="approved" class="rounded-xl border border-primary-700/60 bg-gray-900 p-5">
+      <h2 class="font-semibold text-gray-100">Pay is approved · payslips are not out yet</h2>
+      <p class="mt-1 text-sm text-gray-400">Choose how employees get their payslips: one or both, now or later. Print signing sheets any time below.</p>
+      <div class="mt-4 grid gap-3 sm:grid-cols-2">
+        <div class="flex flex-col rounded-lg border border-gray-800 p-4"><p class="font-medium text-gray-100">My payslips</p><p class="mt-1 flex-1 text-xs text-gray-400">Every employee sees their payslip on their own My payslips page. Records the date you paid.</p><AppButton class="mt-3 self-start" :disabled="busy || !canRelease" @click="beginRelease">Release to My payslips</AppButton></div>
+        <div class="flex flex-col rounded-lg border border-gray-800 p-4"><p class="font-medium text-gray-100">Email</p><p class="mt-1 flex-1 text-xs text-gray-400">Each employee gets their own payslip by email. {{ sentCount }} of {{ lines.length }} emailed so far.</p><AppButton class="mt-3 self-start" variant="outline" :disabled="busy || Boolean(sendBlocked) || !unsentTargets.length" @click="askToSend(targets)">{{ emailLabel }}</AppButton></div>
+      </div>
+    </section>
+    <p v-else class="rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 text-sm text-gray-400">Pay is not approved yet. <button type="button" class="font-semibold text-primary-300 underline" @click="emit('review')">Go to Review &amp; approve</button></p>
 
     <h2 class="font-semibold text-gray-100">Payslips</h2>
-    <p v-if="sendBlocked && released" class="-mt-2 text-xs text-gray-500">{{ sendBlocked }}</p>
+    <p v-if="sendBlocked && approved" class="-mt-2 text-xs text-gray-500">{{ sendBlocked }}</p>
 
     <div class="flex flex-wrap items-center gap-3"><div role="group" aria-label="Email filter" class="flex gap-1"><button v-for="item in [{key:'all',label:'All'},{key:'pending',label:'Not emailed'},{key:'issues',label:'Email issues'}]" :key="item.key" class="rounded-lg px-3 py-2 text-xs font-semibold" :class="emailFilter===item.key?'bg-primary-500 text-gray-950':'bg-gray-800 text-gray-400'" :aria-pressed="emailFilter===item.key" @click="emailFilter=item.key">{{item.label}}</button></div><label class="flex items-center gap-2 text-xs text-gray-500">PDF format<select v-model.number="copies" class="form-control w-auto"><option :value="2">Signing sheet · two copies</option><option :value="1">Employee copy</option></select></label></div>
     <div class="grid gap-4 lg:grid-cols-[minmax(0,22rem)_1fr]">
@@ -207,7 +243,7 @@ async function removeFromPages() {
             <input type="checkbox" :checked="selected.has(line.id)" :aria-label="`Select ${line.employee_name}`" @change="toggle(line.id)">
             <button type="button" class="min-w-0 flex-1 text-left" @click="currentId = line.id;mobilePreview=true">
               <span class="block truncate text-sm font-medium" :class="line.id === currentId ? 'text-primary-200' : 'text-gray-100'">{{ line.employee_name }}</span>
-              <span class="block text-[11px] text-gray-500">{{portalAvailable(line)?'Available in My payslips':practice?'Not published':'Draft'}}</span><span class="block truncate text-xs" :class="statusOf(line).tone">{{ statusOf(line).text }}</span>
+              <span class="block text-[11px] text-gray-500">{{portalAvailable(line)?'In My payslips':practice?'Not published':'Not in My payslips yet'}}</span><span class="block truncate text-xs" :class="statusOf(line).tone">{{ statusOf(line).text }}</span>
             </button>
             <span class="shrink-0 text-xs font-semibold text-gray-300">{{ money(line.net_pay) }}</span>
           </li>
@@ -228,16 +264,16 @@ async function removeFromPages() {
       </div>
     </div>
 
-    <PayRunNextStep :title="ticked.length ? `${ticked.length} of ${lines.length} selected` : practice ? 'Tick who gets a test payslip' : `${lines.length} payslips · ${sentCount} emailed`" :detail="progress?`Sending ${progress}`:copies===2?'PDF: signing sheet, two copies per Legal page':'PDF: employee copy'">
+    <PayRunNextStep :title="ticked.length ? `${ticked.length} of ${lines.length} selected` : practice ? 'Tick who gets a test payslip' : `${lines.length} payslips · ${released ? 'in My payslips' : 'not in My payslips yet'} · ${sentCount} emailed`" :detail="progress?`Sending ${progress}`:copies===2?'PDF: signing sheet, two copies per Legal page':'PDF: employee copy'">
       <AppButton v-if="ticked.length" size="sm" variant="outline" :disabled="busy" @click="selected = new Set()">Clear selection</AppButton>
-      <AppButton size="sm" variant="secondary" :disabled="busy || !targets.length" @click="printTargets">Print {{scope}}</AppButton>
-      <AppButton size="sm" variant="secondary" :disabled="busy || !targets.length" @click="saveTargets">Download {{scope}}</AppButton>
+      <AppButton size="sm" variant="outline" :disabled="busy || !targets.length" @click="printTargets">Print {{scope}}</AppButton>
+      <AppButton size="sm" variant="outline" :disabled="busy || !targets.length" @click="saveTargets">Download {{scope}}</AppButton>
       <AppButton size="sm" :disabled="busy || !unsentTargets.length || Boolean(sendBlocked)" :title="sendBlocked || 'Emails each employee their own payslip'" @click="askToSend(targets)">{{emailLabel}}</AppButton>
     </PayRunNextStep>
 
     <AppModal :show="Boolean(confirmSend)" :title="practice ? 'Email test payslips' : 'Email payslips'" @close="confirmSend = null">
       <div v-if="confirmSend" class="space-y-4 text-sm">
-        <p v-if="confirmSend.ready.length" class="text-gray-300">Each selected employee receives their own payslip by email.{{practice?' The test payslip also appears in their My payslips page.':' Their payslip is already available in My payslips.'}} No one else receives anything.</p>
+        <p v-if="confirmSend.ready.length" class="text-gray-300">Each selected employee receives their own payslip by email.{{practice?' The test payslip also appears in their My payslips page.':released?' Their payslip is also in My payslips.':' It is not in My payslips until you release it there.'}} No one else receives anything.</p>
         <ul v-if="confirmSend.ready.length" class="max-h-64 divide-y divide-gray-800 overflow-y-auto rounded-lg border border-gray-800">
           <li v-for="line in confirmSend.ready" :key="line.id" class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"><span class="font-medium text-gray-100">{{ line.employee_name }}</span><span class="text-gray-400">{{ delivery(line).email }}</span></li>
         </ul>
@@ -246,6 +282,19 @@ async function removeFromPages() {
         <p v-if="!confirmSend.ready.length" class="text-gray-400">There is no one left to email.</p>
       </div>
       <template #footer><AppButton variant="secondary" @click="confirmSend = null">Cancel</AppButton><AppButton :disabled="!confirmSend?.ready.length" @click="send">Email {{ confirmSend?.ready.length || 0 }} {{confirmSend?.ready.length===1?'payslip':'payslips'}}</AppButton></template>
+    </AppModal>
+
+    <AppModal :show="Boolean(releaseForm)" :title="practice ? 'Finish practice run' : 'Release to My payslips'" @close="releaseForm = null">
+      <div v-if="releaseForm" class="space-y-4 text-sm">
+        <p class="text-gray-300">{{ practice ? 'Practice: nothing is paid. Test payslips then go only to the people you tick.' : `All ${lines.length} employees will see their payslip on their My payslips page.` }}</p>
+        <template v-if="!releaseForm.paid">
+          <label class="block text-gray-300">Date paid<input v-model="releaseForm.paidOn" type="date" :max="today" class="form-control mt-1.5 max-w-xs"></label>
+          <label class="block text-gray-300">Bank reference <span class="text-gray-500">(optional)</span><input v-model="releaseForm.reference" maxlength="200" placeholder="e.g. the transfer or batch number" class="form-control mt-1.5"></label>
+          <p class="text-xs text-gray-500">The system does not send money. The date records when you paid.</p>
+        </template>
+        <label v-if="!practice && !sendBlocked" class="flex items-center gap-2 text-gray-300"><input v-model="releaseForm.alsoEmail" type="checkbox"> Also email each employee their payslip</label>
+      </div>
+      <template #footer><AppButton variant="secondary" @click="releaseForm = null">Cancel</AppButton><AppButton :loading="busy" :disabled="!releaseForm?.paidOn" @click="release">{{ practice ? 'Finish practice run' : 'Release' }}</AppButton></template>
     </AppModal>
 
     <AppModal :show="confirmRemove" title="Remove test payslips from employee pages?" @close="confirmRemove = false">

@@ -183,3 +183,12 @@ For repeatable UI verification, `frontend/tests/payrollFlowMock.cjs` starts an i
 HR found stage 3 too many clicks: Continue, Approve payroll, Record payment, the payment pop-up, then Finish payroll. Stage 3 is now **Approve & release**. Its one button, **Approve & release payroll**, opens one confirmation with the net total, the date paid and an optional bank reference; **Release payroll** then approves, records the payment and closes the run, and opens Payslips. The server steps and their audit history are unchanged: the page runs only the steps still missing, so an interrupted release shows **Finish releasing** and completes from where it stopped.
 
 Payslips no longer need a selection first. With nobody ticked, the bar offers **Print all**, **Download all** and **Email all (N not yet emailed)**; ticking people narrows the same actions to them. Practice runs still require picking recipients. Verified by clicking through attendance → review → release → email against the in-memory test API at desktop and phone widths.
+
+## Three steps: approve in Review, release on Payslips · 12 October 2026
+
+HR feedback after the one-step release: approving and releasing should not share a page, and releasing payslips belongs on the Payslips step, where HR decides whether employees see them in My payslips and/or get them by email. A released Sep 30 test run also showed that release must never be a side effect of approval.
+
+- **Attendance → Review & approve → Payslips.** The separate approve/release step is gone.
+- **Review & approve** ends with **Approve pay**: one confirmation showing net pay, agency remittances and any warnings. Approval only locks the amounts and attendance; nothing reaches employees. Items that block approval are listed above the register with a fix button each.
+- **Payslips** after approval offers two independent choices: **Release to My payslips** (asks the date paid and an optional reference, records the payment and closes the run; an optional tick box also emails everyone) and **Email all / selected**. Either can happen first, or only one. Approved real pay can be emailed before release; that email omits the My payslips link. Practice runs are finished from the same place and still need finishing before test payslips are sent.
+- **Confirm & calculate pay** now always calculates: the request waits for the confirmed attendance to load, and a Review step kept alive from an earlier visit picks the request up from the URL.

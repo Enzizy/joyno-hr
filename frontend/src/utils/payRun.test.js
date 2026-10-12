@@ -26,8 +26,8 @@ test('the hub lists the next payday first, then earlier paydays', () => {
 
 test('a new pay run starts at attendance; employee setup is not a step', () => {
   const stages = payRunStages({ period, shift: 'day', reviews: [], runs: [] })
-  assert.deepEqual(stages.map(s => s.key), ['attendance', 'review', 'approve', 'payslips'])
-  assert.deepEqual(stages.map(s => s.state), ['todo', 'locked', 'locked', 'locked'])
+  assert.deepEqual(stages.map(s => s.key), ['attendance', 'review', 'payslips'])
+  assert.deepEqual(stages.map(s => s.state), ['todo', 'locked', 'locked'])
   assert.equal(stage(stages, 'attendance').detail, 'Upload file')
   assert.equal(currentStageKey(stages), 'attendance')
   assert.deepEqual(runSummary(stages), { label: 'Not started', tone: 'neutral' })
@@ -46,15 +46,13 @@ test('attendance in review becomes the current stage, scoped by shift and practi
   assert.equal(stage(payRunStages({ period, shift: 'day', practice: true, profiles: [ready], reviews }), 'attendance').state, 'done')
 })
 
-test('drafts wait on approval, and approval is locked in draft mode for real payroll only', () => {
+test('a calculated draft is checked and approved on the review step; payslips wait for approval', () => {
   const reviews = [{ id: 4, payroll_scope: 'day', review_state: 'confirmed', period_start: '2026-09-11', period_end: '2026-09-25' }]
   const draft = [{ id: 9, status: 'draft', period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { payrollScope: 'day' } }]
-  const real = payRunStages({ period, shift: 'day', profiles: [ready], reviews, runs: draft })
-  assert.equal(stage(real, 'review').detail, 'Draft to check')
-  assert.equal(stage(real, 'approve').detail, 'Turned off for now')
-  assert.equal(currentStageKey(real), 'review')
-  const enabled = payRunStages({ period, shift: 'day', profiles: [ready], reviews, runs: draft, finalizationEnabled: true })
-  assert.equal(stage(enabled, 'approve').state, 'todo')
+  const stages = payRunStages({ period, shift: 'day', profiles: [ready], reviews, runs: draft })
+  assert.equal(stage(stages, 'review').detail, 'Draft to check')
+  assert.equal(currentStageKey(stages), 'review')
+  assert.deepEqual([stage(stages, 'payslips').state, stage(stages, 'payslips').detail], ['locked', 'After approval'])
 })
 
 test('reopened attendance holds the draft, and corrected attendance asks for a recalculation', () => {
@@ -65,16 +63,16 @@ test('reopened attendance holds the draft, and corrected attendance asks for a r
   const reopened = payRunStages({ ...base, reviews: review('draft', 8) })
   assert.equal(currentStageKey(reopened), 'attendance')
   assert.equal(stage(reopened, 'attendance').detail, 'Ready to confirm')
-  assert.deepEqual([stage(reopened, 'review').state, stage(reopened, 'approve').state], ['locked', 'locked'])
+  assert.deepEqual([stage(reopened, 'review').state, stage(reopened, 'payslips').state], ['locked', 'locked'])
   // Confirmed again: the draft was calculated from the earlier version, so pay must be recalculated before approval.
   const corrected = payRunStages({ ...base, reviews: review('confirmed', 9) })
   assert.equal(stage(corrected, 'review').detail, 'Recalculate pay')
-  assert.equal(stage(corrected, 'approve').state, 'locked')
+  assert.equal(stage(corrected, 'payslips').state, 'locked')
   assert.equal(currentStageKey(corrected), 'review')
   // Recalculated from the current version: back to checking the draft.
   const current = payRunStages({ ...base, reviews: review('confirmed', 7) })
   assert.equal(stage(current, 'review').detail, 'Draft to check')
-  assert.equal(stage(current, 'approve').state, 'todo')
+  assert.equal(currentStageKey(current), 'review')
 })
 
 test('attendance recheck holds a draft but does not change approved historical pay', () => {
@@ -84,36 +82,36 @@ test('attendance recheck holds a draft but does not change approved historical p
   const stages = payRunStages({ period, shift: 'day', reviews, runs: [run], attendanceNeedsRecheck: true, finalizationEnabled: true })
   assert.equal(stage(stages, 'attendance').detail, 'Needs recheck')
   assert.equal(currentStageKey(stages), 'attendance')
-  assert.deepEqual([stage(stages, 'review').state, stage(stages, 'approve').state], ['locked', 'locked'])
+  assert.deepEqual([stage(stages, 'review').state, stage(stages, 'payslips').state], ['locked', 'locked'])
   const approved = payRunStages({ period, shift: 'day', reviews, runs: [{...run, status: 'approved'}], attendanceNeedsRecheck: true })
   assert.equal(stage(approved, 'attendance').state, 'done')
   assert.equal(stage(approved, 'review').detail, 'Approved')
 })
 
-test('one release approves, pays and closes; an interrupted release is finished from the same step', () => {
-  const run = status => [{ id: 9, status, has_payment: status !== 'approved', period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { payrollScope: 'day', isTest: true } }]
-  const approved = payRunStages({ period, shift: 'day', practice: true, profiles: [ready], runs: [{ ...run('approved')[0], has_payment: false }] })
-  assert.equal(stage(approved, 'approve').detail, 'Finish releasing')
-  assert.equal(currentStageKey(approved), 'approve')
-  const finished = payRunStages({ period, shift: 'day', practice: true, profiles: [ready], runs: run('locked') })
-  assert.equal(stage(finished, 'payslips').detail, 'Ready to send')
+test('approval leads to the payslips step, where HR releases them; practice runs are finished there', () => {
+  const run = status => [{ id: 9, status, has_payment: status === 'locked', period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { payrollScope: 'day' } }]
+  const approved = payRunStages({ period, shift: 'day', runs: run('approved') })
+  assert.equal(stage(approved, 'review').detail, 'Approved')
+  assert.deepEqual([stage(approved, 'payslips').state, stage(approved, 'payslips').detail], ['todo', 'Ready to release'])
+  assert.equal(currentStageKey(approved), 'payslips')
+  const released = payRunStages({ period, shift: 'day', runs: run('locked') })
+  assert.equal(stage(released, 'payslips').detail, 'Released')
+  assert.deepEqual(runSummary(released), { label: 'Payslips released', tone: 'success' })
+  const practice = r => r.map(item => ({ ...item, rule_snapshot: { payrollScope: 'day', isTest: true } }))
+  assert.equal(stage(payRunStages({ period, shift: 'day', practice: true, runs: practice(run('approved')) }), 'payslips').detail, 'Ready to finish')
+  const finished = payRunStages({ period, shift: 'day', practice: true, runs: practice(run('locked')) })
+  assert.equal(stage(finished, 'payslips').detail, 'Finished')
   assert.deepEqual(runSummary(finished), { label: 'Practice finished', tone: 'success' })
-  const closed = payRunStages({ period, shift: 'day', profiles: [ready], runs: [{ ...run('locked')[0], rule_snapshot: { payrollScope: 'day' } }], finalizationEnabled: true })
-  assert.equal(runSummary(closed).label, 'Payslips released')
-  assert.equal(stage(closed, 'approve').detail, 'Released')
-  assert.equal(stage(closed, 'payslips').detail, 'In My payslips')
-  const toRelease = payRunStages({ period, shift: 'day', reviews: [{ id: 4, payroll_scope: 'day', review_state: 'confirmed', period_start: '2026-09-11', period_end: '2026-09-25' }], runs: [{ ...run('draft')[0], rule_snapshot: { payrollScope: 'day' } }], finalizationEnabled: true })
-  assert.equal(stage(toRelease, 'approve').detail, 'Ready to release')
 })
 
 test('future stages stay unavailable, while a saved stale draft can be inspected', () => {
   const blank=payRunStages({period,shift:'day'})
-  assert.deepEqual(blank.map(item=>item.available),[true,false,false,false])
+  assert.deepEqual(blank.map(item=>item.available),[true,false,false])
   const draft={id:9,status:'draft',period_start:period.start,period_end:period.end,rule_snapshot:{payrollScope:'day'}}
   const stale=payRunStages({period,shift:'day',runs:[draft],attendanceNeedsRecheck:true,finalizationEnabled:true})
-  assert.deepEqual(stale.map(item=>item.available),[true,true,false,false])
+  assert.deepEqual(stale.map(item=>item.available),[true,true,false])
   const closed=payRunStages({period,shift:'day',runs:[{...draft,status:'locked',has_payment:true}]})
-  assert.deepEqual(closed.map(item=>item.available),[true,true,true,true])
+  assert.deepEqual(closed.map(item=>item.available),[true,true,true])
 })
 
 test('runs are matched by shift, practice flag and exact work dates', () => {
@@ -162,9 +160,9 @@ test('payday progress waits for the cutoff, then follows the least advanced shif
   const oct15 = periodForPayday('2026-10-15')
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-07' }), 0)
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-10' }), 0)
-  const stages = (attendance, approve, payslips, review = 'todo') => [{ key: 'attendance', state: attendance }, { key: 'review', state: review }, { key: 'approve', state: approve }, { key: 'payslips', state: payslips }]
+  const stages = (attendance, review, payslips) => [{ key: 'attendance', state: attendance }, { key: 'review', state: review }, { key: 'payslips', state: payslips }]
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-11', stagesByShift: [stages('todo', 'locked', 'locked')] }), 1)
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-13', stagesByShift: [stages('done', 'todo', 'locked'), stages('done', 'done', 'done')] }), 2)
-  assert.equal(paydayProgress({ period: oct15, today: '2026-10-14', stagesByShift: [stages('done', 'todo', 'locked', 'done')] }), 3)
+  assert.equal(paydayProgress({ period: oct15, today: '2026-10-14', stagesByShift: [stages('done', 'done', 'todo')] }), 3)
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-15', stagesByShift: [stages('done', 'done', 'done')] }), 4)
 })

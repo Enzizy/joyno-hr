@@ -1,11 +1,11 @@
 import { standardPeriod, matchingAttendanceReviews } from './payrollPeriods.js'
 import { reviewScope, runScope } from './payrollScope.js'
 
+// A pay run: confirm attendance, check and approve pay, then choose how payslips go out.
 // Employee setup is shown on the Payroll page, so a pay run starts at Attendance.
 export const PAY_RUN_STAGES = Object.freeze([
   { key: 'attendance', label: 'Attendance' },
-  { key: 'review', label: 'Review pay' },
-  { key: 'approve', label: 'Approve & release' },
+  { key: 'review', label: 'Review & approve' },
   { key: 'payslips', label: 'Payslips' },
 ])
 
@@ -103,13 +103,12 @@ export function currentPayRun({ period, shift, practice = false, reviews = [], r
 }
 
 // Each stage is done, todo (the next thing to act on) or locked (waiting on an earlier stage or a setting).
-export function payRunStages({ period, shift, practice = false, reviews = [], runs = [], attendanceNeedsRecheck = false, finalizationEnabled = false }) {
+export function payRunStages({ period, shift, practice = false, reviews = [], runs = [], attendanceNeedsRecheck = false }) {
   const { confirmed, unfinished } = attendanceForPeriod(reviews, period, shift, practice)
   const run = currentPayRun({ period, shift, practice, reviews, runs })
   const status = String(run?.status || '')
   const finalized = ['approved', 'locked'].includes(status)
   const attendanceDone = (Boolean(confirmed) && !newerUpload(confirmed, unfinished) && !attendanceNeedsRecheck) || finalized
-  const canFinalize = practice || finalizationEnabled
   // Attendance was reopened, corrected and confirmed again after this draft was calculated.
   const outdated = status === 'draft' && Boolean(confirmed) && String(run.attendance_batch_id) === String(confirmed.id) &&
     run.rule_snapshot?.attendanceReviewVersion != null && Number(run.rule_snapshot.attendanceReviewVersion) !== Number(confirmed.review_version)
@@ -129,22 +128,14 @@ export function payRunStages({ period, shift, practice = false, reviews = [], ru
   else if (attendanceDone) review = { state: 'todo', detail: 'Calculate pay' }
   else review = { state: 'locked', detail: 'After attendance' }
 
-  let approve
-  // One release approves, records the payment and closes; an approved run is a release that did not finish.
-  if (status === 'locked') approve = { state: 'done', detail: practice ? 'Finished' : 'Released' }
-  else if (status === 'approved') approve = { state: 'todo', detail: 'Finish releasing' }
-  else if (status === 'draft' && (!attendanceDone || outdated)) approve = { state: 'locked', detail: 'After review' }
-  else if (status === 'draft' && !canFinalize) approve = { state: 'locked', detail: 'Turned off for now' }
-  else if (status === 'draft') approve = { state: 'todo', detail: 'Ready to release' }
-  else approve = { state: 'locked', detail: 'After review' }
-
+  // Approval only freezes the amounts; releasing to My payslips (and emailing) is chosen on the Payslips step.
   let payslips
-  // Practice runs release test payslips to the people chosen for them.
-  if (status === 'locked') payslips = { state: 'done', detail: practice ? 'Ready to send' : 'In My payslips' }
-  else payslips = { state: 'locked', detail: practice ? 'After finishing' : 'After release' }
+  if (status === 'locked') payslips = { state: 'done', detail: practice ? 'Finished' : 'Released' }
+  else if (status === 'approved') payslips = { state: 'todo', detail: practice ? 'Ready to finish' : 'Ready to release' }
+  else payslips = { state: 'locked', detail: 'After approval' }
 
   return PAY_RUN_STAGES.map((stage, index) => {
-    const status = [attendance, review, approve, payslips][index]
+    const status = [attendance, review, payslips][index]
     return { ...stage, ...status, available: stage.key === 'attendance' ||
       (stage.key === 'review' && Boolean(run)) || status.state !== 'locked' }
   })
@@ -157,7 +148,7 @@ export function currentStageKey(stages) {
 
 export function runSummary(stages) {
   if (stages.every(stage => stage.state === 'done')) {
-    const finished = stages.find(stage => stage.key === 'approve')?.detail
+    const finished = stages.find(stage => stage.key === 'payslips')?.detail
     return { label: finished === 'Finished' ? 'Practice finished' : 'Payslips released', tone: 'success' }
   }
   const attendance = stages.find(stage => stage.key === 'attendance')
@@ -177,16 +168,15 @@ export function paydayReadiness(period, profilesByShift) {
   return result
 }
 
-export const PAYDAY_STEPS = Object.freeze(['Attendance closes', 'Upload & check', 'Review pay', 'Release payroll'])
+export const PAYDAY_STEPS = Object.freeze(['Attendance closes', 'Upload & check', 'Review & approve', 'Release payslips'])
 // Where a payday is in PAYDAY_STEPS (4 = done): the least advanced shift that has people to pay.
 export function paydayProgress({ period, today, stagesByShift = [] }) {
   if (today <= period.end) return 0
   const progress = stagesByShift.map(stages => {
     const state = key => stages.find(stage => stage.key === key)?.state
     if (state('attendance') !== 'done') return 1
-    if (state('approve') === 'done') return 4
-    // An approved run whose release did not finish waits on the release step; otherwise pay is being reviewed.
-    return state('review') === 'done' ? 3 : 2
+    if (state('review') !== 'done') return 2
+    return state('payslips') === 'done' ? 4 : 3
   })
   return progress.length ? Math.min(...progress) : 1
 }
