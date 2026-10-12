@@ -75,7 +75,7 @@ const readiness = computed(() => paydayReadiness(next.value, profiles.value))
 const shiftsWithPeople = computed(() => SHIFTS.filter(shift => readiness.value[shift]?.total))
 const progress = computed(() => paydayProgress({ period: next.value, today,
   stagesByShift: shiftsWithPeople.value.filter(shift => readiness.value[shift].ready).map(shift => stagesFor(next.value.payday, shift)) }))
-const stepDetail = (index) => [`${shortDate(next.value.end)}`, `from ${shortDate(addDay(next.value.end))}`, 'review, approve, mark as paid', shortDate(next.value.payday)][index]
+const stepDetail = (index) => [`${shortDate(next.value.end)}`, `from ${shortDate(addDay(next.value.end))}`, 'check each employee', shortDate(next.value.payday)][index]
 
 // One row per shift: how many people are ready, and the one thing to do there.
 function shiftAction(shift) {

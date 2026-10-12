@@ -152,6 +152,8 @@ function save() {
 </script>
 
 <template>
+  <!-- On the body, so no transformed page container can offset the full-screen overlay. -->
+  <Teleport to="body">
   <div class="fixed inset-0 z-50 flex justify-end bg-black/60" role="dialog" aria-modal="true" :aria-label="`Adjust pay for ${name}`" @click.self="emit('close')">
     <div class="flex h-full w-full max-w-xl flex-col border-l border-gray-700 bg-gray-900 shadow-2xl">
       <header class="flex items-start justify-between gap-3 border-b border-gray-800 px-5 py-4">
@@ -226,4 +228,5 @@ function save() {
       </footer>
     </div>
   </div>
+  </Teleport>
 </template>

@@ -732,7 +732,7 @@ function resolvePayIssue(issue) {
     else {emit('navigate','review');beginAdjust(issue.line)}
   }
 }
-// Approve & pay: what leaves the company, what to check first, and who gets what.
+// Approve & release: what leaves the company, what to check first, and who gets what.
 const paySummary = computed(() => {
   const totals = remittanceTotals.value
   const agencyLoans = { sss: 0, pagibig: 0, bir: 0 }

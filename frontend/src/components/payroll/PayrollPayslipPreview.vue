@@ -27,6 +27,7 @@ const isTest = props.run.rule_snapshot?.isTest || props.line.is_test
 </script>
 
 <template>
+  <Teleport to="body">
   <div class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/75 p-4 sm:p-8" role="dialog" aria-modal="true" aria-label="Payslip" @click.self="$emit('close')">
     <div class="flex h-[calc(100vh-4rem)] w-full flex-col" :class="managed ? 'max-w-4xl' : 'max-w-[560px]'">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2 text-white">
@@ -46,4 +47,5 @@ const isTest = props.run.rule_snapshot?.isTest || props.line.is_test
       </div>
     </div>
   </div>
+  </Teleport>
 </template>
