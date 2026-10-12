@@ -7,7 +7,7 @@ import { clockTime } from '@/utils/clockTime'
 import { computed, nextTick, onMounted, onActivated, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { standardPeriod, formatWorkDate, formatWorkRange, coversWorkDates, matchingAttendanceReviews } from '@/utils/payrollPeriods'
-import { listAttendanceReviews, getAttendanceReview, getPayrollPaymentExport, verifyPayrollPayBasis, getPayrollRegisterExport } from '@/services/api'
+import { listAttendanceReviews, getAttendanceReview, undoPayrollApproval, getPayrollPaymentExport, verifyPayrollPayBasis, getPayrollRegisterExport } from '@/services/api'
 import AppModal from '@/components/ui/AppModal.vue'
 import { useAuthStore } from '@/stores/authStore'
 import { useToastStore } from '@/stores/toastStore'
@@ -388,6 +388,19 @@ async function approvePay() {
     emit('changed')
     if (props.embedded) emit('navigate', 'payslips', { refresh: true })
   } catch (error) { toast.error(error.message || 'Unable to approve pay.') }
+  finally { busy.value = false }
+}
+// Before payslips are released or emailed, an approval can be undone to change pay or attendance.
+async function undoApproval() {
+  busy.value = true
+  try {
+    const result = await undoPayrollApproval(activeRun.value.id, 'Pay reopened for changes')
+    const run = result.run || result
+    activeRun.value = run; preview.value = run
+    toast.success('Approval undone. Make your changes, then approve again.')
+    await refreshRuns()
+    emit('changed')
+  } catch (error) { toast.error(error.message || 'Unable to undo approval.') }
   finally { busy.value = false }
 }
 // The Payslips step reports a release or sent emails; keep the run and the step statuses current.
@@ -1053,6 +1066,7 @@ async function emailAllPayslips() {
                 <AppButton :disabled="busy || loadingRun || attendanceLoading || draftReadOnly || payIssues.length > 0 || !canFinalizeRun" @click="approvalOpen = true">{{ isPracticeRun ? 'Approve practice pay' : 'Approve pay' }}</AppButton>
               </PayRunNextStep>
               <PayRunNextStep v-else tone="done" :title="activeRun.status === 'locked' ? (isPracticeRun ? '✓ Practice finished' : '✓ Approved and released') : '✓ Approved'" :detail="`${money(totalNet)} net for ${currentLines.length} employees · amounts are locked`">
+                <AppButton v-if="activeRun.status === 'approved'" variant="outline" :loading="busy" title="Possible until payslips are released or emailed" @click="undoApproval">Undo approval</AppButton>
                 <AppButton @click="emit('navigate', 'payslips')">Go to payslips →</AppButton>
               </PayRunNextStep>
             </template>

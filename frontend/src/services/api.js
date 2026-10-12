@@ -159,6 +159,11 @@ export async function approvePayrollRun(id) {
   return request(`/api/payroll/runs/${encodeURIComponent(id)}/approve`, { method: 'POST' })
 }
 
+// Undo an approval to correct attendance or pay; refused once payment is recorded or a payslip is emailed.
+export async function undoPayrollApproval(id, reason) {
+  return request(`/api/payroll/runs/${encodeURIComponent(id)}/undo-approval`, { method: 'POST', body: JSON.stringify({ reason }) })
+}
+
 export async function lockPayrollRun(id) {
   return request(`/api/payroll/runs/${encodeURIComponent(id)}/lock`, { method: 'POST' })
 }

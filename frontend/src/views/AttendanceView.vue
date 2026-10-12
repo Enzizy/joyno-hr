@@ -6,7 +6,7 @@ import {standardPeriod,formatWorkRange,coversWorkDates,attendanceSelection} from
 import {clockTime,twelveHourText} from '@/utils/clockTime'
 import {useRoute,useRouter} from 'vue-router'
 import {useToastStore} from '@/stores/toastStore'
-import {attendanceUpload,listAttendanceReviews,getAttendanceReview,attendanceReviewAction,createHrCalendarEntry,getLeaveTypes,getConfirmedAttendanceExport} from '@/services/api'
+import {attendanceUpload,listAttendanceReviews,getAttendanceReview,attendanceReviewAction,createHrCalendarEntry,getLeaveTypes,getConfirmedAttendanceExport,undoPayrollApproval} from '@/services/api'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -17,7 +17,9 @@ import {profileReady} from '@/utils/payRun'
 import {getPayrollProfiles} from '@/services/backendService'
 
 // Embedded inside a pay run: the run owns shift, practice mode and work dates, so their pickers are hidden.
-const props=defineProps({embedded:Boolean,payCalculated:Boolean,payFinal:Boolean,payOutdated:Boolean,contextRevision:Number})
+const props=defineProps({embedded:Boolean,payCalculated:Boolean,payReleased:Boolean,approvedRunId:[Number,String],payOutdated:Boolean,contextRevision:Number})
+// Confirmed attendance can still be edited until payslips are released.
+const editableAfterConfirm=computed(()=>props.embedded&&!props.payReleased)
 const emit=defineEmits(['changed','continue','attendance-recheck'])
 const route=useRoute(),router=useRouter(),toast=useToastStore()
 const shift=ref(payrollShift(route.query.shift))
@@ -197,10 +199,14 @@ const decisionOptions=computed(()=>{
   })
   return (d.status==='exception'?['actual_times','verified_work','not_work']:['acknowledge','actual_times','not_work']).map(value=>({value,...all[value]}))
  }
- const keys=d.status==='exception'?(noScans?['absent','verified_work','actual_times']:['actual_times','verified_work'])
+ // Choices follow the day's original problem (its issue codes), so a decided day can be changed to any of them.
+ const wasException=d.status==='exception'||d.issue_codes?.some(c=>['no_record','missing_punch'].includes(c))
+ const hadNoScans=d.issue_codes?.includes('no_record')||(d.status==='exception'&&noScans)
+ const keys=wasException?(hadNoScans?['absent','verified_work','actual_times']:['actual_times','verified_work'])
   :d.issue_codes?.includes('leave_reconciliation')?['actual_times']:(missed||excused)&&!d.leave_request_id?['acknowledge','excused','actual_times']:['acknowledge','actual_times']
  // Scans on a workday without leave can still be a visit, not work.
- if(!noScans&&!d.leave_request_id&&!d.issue_codes?.includes('leave_reconciliation'))keys.push('not_work')
+ const hadScans=!hadNoScans&&(!noScans||wasException||d.review_decision?.action==='not_work')
+ if(hadScans&&!d.leave_request_id&&!d.issue_codes?.includes('leave_reconciliation'))keys.push('not_work')
  if(d.leaves?.some(l=>l.status==='approved'))keys.push('link_leave')
  return keys.map(value=>({value,...all[value]}))
 })
@@ -208,15 +214,28 @@ const recordedSummary=computed(()=>{const d=reviewing.value;if(!d)return '';if(!
 const allowsApprovedWork=computed(()=>['acknowledge','excused','actual_times','verified_work'].includes(decision.value.action))
 function review(day){reviewing.value=day;const noScans=!day.first_scan_at&&!day.last_scan_at;const restDay=day.issue_codes?.includes('rest_day_work');decision.value={action:restDay?(day.review_decision?.action||(day.status==='exception'?'':'acknowledge')):day.review_decision?.action==='excused'?'excused':day.status==='exception'?(noScans?'':'actual_times'):day.issue_codes?.includes('leave_reconciliation')?(day.leaves?.some(l=>l.status==='approved')?'link_leave':'actual_times'):'acknowledge',reason:'',timeIn:day.first_scan_at?stamp(day.first_scan_at):'',timeOut:day.last_scan_at?stamp(day.last_scan_at):'',leaveId:day.leave_request_id,dayType:restDay?'rest_day':day.review_decision?.dayType||'regular',overtimeHours:Number(day.review_decision?.overtimeHours||0)}}
 const approvedWorkLabel=d=>{const ot=Number(d.review_decision?.overtimeHours||0),type=d.review_decision?.dayType,special=type==='special_holiday'||type==='rest_day';return special||ot?[type==='rest_day'?'Rest day work (130%)':special?'Special holiday / rest day':null,ot?`OT ${ot} h`:null].filter(Boolean).join(' · '):''}
+// Editing confirmed attendance: undo an approval that has not gone out, reopen, save the day, then confirm
+// again when nothing else needs a decision. Pay is then recalculated on the next step.
+async function openForEdit(){
+ let undone=false
+ if(props.approvedRunId){await undoPayrollApproval(props.approvedRunId,'Attendance corrected after approval');undone=true}
+ batch.value=await attendanceReviewAction(batch.value.id,'reopen',{version:batch.value.review_version})
+ return undone
+}
 async function resolve(){await run(async()=>{
+ const wasConfirmed=batch.value.review_state==='confirmed'
+ const undone=wasConfirmed?await openForEdit():false
  batch.value=await attendanceReviewAction(batch.value.id,'review',{version:batch.value.review_version,employeeId:reviewing.value.employee_id,date:reviewing.value.work_date,decision:decision.value})
- reviewing.value=null;await reloadChanged();toast.success('HR verification saved')
+ reviewing.value=null
+ if(!wasConfirmed){await reloadChanged();toast.success('HR verification saved');return}
+ const ready=!batch.value.scopeNeedsRefresh&&!batch.value.daily.some(d=>d.review_state==='pending'||d.status==='exception')
+ if(ready)batch.value=await attendanceReviewAction(batch.value.id,'confirm',{version:batch.value.review_version,coverageReason:'Confirmed again after an HR correction'})
+ await reloadChanged()
+ toast.success(!ready?'Saved. Confirm attendance again when you’re done.':undone?'Saved. Approval was undone: recalculate and approve pay again.':'Saved. Recalculate pay to use the change.')
 })}
 async function confirm(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'confirm',{version:batch.value.review_version,coverageReason:coverageReason.value});await reloadChanged();if(props.embedded)emit('continue',{calculate:true});else toast.success('Attendance confirmed for payroll')})}
-// Confirmed attendance can be reopened to fix a forgotten holiday or overtime until pay is approved; every decision is kept.
-async function reopen(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'reopen',{version:batch.value.review_version});await reloadChanged();toast.success('Attendance is open for corrections. Confirm it again when you’re done.')})}
 async function recheck(){await run(async()=>{
- if(batch.value.review_state==='confirmed')batch.value=await attendanceReviewAction(batch.value.id,'reopen',{version:batch.value.review_version})
+ if(batch.value.review_state==='confirmed')await openForEdit()
  batch.value=await attendanceReviewAction(batch.value.id,'refresh',{version:batch.value.review_version})
  reviewFilter.value=batch.value.daily.some(d=>d.review_state==='pending')?'needs':'all'
  await reloadChanged()
@@ -281,7 +300,7 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
          <span v-else class="text-gray-500">Clear</span>
          <p v-if="approvedWorkLabel(d)" class="mt-1 text-xs font-semibold text-sky-300">{{approvedWorkLabel(d)}}</p>
         </td>
-        <td class="px-4 py-2 text-right"><AppButton v-if="batch.review_state!=='confirmed' && !batch.needs_reimport" size="sm" :variant="d.review_state==='pending'?'primary':'secondary'" :disabled="busy" @click="review(d)">{{d.review_state==='pending'?'Verify':'Edit'}}</AppButton></td>
+        <td class="px-4 py-2 text-right"><AppButton v-if="!batch.needs_reimport && (batch.review_state!=='confirmed' || editableAfterConfirm)" size="sm" :variant="d.review_state==='pending'?'primary':'secondary'" :disabled="busy" @click="review(d)">{{d.review_state==='pending'?'Verify':'Edit'}}</AppButton></td>
        </tr>
       </tbody></table>
       <p v-else class="px-4 py-3 pl-10 text-sm text-gray-500">Every day matches the schedule.{{isConfirmed?'':' Turn on “Show days without issues” to add overtime.'}}</p>
@@ -294,11 +313,11 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
    <div class="mt-4 space-y-2"><button v-for="b in visibleBatches" :key="b.id" class="flex w-full flex-wrap items-center justify-between gap-3 rounded-lg border p-3 text-left text-sm" :class="batch?.id===b.id?'border-primary-500':'border-gray-800 hover:border-gray-600'" @click="open(b.id)"><span><span class="block font-medium text-gray-200">{{formatWorkRange(b.period_start,b.period_end)}}</span><span class="mt-1 block text-xs text-gray-500">{{b.file_name||`Import ${b.id}`}}</span></span><span class="text-xs" :class="b.review_state==='confirmed'?'text-emerald-300':'text-amber-300'">{{b.needs_reimport?'Original CSV needed':b.review_state==='confirmed'?'Confirmed':`${b.pending_days} days to verify`}} →</span></button><p v-if="!visibleBatches.length" class="text-sm text-gray-500">No attendance imported yet.</p></div>
   </details>
   <template v-if="batch && !batch.needs_reimport && !showImport">
-   <PayRunNextStep v-if="isConfirmed && batch.scopeNeedsRefresh && !payFinal" tone="waiting" title="Attendance needs a recheck" detail="Employee setup or leave changed. Reload the review and confirm again; your decisions are kept.">
+   <PayRunNextStep v-if="isConfirmed && batch.scopeNeedsRefresh && !payReleased" tone="waiting" title="Attendance needs a recheck" detail="Employee setup or leave changed. Reload the review and confirm again; your decisions are kept.">
     <AppButton variant="secondary" :loading="busy" @click="recheck">Recheck attendance</AppButton>
    </PayRunNextStep>
-   <PayRunNextStep v-else-if="isConfirmed" tone="done" title="✓ Attendance confirmed" :detail="totalsText">
-    <AppButton v-if="embedded && !payFinal" variant="outline" :loading="busy" @click="reopen">Edit attendance</AppButton><AppButton v-if="embedded && payCalculated" @click="emit('continue',{calculate:false})">Review pay →</AppButton><AppButton v-else-if="embedded" @click="emit('continue',{calculate:true})">{{payOutdated?'Recalculate pay':'Calculate pay'}}</AppButton><AppButton v-else @click="router.push(payrollTarget)">Continue to payroll →</AppButton>
+   <PayRunNextStep v-else-if="isConfirmed" tone="done" title="✓ Attendance confirmed" :detail="payReleased ? `${totalsText} · Payslips are released; corrections go to the next payroll.` : `${totalsText} · Use Edit on any day to change it.`">
+    <AppButton v-if="embedded && payCalculated" @click="emit('continue',{calculate:false})">Review pay →</AppButton><AppButton v-else-if="embedded" @click="emit('continue',{calculate:true})">{{payOutdated?'Recalculate pay':'Calculate pay'}}</AppButton><AppButton v-else @click="router.push(payrollTarget)">Continue to payroll →</AppButton>
    </PayRunNextStep>
    <PayRunNextStep v-else-if="blocking.length" tone="waiting" title="Fix the problems listed above before confirming" detail="Map the missing Attendance IDs or correct the file, then reload employee setup.">
     <AppButton variant="secondary" :loading="busy" @click="refresh">Reload employee setup</AppButton>

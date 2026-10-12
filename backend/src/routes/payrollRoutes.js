@@ -599,6 +599,18 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     }
   })
 
+  router.post('/api/payroll/runs/:id/undo-approval', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
+    const id = positiveId(req.params.id)
+    if (!id) return res.status(400).json({ message: 'Invalid payroll run ID' })
+    try {
+      const run = await payrollService.undoApproval(id, req.body?.reason, req.user)
+      if (!run) return res.status(404).json({ message: 'Payroll run not found' })
+      return res.json(run)
+    } catch (error) {
+      return handlePayrollError(error, res)
+    }
+  })
+
   router.post('/api/payroll/runs/:id/lock', authRequired, requireRole(MANAGEMENT_ROLES), async (req, res) => {
     const id = positiveId(req.params.id)
     if (!id) return res.status(400).json({ message: 'Invalid payroll run ID' })

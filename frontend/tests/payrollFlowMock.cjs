@@ -57,6 +57,7 @@ const server=http.createServer(async(req,res)=>{
  }
  if(path==='/api/payroll/runs/1')return json(res,run||{},run?200:404)
  if(path==='/api/payroll/runs/1/approve'){if(!run||batch.scopeNeedsRefresh)return json(res,{message:'Fixture not ready'},409);run.status='approved';run.approved_at=new Date().toISOString();run.approved_by=1;return json(res,run)}
+ if(path==='/api/payroll/runs/1/undo-approval'){if(!run||run.status!=='approved'||run.payment||emails.size)return json(res,{message:'Approval cannot be undone after payment or email'},409);run.status='draft';run.approved_at=null;run.approved_by=null;return json(res,run)}
  if(path==='/api/payroll/runs/1/payment'){if(run.status!=='approved')return json(res,{message:'Approve first'},409);run.payment={reference:body.reference||'UI-FIXTURE',paid_on:body.paidOn};return json(res,run)}
  if(path==='/api/payroll/runs/1/lock'){if(!run.payment)return json(res,{message:'Record payment first'},409);run.status='locked';run.locked_at=new Date().toISOString();return json(res,run)}
  const change=path.match(/^\/api\/payroll\/runs\/1\/lines\/(\d+)\/(charges|earnings|first-cutoff-pay)$/)

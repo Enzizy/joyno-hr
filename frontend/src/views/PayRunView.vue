@@ -9,7 +9,7 @@ import { getPayrollRuns } from '@/services/backendService'
 import { payrollFinalizationEnabled } from '@/config/features'
 import { payrollShift, shiftLabel } from '@/utils/payrollScope'
 import { formatWorkDate, formatWorkRange } from '@/utils/payrollPeriods'
-import { PAY_RUN_STAGES, attendanceForPeriod, currentStageKey, payRunStages, periodForPayday } from '@/utils/payRun'
+import { PAY_RUN_STAGES, attendanceForPeriod, currentPayRun, currentStageKey, payRunStages, periodForPayday } from '@/utils/payRun'
 import { useToastStore } from '@/stores/toastStore'
 
 // One pay run = one standard payday for one shift. Payday, shift and practice mode come
@@ -38,8 +38,10 @@ const paydayTitle = computed(() => period.value
 const otherShift = computed(() => shift.value === 'day' ? 'night' : 'day')
 const reviewStage = computed(() => stages.value.find(stage => stage.key === 'review'))
 const payCalculated = computed(() => reviewStage.value?.state === 'done' || reviewStage.value?.detail === 'Draft to check')
-// Approved pay is final: attendance can no longer be reopened for corrections.
-const payFinal = computed(() => reviewStage.value?.state === 'done')
+// Attendance stays editable until payslips are released; editing undoes an approval that has not gone out yet.
+const currentRun = computed(() => period.value ? currentPayRun({ period: period.value, shift: shift.value, practice: practice.value, reviews: reviews.value, runs: runs.value }) : null)
+const payReleased = computed(() => currentRun.value?.status === 'locked')
+const approvedRunId = computed(() => currentRun.value?.status === 'approved' ? currentRun.value.id : null)
 const payOutdated = computed(() => reviewStage.value?.detail === 'Recalculate pay')
 
 const listFrom = (data, ...keys) => Array.isArray(data) ? data : keys.map(key => data?.[key]).find(Array.isArray) || []
@@ -55,7 +57,7 @@ async function load() {
     runs.value = listFrom(runList, 'items', 'runs')
     const selected = attendanceForPeriod(reviews.value, period.value, shift.value, practice.value)
     const batch = [selected.confirmed,selected.unfinished].filter(Boolean).sort((a,b)=>Number(b.id)-Number(a.id))[0]
-    if (batch && !payFinal.value) {
+    if (batch && !payReleased.value) {
       const detail = await getAttendanceReview(batch.id)
       if (requested !== contextKey.value || request!==loadRequest) return
       attendanceNeedsRecheck.value = Boolean(detail.scopeNeedsRefresh)
@@ -152,7 +154,7 @@ const stageDetailClass = stage => stage.state === 'done' ? 'text-emerald-300' : 
       <div v-else-if="!ready" class="rounded-xl border border-gray-800 bg-gray-900 p-6 text-sm text-gray-400" role="status">Checking pay run…</div>
       <template v-else>
         <KeepAlive :key="contextKey">
-          <AttendanceView v-if="step === 'attendance'" :key="contextKey+'attendance'" embedded :context-revision="revision" :pay-calculated="payCalculated" :pay-final="payFinal" :pay-outdated="payOutdated" @attendance-recheck="attendanceNeedsRecheck = $event" @changed="load" @continue="options => goto('review', options)" />
+          <AttendanceView v-if="step === 'attendance'" :key="contextKey+'attendance'" embedded :context-revision="revision" :pay-calculated="payCalculated" :pay-released="payReleased" :approved-run-id="approvedRunId" :pay-outdated="payOutdated" @attendance-recheck="attendanceNeedsRecheck = $event" @changed="load" @continue="options => goto('review', options)" />
           <PayrollView v-else :key="contextKey+'pay'" embedded :context-revision="revision" :stage="step" @attendance-recheck="attendanceNeedsRecheck = $event" @changed="load" @navigate="goto" />
         </KeepAlive>
       </template>

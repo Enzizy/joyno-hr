@@ -1221,6 +1221,26 @@ function createPayrollService({ db }) {
     })
   }
 
+  // Undo an approval so attendance can be corrected. Allowed only before anything reaches employees or the
+  // bank: no payment recorded and no payslip emailed. Released payroll stays final.
+  async function undoApproval(runId, reason, actor = {}) {
+    return withTransaction(db, async (tx) => {
+      const run = (await tx.query('SELECT * FROM payroll_runs WHERE id = $1 FOR UPDATE', [Number(runId)])).rows[0]
+      if (!run) return null
+      if (run.status === 'draft') return getRunWithLines(tx, run.id)
+      if (run.status !== 'approved') throw serviceError('These payslips are already released. Add corrections to the next payroll', 409)
+      if ((await tx.query('SELECT 1 FROM payroll_payments WHERE payroll_run_id = $1', [run.id])).rows.length) {
+        throw serviceError('Payment is already recorded for this payroll. Add corrections to the next payroll', 409)
+      }
+      if ((await tx.query("SELECT 1 FROM payroll_run_events WHERE payroll_run_id = $1 AND action = 'payslip_emailed' LIMIT 1", [run.id])).rows.length) {
+        throw serviceError('Payslips were already emailed for this payroll. Add corrections to the next payroll', 409)
+      }
+      await tx.query("UPDATE payroll_runs SET status = 'draft', approved_by = NULL, approved_at = NULL WHERE id = $1", [run.id])
+      await appendRunEvent(tx, run.id, 'approval_undone', actor, { reason: String(reason || 'Attendance corrected after approval').trim().slice(0, 300) })
+      return getRunWithLines(tx, run.id)
+    })
+  }
+
   async function lockRun(runId, actor = {}) {
     return withTransaction(db, async (tx) => {
       const runResult = await tx.query('SELECT * FROM payroll_runs WHERE id = $1 FOR UPDATE', [Number(runId)])
@@ -1315,6 +1335,7 @@ function createPayrollService({ db }) {
     overrideFirstCutoffPay,
     previewRun,
     approveRun,
+    undoApproval,
     lockRun,
     listMyLines,
   }
