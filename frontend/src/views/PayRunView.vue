@@ -33,10 +33,11 @@ const step = computed(() => stageKeys.includes(route.query.step) ? route.query.s
 const paydayTitle = computed(() => period.value
   ? `${new Intl.DateTimeFormat('en-PH', { month: 'long', day: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(`${period.value.payday}T12:00:00Z`))} payday` : '')
 const otherShift = computed(() => shift.value === 'day' ? 'night' : 'day')
-const payCalculated = computed(() => {
-  const review = stages.value.find(stage => stage.key === 'review')
-  return review?.state === 'done' || review?.detail === 'Draft to check'
-})
+const reviewStage = computed(() => stages.value.find(stage => stage.key === 'review'))
+const payCalculated = computed(() => reviewStage.value?.state === 'done' || reviewStage.value?.detail === 'Draft to check')
+// Approved pay is final: attendance can no longer be reopened for corrections.
+const payFinal = computed(() => reviewStage.value?.state === 'done')
+const payOutdated = computed(() => reviewStage.value?.detail === 'Recalculate pay')
 
 const listFrom = (data, ...keys) => Array.isArray(data) ? data : keys.map(key => data?.[key]).find(Array.isArray) || []
 
@@ -129,7 +130,7 @@ const stageDetailClass = stage => stage.state === 'done' ? 'text-emerald-300' : 
 
       <div v-if="!ready" class="rounded-xl border border-gray-800 bg-gray-900 p-6 text-sm text-gray-400" role="status">Loading pay run…</div>
       <template v-else>
-        <AttendanceView v-if="step === 'attendance'" :key="contextKey" embedded :pay-calculated="payCalculated" @changed="load" @continue="options => goto('review', options)" />
+        <AttendanceView v-if="step === 'attendance'" :key="contextKey" embedded :pay-calculated="payCalculated" :pay-final="payFinal" :pay-outdated="payOutdated" @changed="load" @continue="options => goto('review', options)" />
         <PayrollView v-else :key="contextKey" embedded :stage="step" @changed="load" @navigate="goto" />
       </template>
     </template>

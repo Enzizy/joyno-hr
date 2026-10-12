@@ -297,9 +297,14 @@ onMounted(async () => {
 watch(() => [workspaceInitialized.value, attendanceLoading.value, runAttendanceBatch.value, attendanceResult.value?.review_state], () => {
   if (!calculateRequested.value || !workspaceInitialized.value || attendanceLoading.value) return
   calculateRequested.value = false
-  if (activeRun.value || !runAttendanceBatch.value || attendanceResult.value?.review_state !== 'confirmed') return
+  if ((activeRun.value && !runOutdated.value) || !runAttendanceBatch.value || attendanceResult.value?.review_state !== 'confirmed') return
   createPreview()
 })
+
+// Attendance was corrected and confirmed again after this draft was calculated, so the draft needs recalculating.
+const runOutdated = computed(() => activeRun.value?.status === 'draft' && attendanceResult.value?.review_state === 'confirmed' &&
+  String(activeRun.value.attendance_batch_id) === String(attendanceResult.value.id) && activeRun.value.rule_snapshot?.attendanceReviewVersion != null &&
+  Number(activeRun.value.rule_snapshot.attendanceReviewVersion) !== Number(attendanceResult.value.review_version))
 
 // A pay run shows its own saved draft: the newest run for these work dates, shift and practice setting.
 async function openPeriodRun() {
@@ -325,10 +330,11 @@ async function chooseAttendance(id) {
     const result = await getAttendanceReview(id)
     if (request !== attendanceRequest) return
     if(Boolean(result?.isTest)!==practiceMode.value)throw Error('Select attendance for the current Practice payroll setting.')
-    if (reviewScope(result)!==shift.value || result?.review_state !== 'confirmed' || !coversWorkDates(result, cutoffStart.value, cutoffEnd.value)) throw Error('This attendance review does not cover the selected work dates. Choose the matching payroll cutoff.')
+    if (result?.review_state !== 'confirmed') throw Error('Attendance is open for corrections. Confirm it again in Attendance first.')
+    if (reviewScope(result)!==shift.value || !coversWorkDates(result, cutoffStart.value, cutoffEnd.value)) throw Error('This attendance review does not cover the selected work dates. Choose the matching payroll cutoff.')
     if(result.scopeNeedsRefresh){
       attendanceReviews.value=attendanceReviews.value.map(b=>String(b.id)===String(id)?{...b,scope_needs_refresh:true}:b)
-      throw Error('Employee setup or leave changed since attendance was confirmed. Upload and confirm a replacement review.')
+      throw Error('Employee setup or leave changed since attendance was confirmed. In Attendance, click Edit attendance, reload it and confirm again.')
     }
     attendanceResult.value = result
     runAttendanceBatch.value = id
@@ -1118,7 +1124,10 @@ async function emailAllPayslips() {
               </PayRunNextStep>
             </template>
             <template v-else-if="stage === 'review'">
-              <PayRunNextStep v-if="activeRun.status === 'draft'" :title="`Check the draft · ${money(totalNet)} net for ${currentLines.length} employees`" detail="Use Earnings or Charges to adjust anyone. Recalculate if attendance changed.">
+              <PayRunNextStep v-if="activeRun.status === 'draft' && runOutdated" tone="waiting" title="Attendance changed after this draft was calculated" detail="Recalculate to use the corrected attendance. Earnings and charges you added are kept.">
+                <AppButton :loading="busy" :disabled="payDateError" @click="createPreview">Recalculate pay</AppButton>
+              </PayRunNextStep>
+              <PayRunNextStep v-else-if="activeRun.status === 'draft'" :title="`Check the draft · ${money(totalNet)} net for ${currentLines.length} employees`" detail="Use Earnings or Charges to adjust anyone. Recalculate if attendance changed.">
                 <AppButton variant="secondary" :loading="busy" :disabled="!runAttendanceBatch || attendanceResult?.review_state !== 'confirmed' || payDateError" title="Rebuild this draft from confirmed attendance; saved earnings and charges are kept" @click="createPreview">Recalculate</AppButton>
                 <AppButton @click="emit('navigate', 'approve')">Continue to approval →</AppButton>
               </PayRunNextStep>

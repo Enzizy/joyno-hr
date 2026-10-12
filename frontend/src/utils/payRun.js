@@ -110,6 +110,9 @@ export function payRunStages({ period, shift, practice = false, reviews = [], ru
   const finalized = ['approved', 'locked'].includes(status)
   const attendanceDone = (Boolean(confirmed) && !newerUpload(confirmed, unfinished)) || finalized
   const canFinalize = practice || finalizationEnabled
+  // Attendance was reopened, corrected and confirmed again after this draft was calculated.
+  const outdated = status === 'draft' && Boolean(confirmed) && String(run.attendance_batch_id) === String(confirmed.id) &&
+    run.rule_snapshot?.attendanceReviewVersion != null && Number(run.rule_snapshot.attendanceReviewVersion) !== Number(confirmed.review_version)
 
   let attendance
   if (attendanceDone) attendance = { state: 'done', detail: 'Confirmed' }
@@ -119,6 +122,8 @@ export function payRunStages({ period, shift, practice = false, reviews = [], ru
 
   let review
   if (finalized) review = { state: 'done', detail: 'Approved' }
+  else if (status === 'draft' && !attendanceDone) review = { state: 'locked', detail: 'After attendance' }
+  else if (outdated) review = { state: 'todo', detail: 'Recalculate pay' }
   else if (status === 'draft') review = { state: 'todo', detail: 'Draft to check' }
   else if (attendanceDone) review = { state: 'todo', detail: 'Calculate pay' }
   else review = { state: 'locked', detail: 'After attendance' }
@@ -126,6 +131,7 @@ export function payRunStages({ period, shift, practice = false, reviews = [], ru
   let approve
   if (status === 'locked') approve = { state: 'done', detail: practice ? 'Finished' : 'Closed' }
   else if (status === 'approved') approve = { state: 'todo', detail: run.has_payment ? (practice ? 'Finish practice' : 'Close payroll') : 'Mark as paid' }
+  else if (status === 'draft' && (!attendanceDone || outdated)) approve = { state: 'locked', detail: 'After review' }
   else if (status === 'draft' && !canFinalize) approve = { state: 'locked', detail: 'Turned off for now' }
   else if (status === 'draft') approve = { state: 'todo', detail: 'Approve' }
   else approve = { state: 'locked', detail: 'After review' }

@@ -17,7 +17,7 @@ import {profileReady} from '@/utils/payRun'
 import {getPayrollProfiles} from '@/services/backendService'
 
 // Embedded inside a pay run: the run owns shift, practice mode and work dates, so their pickers are hidden.
-const props=defineProps({embedded:Boolean,payCalculated:Boolean})
+const props=defineProps({embedded:Boolean,payCalculated:Boolean,payFinal:Boolean,payOutdated:Boolean})
 const emit=defineEmits(['changed','continue'])
 const route=useRoute(),router=useRouter(),toast=useToastStore()
 const shift=ref(payrollShift(route.query.shift))
@@ -109,7 +109,7 @@ const employeeNames=computed(()=>new Map((batch.value?.daily||[]).map(d=>[Number
 function eventText(event){
  const date=event.work_date?dayLabel(String(event.work_date).slice(0,10)):''
  if(event.action==='day_reviewed')return `${employeeNames.value.get(Number(event.employee_id))||'Employee'} · ${date} — ${twelveHourText(event.reason)}`
- return {draft_saved:'Attendance file saved for review',refreshed:'Employee setup and leave reloaded',confirmed:'Attendance confirmed',official_leave_corrected:`Official leave cancelled — ${event.reason}`}[event.action]||event.reason||event.action
+ return {draft_saved:'Attendance file saved for review',refreshed:'Employee setup and leave reloaded',confirmed:'Attendance confirmed',reopened:'Reopened for corrections',official_leave_corrected:`Official leave cancelled — ${event.reason}`}[event.action]||event.reason||event.action
 }
 const toggled=ref(new Set())
 const isOpen=g=>Boolean(search.value.trim())||((g.pending>0)!==toggled.value.has(g.id))
@@ -187,6 +187,8 @@ async function resolve(){await run(async()=>{
  reviewing.value=null;await reloadChanged();toast.success('HR verification saved')
 })}
 async function confirm(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'confirm',{version:batch.value.review_version,coverageReason:coverageReason.value});await reloadChanged();toast.success('Attendance confirmed for payroll')})}
+// Confirmed attendance can be reopened to fix a forgotten holiday or overtime until pay is approved; every decision is kept.
+async function reopen(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'reopen',{version:batch.value.review_version});await reloadChanged();toast.success('Attendance is open for corrections. Confirm it again when you’re done.')})}
 async function exportDtr(){await run(async()=>{const url=URL.createObjectURL(await getConfirmedAttendanceExport(batch.value.id));const a=document.createElement('a');a.href=url;a.download=`${batch.value.isTest?'TEST-ONLY-':''}attendance-${reviewScope(batch.value)}-${batch.value.id}-confirmed.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)})}
 function recordLeave(day){reviewing.value=null;leaveEntry.value={entry_type:'leave',employee_id:day.employee_id,start_date:day.work_date,end_date:day.work_date,coverage_start:day.overnight?'02:00':'14:00',coverage_end:day.overnight?'06:00':'18:00'}}
 async function saveLeave(entry){await run(async()=>{await createHrCalendarEntry(entry);leaveEntry.value=null;batch.value=await attendanceReviewAction(batch.value.id,'refresh',{version:batch.value.review_version});await reloadChanged();toast.success('Official leave recorded; attendance refreshed')})}
@@ -257,7 +259,7 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
   </section>
   <template v-if="batch && !batch.needs_reimport && !showImport">
    <PayRunNextStep v-if="isConfirmed" tone="done" title="✓ Attendance confirmed" :detail="totalsText">
-    <AppButton v-if="embedded && payCalculated" @click="emit('continue',{calculate:false})">Review pay →</AppButton><AppButton v-else-if="embedded" @click="emit('continue',{calculate:true})">Calculate pay</AppButton><AppButton v-else @click="router.push(payrollTarget)">Continue to payroll →</AppButton>
+    <AppButton v-if="embedded && !payFinal" variant="outline" :loading="busy" @click="reopen">Edit attendance</AppButton><AppButton v-if="embedded && payCalculated" @click="emit('continue',{calculate:false})">Review pay →</AppButton><AppButton v-else-if="embedded" @click="emit('continue',{calculate:true})">{{payOutdated?'Recalculate pay':'Calculate pay'}}</AppButton><AppButton v-else @click="router.push(payrollTarget)">Continue to payroll →</AppButton>
    </PayRunNextStep>
    <PayRunNextStep v-else-if="blocking.length" tone="waiting" title="Fix the problems listed above before confirming" detail="Map the missing Attendance IDs or correct the file, then reload employee setup.">
     <AppButton variant="secondary" :loading="busy" @click="refresh">Reload employee setup</AppButton>

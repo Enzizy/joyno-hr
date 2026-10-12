@@ -184,7 +184,7 @@ function createPayrollService({ db }) {
     const scope = await attendancePayrollScope(tx, batchId)
     if (requestedScope && scope !== requestedScope) throw serviceError('Choose confirmed attendance for the selected shift', 409)
     const context = await loadContext(tx, dateKey(batch.period_start), dateKey(batch.period_end), scope, await attendanceReviewSettings(tx,batchId))
-    if (!batch.context_hash || fingerprint(context) !== batch.context_hash) throw serviceError('Leave, salary, or employee setup changed after attendance confirmation. Create and confirm a replacement review first', 409)
+    if (!batch.context_hash || fingerprint(context) !== batch.context_hash) throw serviceError('Leave, salary or employee setup changed after attendance was confirmed. In Attendance, click Edit attendance, reload it and confirm again', 409)
     return { ...batch, context }
   }
 

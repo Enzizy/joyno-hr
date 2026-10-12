@@ -377,6 +377,20 @@ function createAttendanceReviewService({db}) {
     await event(tx,id,actor,'confirmed',String(coverageReason||'').trim()||(p.issues.length?'Confirmed by HR; file coverage warnings accepted':'HR verified all flagged attendance'),null,{contextHash:b.context_hash,payrollScope:context.payrollScope || 'all',isTest:context.isTest === true,employeeIds:context.employeeIds})
     return batchWith(tx,id)
   })}
+  // Reopen confirmed attendance for corrections (a forgotten holiday or overtime) while its pay is still a draft.
+  // Every decided day is kept; HR confirms again and recalculates pay.
+  async function reopen(id,version,actor){return db.transaction(async tx=>{
+    await tx.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
+    const b=(await tx.query('SELECT * FROM payroll_attendance_import_batches WHERE id=$1 FOR UPDATE',[id])).rows[0]
+    if(!b)fail('Attendance batch not found',404)
+    if(b.review_state!=='confirmed')return batchWith(tx,id)
+    if(Number(version)!==Number(b.review_version))fail('Another HR action changed this review. Reload it first')
+    if(!b.source_csv)fail('Legacy imports need a new preview from the original CSV')
+    if((await tx.query("SELECT 1 FROM payroll_runs WHERE attendance_batch_id=$1 AND status<>'draft' LIMIT 1",[id])).rows.length)fail('Pay from this attendance is already approved. Add corrections to the next payroll instead',409)
+    await tx.query("UPDATE payroll_attendance_import_batches SET review_state='draft',confirmed_by=NULL,confirmed_at=NULL,review_version=review_version+1 WHERE id=$1",[id])
+    await event(tx,id,actor,'reopened','Reopened by HR for corrections',{reviewState:'confirmed',confirmedAt:b.confirmed_at},{reviewState:'draft'})
+    return batchWith(tx,id)
+  })}
   async function revokeLeave(id,version,leaveId,reason,actor){return db.transaction(async tx=>{
     await tx.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE')
     const b=await locked(tx,id,version),explanation=String(reason||'').trim()||'Incorrect leave cancelled by HR'
@@ -432,6 +446,6 @@ function createAttendanceReviewService({db}) {
       if(paid>Number(leave.paid_days)+0.000001||unpaid>Number(leave.unpaid_days)+0.000001)fail('This paid/unpaid allocation exceeds the official leave totals. Verify the other reviewed dates before saving')
     }
   }
-  return {preview,save,refresh,resolve,confirm,revokeLeave,list,get:id=>batchWith(db,id)}
+  return {preview,save,refresh,resolve,confirm,reopen,revokeLeave,list,get:id=>batchWith(db,id)}
 }
 module.exports={createAttendanceReviewService,buildAttendancePreview,reviewDecision,fingerprint,loadContext,paidOverlap}

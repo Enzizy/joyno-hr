@@ -55,6 +55,7 @@ function createAttendanceReviewRouter({service,authRequired,requireRole}){
   next()
  },handler(req=>service.resolve(req.params.id,req.body.version,req.body.employeeId,req.body.date,req.body.decision,req.user)))
  router.post('/api/attendance/batches/:id/confirm',handler(req=>service.confirm(req.params.id,req.body.version,req.body.coverageReason,req.user)))
+ router.post('/api/attendance/batches/:id/reopen',handler(req=>service.reopen(req.params.id,req.body.version,req.user)))
  router.post('/api/attendance/batches/:id/correct-leave',(req,res,next)=>Number.isSafeInteger(Number(req.body?.leaveId))&&Number(req.body.leaveId)>0?next():res.status(400).json({message:'Choose a valid official leave record'}),handler(req=>service.revokeLeave(req.params.id,req.body.version,req.body.leaveId,req.body.reason,req.user)))
  return router
 }

@@ -57,6 +57,26 @@ test('drafts wait on approval, and approval is locked in draft mode for real pay
   assert.equal(stage(enabled, 'approve').state, 'todo')
 })
 
+test('reopened attendance holds the draft, and corrected attendance asks for a recalculation', () => {
+  const draft = [{ id: 9, status: 'draft', attendance_batch_id: 4, period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { payrollScope: 'day', attendanceReviewVersion: 7 } }]
+  const review = (state, version) => [{ id: 4, payroll_scope: 'day', review_state: state, review_version: version, period_start: '2026-09-11', period_end: '2026-09-25', pending_days: 0 }]
+  const base = { period, shift: 'day', runs: draft, finalizationEnabled: true }
+  // Reopened for corrections: attendance is the current step and the draft waits.
+  const reopened = payRunStages({ ...base, reviews: review('draft', 8) })
+  assert.equal(currentStageKey(reopened), 'attendance')
+  assert.equal(stage(reopened, 'attendance').detail, 'Ready to confirm')
+  assert.deepEqual([stage(reopened, 'review').state, stage(reopened, 'approve').state], ['locked', 'locked'])
+  // Confirmed again: the draft was calculated from the earlier version, so pay must be recalculated before approval.
+  const corrected = payRunStages({ ...base, reviews: review('confirmed', 9) })
+  assert.equal(stage(corrected, 'review').detail, 'Recalculate pay')
+  assert.equal(stage(corrected, 'approve').state, 'locked')
+  assert.equal(currentStageKey(corrected), 'review')
+  // Recalculated from the current version: back to checking the draft.
+  const current = payRunStages({ ...base, reviews: review('confirmed', 7) })
+  assert.equal(stage(current, 'review').detail, 'Draft to check')
+  assert.equal(stage(current, 'approve').state, 'todo')
+})
+
 test('payment and closing drive the last stages; practice runs release test payslips', () => {
   const run = status => [{ id: 9, status, has_payment: status !== 'approved', period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { payrollScope: 'day', isTest: true } }]
   const approved = payRunStages({ period, shift: 'day', practice: true, profiles: [ready], runs: [{ ...run('approved')[0], has_payment: false }] })
