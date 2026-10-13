@@ -13,6 +13,7 @@ const batch={id:1,file_name:'UI fixture attendance.csv',period_start:'2026-09-11
     first_scan_at:i===0?null:'2026-09-11T01:00:00Z',last_scan_at:i===0?null:'2026-09-11T10:00:00Z',scan_count:i===0?0:2,
     late_minutes:0,undertime_minutes:0,leaves:[],schedule:'09:00–18:00',scheduled_minutes:480}))}
 let run=null,calculateAttempts=0,failEmail=true
+const accounts=[{id:1,email:'fixture-1@example.test',role:'employee',employee_id:1}]
 const emails=new Map(),failures=new Map(),calls=[]
 function lines(){return profiles.map((p,i)=>({id:i+1,employee_id:p.employee_id,employee_code:p.employee_code,employee_name:`${p.first_name} ${p.last_name}`,
   monthly_basic_salary:15000,gross_salary:7500,cola_pay:0,daily_rate:689.66,hourly_rate:86.21,
@@ -71,6 +72,21 @@ const server=http.createServer(async(req,res)=>{
  if(path.endsWith('.pdf')){
    res.writeHead(200,{'Content-Type':'application/pdf'});const pdf=new PDFDocument({size:'LEGAL'});pdf.pipe(res);pdf.fontSize(16).text('UI FIXTURE - NOT A REAL PAYSLIP').moveDown().fontSize(12).text(`Format: ${u.searchParams.get('copies')||'1'} copies. Sample data only.`);pdf.end();return
  }
+ // Employees, logins and pay profiles for the employee profile page.
+ const employeeRow=p=>({id:p.employee_id,employee_code:p.employee_code,first_name:p.first_name,last_name:p.last_name,department:p.department||'Marketing',position:p.position||'Specialist',shift:p.shift,status:p.status||'active',date_hired:'2025-01-06',last_working_date:null,leave_credits:5,leave_balance_breakdown:{year:2026,balances:[{id:'sick_leave',name:'Sick leave',eligible:true,remaining:4,used:1,annual_allowance:5},{id:'vacation_leave',name:'Vacation leave',eligible:true,remaining:3,used:0,annual_allowance:3}]}})
+ if(path==='/api/employees'&&req.method==='GET')return json(res,profiles.map(employeeRow))
+ const employeeMatch=path.match(/^\/api\/employees\/(\d+)$/)
+ if(employeeMatch){const p=profiles.find(x=>x.employee_id===Number(employeeMatch[1]));if(!p)return json(res,{message:'Employee not found'},404)
+   if(req.method==='PUT')Object.assign(p,{employee_code:body.employee_code,first_name:body.first_name,last_name:body.last_name,department:body.department,position:body.position,shift:body.shift,status:body.status})
+   return json(res,employeeRow(p))}
+ if(path==='/api/users'&&req.method==='GET')return json(res,accounts)
+ if(path==='/api/users'&&req.method==='POST'){accounts.push({id:accounts.length+10,email:body.email,role:body.role,employee_id:body.employee_id});return json(res,accounts.at(-1))}
+ const profileMatch=path.match(/^\/api\/payroll\/profiles\/(\d+)(\/history)?$/)
+ if(profileMatch){const p=profiles.find(x=>x.employee_id===Number(profileMatch[1]));if(!p)return json(res,{message:'Employee not found'},404)
+   if(profileMatch[2])return json(res,p.history||[])
+   if(req.method==='PUT'){Object.assign(p,{monthly_basic_salary:body.monthlyBasicSalary,monthly_cola:body.monthlyCola,biometric_person_id:body.biometricPersonId,work_start_time:`${body.workStartTime}:00`,work_end_time:`${body.workEndTime}:00`,workdays:body.workdays,contribution_settings:body.contributionSettings})
+     p.history=[{id:Date.now(),effective_from:body.effectiveFrom,effective_to:null,monthly_basic_salary:body.monthlyBasicSalary,monthly_cola:body.monthlyCola,work_start_time:p.work_start_time,work_end_time:p.work_end_time,contribution_settings:p.contribution_settings},...(p.history||[])]
+     return json(res,p)}}
  if(path==='/fixture/state')return json(res,{run,batch,calls,calculateAttempts,emails:[...emails.keys()]})
  if(path==='/api/leave-types'||path.includes('/notifications'))return json(res,[])
  return req.method==='GET'?json(res,[],200):json(res,{message:`Unsupported fixture action ${path}`},501)

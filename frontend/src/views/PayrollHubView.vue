@@ -114,7 +114,7 @@ function begin() {
   <div v-else class="space-y-6">
     <PageHeader title="Paydays">
       <template #actions>
-        <AppButton variant="outline" @click="router.push('/compensation')">Employee pay setup</AppButton>
+        <AppButton variant="outline" @click="router.push('/employees')">Employee pay setup</AppButton>
         <AppButton @click="openStart()">Open payday</AppButton>
       </template>
     </PageHeader>

@@ -6,8 +6,7 @@ export const navGroups = [
   { name: 'Home', icon: 'dashboard', path: '/', roles: ALL_ROLES },
   {
     name: 'Employees', icon: 'users', path: '/employees', roles: MANAGEMENT_ROLES,
-    activePaths: ['/employees', '/compensation'],
-    related: [{ path: '/compensation', name: 'Pay & schedules', icon: 'pay', hidden: !payrollEnabled }],
+    activePaths: ['/employees'],
   },
   { name: 'Payroll', employeeName: 'My payslips', icon: 'pay', path: '/payroll', roles: ALL_ROLES, hidden: !payrollEnabled },
   {

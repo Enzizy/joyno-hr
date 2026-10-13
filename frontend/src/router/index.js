@@ -108,6 +108,13 @@ const routes = [
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
       {
+        // One profile per employee: details, schedule & pay, leave, login and history.
+        path: 'employees/:id(\\d+)',
+        name: 'EmployeeProfile',
+        component: () => import('@/views/EmployeeProfileView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo'], breadcrumb: false },
+      },
+      {
         path: 'leave-approvals',
         name: 'LeaveApprovals',
         component: () => import('@/views/LeaveApprovalsView.vue'),
@@ -139,7 +146,11 @@ const routes = [
         // Attendance is now stage 2 of a pay run; older links land on the matching run.
         path: 'attendance', name: 'Attendance', redirect: attendanceRedirect,
       }, {
-        path: 'compensation', name: 'Compensation', component: () => import('@/views/CompensationView.vue'), meta: {roles:['admin','hr','ceo']},
+        // Pay & schedules now lives on each employee's profile; old links land on the right place.
+        path: 'compensation', name: 'Compensation',
+        redirect: to => to.query.employee
+          ? { path: `/employees/${to.query.employee}`, query: { section: 'pay', ...(to.query.returnTo ? { returnTo: to.query.returnTo } : {}) } }
+          : { path: '/employees', query: { setup: 'needs', ...(to.query.shift ? { shift: to.query.shift } : {}) } },
       }, {
         path: 'payroll',
         name: 'Payroll',

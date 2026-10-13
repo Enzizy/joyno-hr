@@ -1,9 +1,9 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useEmployeeStore } from '@/stores/employeeStore'
 import { useToastStore } from '@/stores/toastStore'
-import { getAuditLogs, getEmployee, getUsers, getLeaveTypes, setEmployeeAwol as setEmployeeAwolApi } from '@/services/backendService'
+import { getUsers, getLeaveTypes, setEmployeeAwol as setEmployeeAwolApi } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppTable from '@/components/ui/AppTable.vue'
 import AppModal from '@/components/ui/AppModal.vue'
@@ -11,16 +11,18 @@ import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
-import EmployeeWorkspaceNav from '@/components/employees/EmployeeWorkspaceNav.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import { usePersistentFilters } from '@/composables/usePersistentFilters'
-import EmployeeDetailsDrawer from '@/components/employees/EmployeeDetailsDrawer.vue'
+import { getPayrollProfiles } from '@/services/api'
+import { payrollEnabled } from '@/config/features'
+import { profileGaps, profileReady } from '@/utils/payRun'
 import { isPaidLeaveEligible } from '@/utils/leaveEligibility'
 import { getDepartmentPresentation, getShiftPresentation } from '@/utils/employeePresentation'
 
 const employeeStore = useEmployeeStore()
 const toast = useToastStore()
 const router = useRouter()
+const route = useRoute()
 const showModal = ref(false)
 const showDeleteModal = ref(false)
 const deletingEmployee = ref(null)
@@ -33,16 +35,15 @@ const awolTarget = ref(null)
 const awolForm = ref({ start_date: '', end_date: '', reason: '' })
 const departmentFilter = ref('all')
 const statusFilter = ref('all')
-const shiftFilter = ref('all')
+const shiftFilter = ref(['day', 'night'].includes(route.query.shift) ? route.query.shift : 'all')
+// Pay setup, from the payroll profiles: who is ready to be paid and what is missing.
+const setupFilter = ref(['needs', 'ready'].includes(route.query.setup) ? route.query.setup : 'all')
+const payProfiles = ref(new Map())
 const searchQuery = ref('')
 const page = ref(1)
 const pageSize = ref(10)
-const selectedEmployee = ref(null)
-const drawerOpen = ref(false)
-const drawerLoading = ref(false)
 const users = ref([])
 const leavePolicies = ref([])
-const employeeActivities = ref([])
 usePersistentFilters('employees', { departmentFilter, statusFilter, shiftFilter, searchQuery, pageSize })
 const departmentOptions = ['Marketing', 'IT', 'Sales', 'Admin']
 const shiftOptions = ['day', 'night']
@@ -58,7 +59,19 @@ const form = ref({
   status: 'active',
 })
 
+async function loadPaySetup() {
+  if (!payrollEnabled) return
+  try { payProfiles.value = new Map((await getPayrollProfiles()).map((p) => [Number(p.employee_id), p])) } catch { payProfiles.value = new Map() }
+}
+// Not on payroll (for example the CEO) → null; otherwise ready, or the missing items.
+function paySetup(row) {
+  const p = payProfiles.value.get(Number(row.id))
+  if (!p) return null
+  return profileReady(p) ? { ready: true, text: 'Ready' } : { ready: false, text: `Needs ${profileGaps(p).map((gap) => gap === 'Attendance ID' ? gap : gap.toLowerCase()).join(', ')}` }
+}
+
 onMounted(async () => {
+  loadPaySetup()
   await Promise.all([getLeaveTypes().then((policies) => { leavePolicies.value = policies }), employeeStore.fetchList(), getUsers().then((rows) => { users.value = rows }).catch(() => {})])
   document.addEventListener('click', closeActionMenu)
 })
@@ -78,6 +91,9 @@ const filteredEmployees = computed(() => {
   if (shiftFilter.value !== 'all') {
     rows = rows.filter((e) => (e.shift || 'day') === shiftFilter.value)
   }
+  if (setupFilter.value !== 'all') {
+    rows = rows.filter((e) => paySetup(e) && paySetup(e).ready === (setupFilter.value === 'ready'))
+  }
   const q = searchQuery.value.trim().toLowerCase()
   if (q) {
     rows = rows.filter((e) => {
@@ -93,7 +109,6 @@ const totalEmployees = computed(() => employeeStore.list.length)
 const visibleEmployees = computed(() => filteredEmployees.value.length)
 const totalPages = computed(() => Math.max(1, Math.ceil(visibleEmployees.value / pageSize.value)))
 const pagedEmployees = computed(() => filteredEmployees.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
-const selectedUser = computed(() => users.value.find((user) => Number(user.employee_id) === Number(selectedEmployee.value?.id)) || null)
 watch([departmentFilter, statusFilter, shiftFilter, searchQuery, pageSize], () => { page.value = 1 })
 watch(totalPages, (total) => { if (page.value > total) page.value = total })
 
@@ -122,60 +137,9 @@ function openCreate() {
   showModal.value = true
 }
 
-async function openEdit(row) {
+function openDetails(row, section) {
   openActionMenuId.value = null
-  editingId.value = row.id
-  let source = row
-  try {
-    source = await employeeStore.fetchOne(row.id)
-  } catch (err) {
-    toast.warning('Using cached employee data. Refresh if leave credits look outdated.')
-  }
-  form.value = {
-    employee_code: source.employee_code,
-    first_name: source.first_name,
-    last_name: source.last_name,
-    department: source.department,
-    position: source.position,
-    shift: source.shift || 'day',
-    date_hired: source.date_hired?.slice(0, 10) ?? '',
-    last_working_date: source.last_working_date?.slice(0, 10) ?? '',
-    status: source.status,
-  }
-  showModal.value = true
-}
-
-async function openDetails(row) {
-  openActionMenuId.value = null
-  selectedEmployee.value = row
-  employeeActivities.value = []
-  drawerOpen.value = true
-  drawerLoading.value = true
-  const [employee, logs] = await Promise.all([
-    getEmployee(row.id).catch(() => row),
-    getAuditLogs({ limit: 50 }).catch(() => []),
-  ])
-  selectedEmployee.value = employee
-  employeeActivities.value = logs.filter((item) => item.target_table === 'employees' && Number(item.target_id) === Number(row.id))
-  drawerLoading.value = false
-}
-
-function closeDrawer() {
-  drawerOpen.value = false
-  selectedEmployee.value = null
-  employeeActivities.value = []
-}
-
-function editSelected() {
-  const employee = selectedEmployee.value
-  closeDrawer()
-  if (employee) openEdit(employee)
-}
-
-function awolSelected() {
-  const employee = selectedEmployee.value
-  closeDrawer()
-  if (employee) openAwol(employee)
+  router.push({ path: `/employees/${row.id}`, ...(section ? { query: { section } } : {}) })
 }
 
 async function save() {
@@ -184,8 +148,11 @@ async function save() {
       await employeeStore.update(editingId.value, form.value)
       toast.success('Employee updated.')
     } else {
-      await employeeStore.create(form.value)
-      toast.success('Employee created.')
+      const created = await employeeStore.create(form.value)
+      toast.success('Employee created. Set up their schedule & pay next.')
+      showModal.value = false
+      if (created?.id) router.push({ path: `/employees/${created.id}`, query: { section: payrollEnabled ? 'pay' : 'login' } })
+      return
     }
     showModal.value = false
   } catch (err) {
@@ -204,7 +171,6 @@ async function confirmRemove() {
   deletingEmployeeLoading.value = true
   try {
     await employeeStore.remove(deletingEmployee.value.id)
-    if (Number(selectedEmployee.value?.id) === Number(deletingEmployee.value.id)) closeDrawer()
     toast.success('Employee deleted.')
     showDeleteModal.value = false
     deletingEmployee.value = null
@@ -260,9 +226,8 @@ async function submitAwol() {
     <PageHeader title="Employees">
       <template #actions><AppButton @click="openCreate">Add employee</AppButton></template>
     </PageHeader>
-    <EmployeeWorkspaceNav />
     <div class="rounded-xl border border-gray-800 bg-gray-900 p-4">
-      <div class="grid gap-3 xl:grid-cols-[minmax(220px,1.6fr)_repeat(4,minmax(100px,1fr))_auto] xl:items-end">
+      <div class="grid gap-3" :class="payrollEnabled ? 'xl:grid-cols-[minmax(220px,1.6fr)_repeat(5,minmax(100px,1fr))_auto] xl:items-end' : 'xl:grid-cols-[minmax(220px,1.6fr)_repeat(4,minmax(100px,1fr))_auto] xl:items-end'">
         <div>
           <label class="mb-1 block text-xs font-medium text-gray-400">Search</label>
           <input
@@ -310,6 +275,14 @@ async function submitAwol() {
             <option value="on_leave">On leave</option>
           </select>
         </div>
+        <div v-if="payrollEnabled">
+          <label class="mb-1 block text-xs font-medium text-gray-400">Pay setup</label>
+          <select v-model="setupFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 focus:border-primary-500 focus:ring-primary-500">
+            <option value="all">All</option>
+            <option value="needs">Needs setup</option>
+            <option value="ready">Ready</option>
+          </select>
+        </div>
         <AppButton
           variant="secondary"
           class="xl:mb-0"
@@ -318,6 +291,7 @@ async function submitAwol() {
               departmentFilter = 'all'
               shiftFilter = 'all'
               statusFilter = 'all'
+              setupFilter = 'all'
               searchQuery = ''
             }
           "
@@ -333,7 +307,7 @@ async function submitAwol() {
       <article v-for="row in pagedEmployees" v-else :key="row.id" class="rounded-xl border border-gray-800 bg-gray-900 p-4" @click="openDetails(row)">
         <div class="flex items-start justify-between gap-3"><div class="min-w-0"><h3 class="truncate font-semibold text-gray-100">{{ row.first_name }} {{ row.last_name }}</h3><p class="mt-1 text-xs text-primary-300">Employee {{ row.employee_code }}</p></div><StatusBadge :status="row.status" /></div>
         <dl class="mt-4 grid grid-cols-2 gap-3 text-xs"><div><dt class="text-gray-500">Department</dt><dd class="mt-1"><StatusBadge :status="row.department" :variant="getDepartmentPresentation(row.department).variant">{{ getDepartmentPresentation(row.department).label }}</StatusBadge></dd></div><div><dt class="text-gray-500">Position</dt><dd class="mt-1 text-gray-300">{{ row.position || '-' }}</dd></div><div><dt class="text-gray-500">Shift</dt><dd class="mt-1"><StatusBadge :status="row.shift" :variant="getShiftPresentation(row.shift).variant">{{ getShiftPresentation(row.shift).label }}</StatusBadge></dd></div><div><dt class="text-gray-500">Leave credits</dt><dd class="mt-1 text-gray-300">{{ Number(row.leave_credits || 0).toFixed(2) }}</dd></div></dl>
-        <div class="mt-4 flex flex-wrap gap-2" @click.stop><AppButton variant="secondary" size="sm" @click="openDetails(row)">View details</AppButton><AppButton variant="secondary" size="sm" @click="openEdit(row)">Edit</AppButton></div>
+        <div class="mt-4 flex flex-wrap gap-2" @click.stop><span v-if="payrollEnabled && paySetup(row)" class="self-center text-xs font-semibold" :style="{ color: paySetup(row).ready ? 'var(--success-text)' : 'var(--warning-text)' }">Pay: {{ paySetup(row).text }}</span><AppButton variant="outline" size="sm" @click="openDetails(row)">Open profile</AppButton></div>
       </article>
     </div>
     <AppTable :loading="employeeStore.loading" class="hidden md:block">
@@ -343,6 +317,7 @@ async function submitAwol() {
           <th class="table-heading">Department</th>
           <th class="table-heading">Shift</th>
           <th class="table-heading">Employment status</th>
+          <th v-if="payrollEnabled" class="table-heading">Pay setup</th>
           <th class="table-heading text-right">Actions</th>
         </tr>
       </thead>
@@ -351,7 +326,6 @@ async function submitAwol() {
           v-for="row in pagedEmployees"
           :key="row.id"
           class="cursor-pointer transition hover:bg-gray-950"
-          :class="Number(selectedEmployee?.id) === Number(row.id) && drawerOpen ? 'bg-primary-950/15 ring-1 ring-inset ring-primary-600/35' : ''"
           @click="openDetails(row)"
         >
           <td class="px-4 py-3.5"><div class="flex items-center gap-3"><span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-gray-700 bg-gray-950 text-xs font-semibold text-gray-300">{{ row.first_name?.[0] }}{{ row.last_name?.[0] }}</span><span class="min-w-0"><span class="block truncate text-sm font-semibold text-gray-100">{{ row.first_name }} {{ row.last_name }}</span><span class="mt-0.5 block truncate text-xs text-gray-500">{{ row.employee_code }} · {{ row.position || 'Position not set' }}</span></span></div></td>
@@ -359,6 +333,10 @@ async function submitAwol() {
           <td class="px-4 py-3"><StatusBadge :status="row.shift" :variant="getShiftPresentation(row.shift).variant">{{ getShiftPresentation(row.shift).label }}</StatusBadge></td>
           <td class="px-4 py-3">
             <StatusBadge :status="row.status" />
+          </td>
+          <td v-if="payrollEnabled" class="px-4 py-3" @click.stop>
+            <button v-if="paySetup(row)" type="button" class="inline-flex items-center gap-1.5 text-left text-xs font-semibold hover:underline" :style="{ color: paySetup(row).ready ? 'var(--success-text)' : 'var(--warning-text)' }" @click="openDetails(row, 'pay')"><span class="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />{{ paySetup(row).text }}</button>
+            <span v-else class="text-xs text-gray-500">Not on payroll</span>
           </td>
           <td class="px-4 py-3 text-right" @click.stop>
             <div class="relative inline-flex justify-end">
@@ -377,9 +355,9 @@ async function submitAwol() {
                 <button
                   type="button"
                   class="flex w-full rounded-lg px-3 py-2 text-left text-sm text-gray-200 transition hover:bg-gray-800"
-                  @click.stop="openEdit(row)"
+                  @click.stop="openDetails(row)"
                 >
-                  Edit employee
+                  Open profile
                 </button>
                 <button
                   type="button"
@@ -400,7 +378,7 @@ async function submitAwol() {
           </td>
         </tr>
         <tr v-if="!filteredEmployees.length && !employeeStore.loading">
-          <td colspan="5" class="p-4"><EmptyState title="No employees found" description="Try clearing the filters or add the first employee record." /></td>
+          <td :colspan="payrollEnabled ? 6 : 5" class="p-4"><EmptyState title="No employees found" description="Try clearing the filters or add the first employee record." /></td>
         </tr>
       </tbody>
     </AppTable>
@@ -409,7 +387,6 @@ async function submitAwol() {
       <div class="flex gap-2"><AppButton variant="secondary" size="sm" :disabled="page <= 1" @click="page -= 1">Previous</AppButton><AppButton variant="secondary" size="sm" :disabled="page >= totalPages" @click="page += 1">Next</AppButton></div>
     </div>
 
-    <EmployeeDetailsDrawer :show="drawerOpen" :employee="selectedEmployee" :user="selectedUser" :activities="employeeActivities" :loading="drawerLoading" @close="closeDrawer" @edit="editSelected" @awol="awolSelected" @manage-account="router.push('/users')" />
 
     <AppModal :show="showModal" :title="editingId ? 'Edit employee' : 'Add employee'" size="lg" @close="showModal = false">
       <form id="employee-form" class="grid gap-4 sm:grid-cols-2" @submit.prevent="save">
