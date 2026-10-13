@@ -21,11 +21,11 @@ export const navGroups = [
   { name: 'My tasks', icon: 'task', path: '/my-tasks', roles: ['employee'] },
   { name: 'Announcements', icon: 'announcement', path: '/announcements', roles: ALL_ROLES },
   {
-    name: 'Reports', icon: 'chart', path: '/reports', roles: MANAGEMENT_ROLES,
-    related: [
-      { path: '/reports/leave', name: 'Leave reports', icon: 'leave' },
-      { path: '/reports/payroll', name: 'Payroll reports', icon: 'pay', hidden: !payrollEnabled },
-      { path: '/reports/attendance', name: 'Attendance reports', icon: 'chart', hidden: !payrollEnabled },
+    name: 'Reports', icon: 'chart', roles: MANAGEMENT_ROLES,
+    children: [
+      { path: '/reports/leave', name: 'Leave reports', icon: 'leave', roles: MANAGEMENT_ROLES },
+      { path: '/reports/payroll', name: 'Payroll reports', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
+      { path: '/reports/attendance', name: 'Attendance reports', icon: 'check', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
     ],
   },
   {

@@ -7,7 +7,6 @@ import AppDatePicker from '@/components/ui/AppDatePicker.vue'
 import AppTable from '@/components/ui/AppTable.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
-import ReportWorkspaceNav from '@/components/reports/ReportWorkspaceNav.vue'
 import { payrollEnabled } from '@/config/features'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
@@ -172,7 +171,6 @@ onMounted(loadLeave)
 <template>
   <div class="space-y-6">
     <PageHeader title="Leave reports" />
-    <ReportWorkspaceNav />
 
     <section class="rounded-xl border border-gray-800 bg-gray-900 p-5 shadow-sm">
       <div class="grid gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">

@@ -2,7 +2,6 @@
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import PageHeader from '@/components/ui/PageHeader.vue'
-import ReportWorkspaceNav from '@/components/reports/ReportWorkspaceNav.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -76,7 +75,6 @@ async function download(row, type) {
 <template>
   <div class="space-y-6">
     <PageHeader :title="attendance ? 'Attendance reports' : 'Payroll reports'"><template #actions><AppButton variant="secondary" :loading="loading" @click="load">Refresh</AppButton></template></PageHeader>
-    <ReportWorkspaceNav />
     <div class="filter-panel grid items-end gap-4 sm:grid-cols-3">
       <label class="text-xs font-medium text-gray-400">{{ attendance ? 'Work month (period ends)' : 'Payday month' }}<input v-model="month" type="month" class="form-control mt-1.5"></label>
       <label class="text-xs font-medium text-gray-400">Shift<select v-model="shift" class="form-control mt-1.5"><option value="all">All shifts</option><option value="day">Day shift</option><option value="night">Night shift</option></select></label>

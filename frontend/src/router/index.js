@@ -127,10 +127,8 @@ const routes = [
         meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
       },
       {
-        path: 'reports',
-        name: 'Reports',
-        component: () => import('@/views/ReportsHubView.vue'),
-        meta: { roles: ['admin', 'hr', 'ceo'] },
+        // Reports is a sidebar group; its old overview page opens the first report.
+        path: 'reports', name: 'Reports', redirect: '/reports/leave',
       },
       {
         path: 'reports/leave',
