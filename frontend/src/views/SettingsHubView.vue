@@ -2,9 +2,11 @@
 import PageHeader from '@/components/ui/PageHeader.vue'
 import NavIcon from '@/components/layout/NavIcon.vue'
 import SettingsWorkspaceNav from '@/components/settings/SettingsWorkspaceNav.vue'
+import { payrollEnabled } from '@/config/features'
 
 const settings = [
   { title: 'Leave policy', path: '/settings/leave', icon: 'leave', tone: 'info', description: 'Entitlements, eligibility and filing rules.' },
+  ...(payrollEnabled ? [{ title: 'Withholding tax', path: '/settings/tax', icon: 'pay', tone: 'warning', description: 'The BIR tax table payroll uses and how taxable pay is worked out.' }] : []),
   { title: 'Accounts', path: '/users', icon: 'user-cog', tone: 'violet', description: 'Employee logins, management access and account details.' },
   { title: 'Audit log', path: '/audit-logs', icon: 'audit', tone: 'success', description: 'Recorded changes and who made them.' },
 ]

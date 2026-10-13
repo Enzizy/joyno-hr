@@ -10,8 +10,10 @@ export function payAmounts(line) {
   const otherDeductions = charges.reduce((sum, item) => sum + (DEDUCTION_TYPES[item.type] || Number(item.amount) < 0 ? Math.abs(Number(item.amount)) : 0), 0)
   const time = ['absence_deduction', 'late_deduction', 'undertime_deduction'].reduce((sum, key) => sum + Number(line[key] || 0), 0)
   const contributions = ['employee_sss', 'employee_philhealth', 'employee_pagibig'].reduce((sum, key) => sum + Number(line[key] || 0), 0)
-  return { basic, cola, extra, additions, otherDeductions, time, contributions,
-    earnings: basic + cola + extra + additions, deductions: time + contributions + otherDeductions,
+  // Computed withholding tax; tax HR entered instead is one of the other deductions.
+  const tax = Number(line.withholding_tax || 0)
+  return { basic, cola, extra, additions, otherDeductions, time, contributions, tax,
+    earnings: basic + cola + extra + additions, deductions: time + contributions + tax + otherDeductions,
     net: Number(line.net_pay || 0) }
 }
 

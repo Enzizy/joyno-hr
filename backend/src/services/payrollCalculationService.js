@@ -68,8 +68,74 @@ function calculateSssAssessablePay({ firstCutoffPay, grossSalary, absenceDeducti
 }
 
 const CONTRIBUTION_KEYS = Object.freeze(['sss', 'philhealth', 'pagibig'])
-// TIN readiness is recorded beside the contribution IDs but never changes pay: tax is entered by HR.
+// TIN sits beside the contribution IDs; withholding tax applies only when it is ticked (workbook Register U8).
 const GOVERNMENT_ID_KEYS = Object.freeze([...CONTRIBUTION_KEYS, 'tin'])
+
+// Workbook Remittance!AS9: the BIR semi-monthly withholding tax table in effect from January 2023.
+// Tax = base + (taxable pay - over) x rate, for the first row whose upTo covers the taxable pay; the
+// last row has no upTo. HR keeps dated copies in payroll_tax_tables; this one is the first of them.
+const SEMI_MONTHLY_TAX_TABLE = Object.freeze([
+  { upTo: 10417, base: 0, over: 0, rate: 0 },
+  { upTo: 16666, base: 0, over: 10417, rate: 0.15 },
+  { upTo: 33332, base: 937.5, over: 16667, rate: 0.20 },
+  { upTo: 83332, base: 4270.7, over: 33333, rate: 0.25 },
+  { upTo: 333332, base: 16770.7, over: 83333, rate: 0.30 },
+  { upTo: null, base: 91770.7, over: 333333, rate: 0.35 },
+].map(Object.freeze))
+
+const twoDecimals = value => Math.abs(value * 100 - Math.round(value * 100)) < 0.000001
+// A table HR enters: 2 to 12 rows, rising upTo limits, the last row open-ended, rates as fractions.
+function normalizeTaxTable(rows) {
+  if (!Array.isArray(rows) || rows.length < 2 || rows.length > 12) throw new TypeError('A tax table needs 2 to 12 rows')
+  return rows.map((row, index) => {
+    const last = index === rows.length - 1
+    const upTo = row?.upTo == null || row.upTo === '' ? null : Number(row.upTo)
+    const [base, over, rate] = [Number(row?.base), Number(row?.over), Number(row?.rate)]
+    if (last ? upTo !== null : !Number.isFinite(upTo)) throw new TypeError('Every row except the last needs an "up to" amount; the last row has none')
+    if (index > 0 && !last && upTo <= Number(rows[index - 1].upTo)) throw new TypeError('Each row\'s "up to" amount must be higher than the row before')
+    if (index > 0 && last && !(over >= Number(rows[index - 1].upTo))) throw new TypeError('The last row must start at or above the row before it')
+    if (![base, over].every(value => Number.isFinite(value) && value >= 0 && value <= 100000000 && twoDecimals(value)) ||
+        !Number.isFinite(rate) || rate < 0 || rate > 1 || Math.abs(rate * 10000 - Math.round(rate * 10000)) > 0.000001 ||
+        (upTo !== null && (upTo < 0 || upTo > 100000000 || !twoDecimals(upTo)))) {
+      throw new TypeError('Tax table amounts must be peso amounts and rates must be 0% to 100%')
+    }
+    return { upTo, base, over, rate }
+  })
+}
+
+function calculateWithholdingTax(taxablePay, table = SEMI_MONTHLY_TAX_TABLE) {
+  const pay = finiteNumber(taxablePay, 'taxablePay')
+  const row = table.find(entry => entry.upTo == null || pay <= Number(entry.upTo))
+  return roundMoney(Math.max(0, Number(row.base) + (pay - Number(row.over)) * Number(row.rate)))
+}
+
+// Workbook MASTERFILE: TIN (column R), MWE (O) and a per-payroll tax shield amount (P).
+function normalizeTaxSettings({ tin = true, minimumWageEarner = false, taxShield = 0 } = {}) {
+  const shield = finiteNumber(taxShield, 'taxShield')
+  if (typeof tin !== 'boolean' || typeof minimumWageEarner !== 'boolean' || shield < 0 || shield > 10000000 ||
+      Math.abs(shield * 100 - Math.round(shield * 100)) > 0.000001) {
+    throw new TypeError('Tax settings need a TIN tick, a minimum wage tick and a peso tax shield')
+  }
+  return { tin, minimumWageEarner, taxShield: roundMoney(shield) }
+}
+
+function profileTaxSettings(profile = {}) {
+  return normalizeTaxSettings({
+    tin: normalizeContributionSettings(profile.contribution_settings ?? undefined).tin,
+    minimumWageEarner: Boolean(profile.minimum_wage_earner),
+    taxShield: Number(profile.tax_shield ?? 0),
+  })
+}
+
+// Workbook Remittance!AR9: taxable pay is gross pay less employee SSS, PhilHealth and Pag-IBIG, the tax
+// shield and non-taxable allowances such as COLA; a minimum wage earner has none. Register U8 deducts
+// the tax only when the employee has a TIN.
+function calculateTax({ taxableEarnings, employeeContributions = 0, taxSettings, taxTable = SEMI_MONTHLY_TAX_TABLE }) {
+  const settings = normalizeTaxSettings(taxSettings)
+  const taxablePay = settings.minimumWageEarner ? 0 : roundMoney(finiteNumber(taxableEarnings, 'taxableEarnings') -
+    finiteNumber(employeeContributions, 'employeeContributions') - settings.taxShield)
+  return { taxablePay, withholdingTax: settings.tin ? calculateWithholdingTax(taxablePay, taxTable) : 0 }
+}
 
 function normalizeContributionSettings(value, fallback = {}) {
   if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) {
@@ -315,7 +381,13 @@ module.exports = {
   calculateThirteenthMonthAccrual,
   calculateWorkedSpecialHoliday,
   calculatePayrollLine,
+  calculateTax,
+  calculateWithholdingTax,
   normalizeContributionSettings,
+  normalizeTaxSettings,
+  normalizeTaxTable,
+  profileTaxSettings,
+  SEMI_MONTHLY_TAX_TABLE,
   payContributionSettings,
   getSssMonthlySalaryCredit,
   roundMoney,

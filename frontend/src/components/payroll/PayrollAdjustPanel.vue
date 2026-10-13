@@ -14,7 +14,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'save', 'dirty'])
 
-const DEDUCTIONS = Object.entries(DEDUCTION_TYPES).map(([type, label]) => ({ source: 'charge', type, label }))
+// Tax HR enters replaces the tax worked out from the BIR table.
+const DEDUCTIONS = Object.entries(DEDUCTION_TYPES).map(([type, label]) => ({ source: 'charge', type, label: type === 'tax_withholding' ? 'Withholding tax (replaces the computed tax)' : label }))
 // The non-taxable allowance is stored as a charge; "Other earning" as a manual earning.
 const ADDITIONS = Object.entries(ADDITION_TYPES).map(([type, label]) => ({ source: type === 'other' ? 'earning' : 'charge', type, label }))
 const CORRECTION = { source: 'charge', type: 'basic_pay_adjustment', label: 'Basic pay correction' }
@@ -84,6 +85,7 @@ const baseRows = computed(() => {
   if (lateUndertime) rows.push({ label: 'Late and undertime', amount: -lateUndertime })
   const contributions = Number(line.employee_sss || 0) + Number(line.employee_philhealth || 0) + Number(line.employee_pagibig || 0)
   if (contributions) rows.push({ label: [['SSS',line.employee_sss],['PhilHealth',line.employee_philhealth],['Pag-IBIG',line.employee_pagibig]].filter(([,amount])=>Number(amount)>0).map(([label])=>label).join(' · '), amount: -contributions })
+  if (Number(line.withholding_tax)) rows.push({ label: 'Withholding tax (BIR table)', amount: -Number(line.withholding_tax), replaced: items.value.some(item => item.type === 'tax_withholding') })
   return rows
 })
 
@@ -95,7 +97,9 @@ const toCharges = list => list.filter(item => item.source === 'charge')
 const original = items.value.map(item => ({ ...item }))
 const netAfter = computed(() => Number(props.line.net_pay || 0)
   + earningsTotal(toEarnings(items.value)) - earningsTotal(toEarnings(original))
-  + chargesTotal(toCharges(items.value)) - chargesTotal(toCharges(original)))
+  + chargesTotal(toCharges(items.value)) - chargesTotal(toCharges(original))
+  // Entering the tax by hand drops the computed tax.
+  + (items.value.some(item => item.type === 'tax_withholding') ? Number(props.line.withholding_tax || 0) : 0))
 const changed = computed(() => firstCutoffChanged.value || JSON.stringify(items.value.map(({ key, ...rest }) => rest)) !== JSON.stringify(original.map(({ key, ...rest }) => rest)))
 watch(changed,value=>emit('dirty',value),{immediate:true})
 onBeforeUnmount(()=>emit('dirty',false))
@@ -108,6 +112,8 @@ onMounted(() => window.addEventListener('beforeunload', warnBeforeUnload))
 onBeforeUnmount(() => window.removeEventListener('beforeunload', warnBeforeUnload))
 const sssMayChange = computed(() => props.run.cutoff === 'second' && props.run.include_contributions && details.value.contributionSettings?.sss !== false &&
   (firstCutoffChanged.value || items.value.some(item => ['basic_pay_adjustment', 'night_differential', 'overtime'].includes(item.type))))
+// Any change to taxable pay can move the tax, so the saved amount is shown after saving.
+const taxMayChange = computed(() => Boolean(details.value.taxSettings?.tin && !details.value.taxSettings?.minimumWageEarner))
 
 // The + Add menu.
 const showNight = computed(() => Boolean(details.value.nightDifferential && (Number(details.value.nightDifferential.paidMinutes) > 0 || details.value.nightDifferential.reviewRequired)))
@@ -221,7 +227,7 @@ function save() {
           <span class="text-sm text-gray-400">Net pay</span>
           <span class="text-right"><span v-if="changed" class="mr-2 text-sm text-gray-500 line-through">{{ money(line.net_pay) }}</span><span class="text-xl font-semibold text-emerald-300">{{ changed ? '≈ ' : '' }}{{ money(changed ? netAfter : line.net_pay) }}</span></span>
         </div>
-        <p v-if="changed && sssMayChange" class="mt-1 text-right text-xs text-gray-500">SSS and net pay are recalculated when you save.</p>
+        <p v-if="changed && (sssMayChange || taxMayChange)" class="mt-1 text-right text-xs text-gray-500">{{ sssMayChange ? 'SSS, tax' : 'Tax' }} and net pay are recalculated when you save.</p>
         <p v-if="invalid" class="mt-2 text-xs text-amber-300">Enter an amount on each adjustment, or remove it.</p>
         <p v-if="invalidFirstCutoff" class="mt-2 text-xs text-amber-300">Enter a valid 15th amount in pesos and centavos, including zero if no eligible pay was earned.</p>
         <div class="mt-3 flex justify-end gap-2"><AppButton variant="secondary" @click="emit('close')">Cancel</AppButton><AppButton :loading="busy" :disabled="!changed || invalid || invalidFirstCutoff || hasLegacy" @click="save">Save</AppButton></div>

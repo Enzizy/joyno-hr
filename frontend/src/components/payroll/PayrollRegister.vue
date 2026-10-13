@@ -16,7 +16,7 @@ const totals = computed(() => rows.value.reduce((sum,row) => ({ earnings:sum.ear
   deductions:sum.deductions+row.amounts.deductions,net:sum.net+row.amounts.net }),{earnings:0,deductions:0,net:0}))
 const breakdown = row => [['Basic',row.amounts.basic],['COLA',row.amounts.cola],['Extra earnings',row.amounts.extra],
   ['Allowances / other earnings',row.amounts.additions],['Attendance deductions',-row.amounts.time],
-  ['Government contributions',-row.amounts.contributions],['Other deductions',-row.amounts.otherDeductions]].filter(([,amount])=>amount!==0)
+  ['Government contributions',-row.amounts.contributions],['Withholding tax',-row.amounts.tax],['Other deductions',-row.amounts.otherDeductions]].filter(([,amount])=>amount!==0)
 </script>
 
 <template>

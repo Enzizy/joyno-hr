@@ -680,7 +680,7 @@ const remittanceTotals = computed(() => currentLines.value.reduce((totals, line)
   for (const field of Object.keys(totals)) totals[field] += Number(line[field] || 0)
   return totals
 }, { employee_sss: 0, employer_sss: 0, employer_ec: 0, employee_philhealth: 0,
-  employer_philhealth: 0, employee_pagibig: 0, employer_pagibig: 0 }))
+  employer_philhealth: 0, employee_pagibig: 0, employer_pagibig: 0, withholding_tax: 0 }))
 const totalNet = computed(() => registerTotals.value.net)
 const payDateForm = ref(null)
 const payDateFormError = computed(() => !payDateForm.value || payDateForm.value <= cutoffEnd.value)
@@ -750,7 +750,7 @@ const paySummary = computed(() => {
     { name: 'SSS', amount: totals.employee_sss + totals.employer_sss + totals.employer_ec + agencyLoans.sss, loans: agencyLoans.sss },
     { name: 'PhilHealth', amount: totals.employee_philhealth + totals.employer_philhealth, loans: 0 },
     { name: 'Pag-IBIG', amount: totals.employee_pagibig + totals.employer_pagibig + agencyLoans.pagibig, loans: agencyLoans.pagibig },
-    { name: 'BIR (tax)', amount: agencyLoans.bir, loans: 0 },
+    { name: 'BIR (tax)', amount: totals.withholding_tax + agencyLoans.bir, loans: 0 },
   ].filter(agency => agency.amount > 0)
   return { agencies, remit: agencies.reduce((sum, agency) => sum + agency.amount, 0) }
 })

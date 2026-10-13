@@ -213,6 +213,8 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         unpaidBreakMinutes: req.body.unpaidBreakMinutes,
         dailyRateDivisor: req.body.dailyRateDivisor,
         contributionSettings: req.body.contributionSettings,
+        minimumWageEarner: req.body.minimumWageEarner,
+        taxShield: req.body.taxShield,
       }
       for (const key of Object.keys(profileInput)) {
         if (profileInput[key] === undefined) delete profileInput[key]
@@ -269,6 +271,19 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     }
   })
 
+  // Withholding tax tables by start date (Settings → Withholding tax).
+  router.get('/api/payroll/tax-tables',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    try{res.set('Cache-Control','private, no-store').json(await payrollService.listTaxTables())}catch(e){handlePayrollError(e,res)}
+  })
+  router.put('/api/payroll/tax-tables/:effectiveFrom',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    if(!validDate(req.params.effectiveFrom))return res.status(400).json({message:'Choose a valid start date'})
+    try{res.json(await payrollService.saveTaxTable(req.params.effectiveFrom,req.body||{},req.user))}catch(e){handlePayrollError(e,res)}
+  })
+  router.delete('/api/payroll/tax-tables/:effectiveFrom',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    if(!validDate(req.params.effectiveFrom))return res.status(400).json({message:'Choose a valid start date'})
+    try{const removed=await payrollService.deleteTaxTable(req.params.effectiveFrom,req.user);if(!removed)return res.status(404).json({message:'Tax table not found'});res.json(removed)}catch(e){handlePayrollError(e,res)}
+  })
+
   router.get('/api/payroll/profiles/:employeeId/history',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
     const id=positiveId(req.params.employeeId)
     if(!id)return res.status(400).json({message:'Invalid employee ID'})
@@ -300,13 +315,13 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     if(!id||!['register','remittance'].includes(type))return res.status(400).json({message:'Choose payroll register or remittance export'})
     try{
       const run=await payrollService.getRun(id);if(!run)return res.status(404).json({message:'Payroll not found'})
-      const headers=type==='register'?['Status','Payday','Employee ID','Employee','Basic','COLA','Absence deduction','Late deduction','Undertime deduction','SSS employee','PhilHealth employee','Pag-IBIG employee','Extra earnings','Charge deductions','Basic adjustment','Other charge earnings','13th-month basic accrual','Net pay']:
+      const headers=type==='register'?['Status','Payday','Employee ID','Employee','Basic','COLA','Absence deduction','Late deduction','Undertime deduction','SSS employee','PhilHealth employee','Pag-IBIG employee','Withholding tax','Extra earnings','Charge deductions','Basic adjustment','Other charge earnings','13th-month basic accrual','Net pay']:
         ['Status','Payday','Employee ID','Employee','SSS employee','SSS employer','EC employer','PhilHealth employee','PhilHealth employer','Pag-IBIG employee','Pag-IBIG employer']
       const rows=run.lines.map(l=>{
         const identity=[run.rule_snapshot?.isTest?`TEST ONLY - ${run.status}`:run.status,run.payday,l.employee_code,l.employee_name]
         if(type==='remittance')return [...identity,l.employee_sss,l.employer_sss,l.employer_ec,l.employee_philhealth,l.employer_philhealth,l.employee_pagibig,l.employer_pagibig]
         const totals={earning:0,deduction:0,adjustment:0};for(const c of l.details?.charges||[])totals[c.type==='basic_pay_adjustment'?'adjustment':c.type==='other_non_taxable_earning'?'earning':'deduction']+=Number(c.amount||0)
-        return [...identity,l.gross_salary,l.cola_pay,l.absence_deduction,l.late_deduction,l.undertime_deduction,l.employee_sss,l.employee_philhealth,l.employee_pagibig,effectiveEarnings(l.details).reduce((sum,e)=>sum+Number(e.amount),0),totals.deduction,totals.adjustment,totals.earning,l.thirteenth_month_accrual,l.net_pay]
+        return [...identity,l.gross_salary,l.cola_pay,l.absence_deduction,l.late_deduction,l.undertime_deduction,l.employee_sss,l.employee_philhealth,l.employee_pagibig,l.withholding_tax,effectiveEarnings(l.details).reduce((sum,e)=>sum+Number(e.amount),0),totals.deduction,totals.adjustment,totals.earning,l.thirteenth_month_accrual,l.net_pay]
       })
       res.set('Cache-Control','private, no-store').type('text/csv').attachment(`${run.rule_snapshot?.isTest?'TEST-ONLY-':''}payroll-${id}-${type}-${run.status}.csv`).send(csvRows(headers,rows))
     }catch(e){handlePayrollError(e,res)}

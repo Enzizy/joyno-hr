@@ -33,6 +33,7 @@ export const navGroups = [
     activePaths: ['/settings', '/users', '/audit-logs'],
     related: [
       { path: '/settings/leave', name: 'Leave policy', icon: 'leave' },
+      { path: '/settings/tax', name: 'Withholding tax', icon: 'pay', hidden: !payrollEnabled },
       { path: '/users', name: 'Accounts', icon: 'user-cog' },
       { path: '/audit-logs', name: 'Audit log', icon: 'audit' },
     ],

@@ -37,6 +37,7 @@ function payrollBreakdown(line) {
     ['SSS contribution', line.employee_sss],
     ['PhilHealth contribution', line.employee_philhealth],
     ['Pag-IBIG contribution', line.employee_pagibig],
+    ['Withholding tax', line.withholding_tax],
     ...chargeDeductions.map((entry) => [`${CHARGE_TYPES[entry.type].label}: ${entry.note}`, Math.abs(amount(entry.amount))]),
   ]
   const totalDeductions = deductions.reduce((total, [, value]) => total + amount(value), 0)
@@ -91,7 +92,8 @@ function payslipSections(line) {
     { label: 'ADJUSTMENT:', name: 'Adjustment', amount: total(adjustmentItems), note: notes(adjustmentItems) },
   ]
   const deductions = [
-    { label: 'WITHHOLDING TAX', name: 'Withholding tax', amount: total(ofType(charges, 'tax_withholding')) },
+    // The computed tax, or the amount HR entered in its place.
+    { label: 'WITHHOLDING TAX', name: 'Withholding tax', amount: roundMoney(amount(line.withholding_tax) + total(ofType(charges, 'tax_withholding'))) },
     { label: 'SSS CONTRIBUTION', name: 'SSS', amount: amount(line.employee_sss) },
     { label: 'PHIC CONTRIBUTION', name: 'PhilHealth', amount: amount(line.employee_philhealth) },
     { label: 'PAG-IBIG CONTRIBUTION', name: 'Pag-IBIG', amount: amount(line.employee_pagibig) },

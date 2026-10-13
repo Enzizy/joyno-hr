@@ -152,6 +152,8 @@ const routes = [
           ? { path: `/employees/${to.query.employee}`, query: { section: 'pay', ...(to.query.returnTo ? { returnTo: to.query.returnTo } : {}) } }
           : { path: '/employees', query: { setup: 'needs', ...(to.query.shift ? { shift: to.query.shift } : {}) } },
       }, {
+        path: 'settings/tax', name: 'TaxTable', component: () => import('@/views/TaxTableView.vue'), meta: { roles: ['admin', 'hr', 'ceo'] },
+      }, {
         path: 'payroll',
         name: 'Payroll',
         component: () => import('@/views/PayrollHubView.vue'),

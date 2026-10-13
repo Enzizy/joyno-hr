@@ -26,6 +26,7 @@ const {
 } = require('./services/payrollAttendanceService')
 const { payrollPeriodForMonth, validatePayrollPeriod } = require('./services/payrollScheduleService')
 const { createPayrollService } = require('./services/payrollService')
+const { SEMI_MONTHLY_TAX_TABLE } = require('./services/payrollCalculationService')
 
 test('13th-month accrual matches workbook register BB/BC: absences and basic adjustment count, tardiness does not', () => {
   // FOR TESTING.xlsm PAYROLL REGISTER, September 30 2026 dayshift rows.
@@ -148,6 +149,7 @@ test('month-end SSS reads actual 15th net basic, OT and ND, excluding allowances
   const service = createPayrollService({ db: { async query(sql, params = []) {
     const fixture=reviewFixture(sql);if(fixture)return fixture
     if (sql.includes('SELECT * FROM payroll_runs WHERE period_start')) return { rows: [] }
+    if (sql.includes('FROM payroll_tax_tables')) return { rows: [{ effective_from: '2023-01-01', brackets: SEMI_MONTHLY_TAX_TABLE }] }
     if (sql.includes('FROM employees employee')) return { rows: [{ employee_id: 12,
       employee_code: 'IT-12', first_name: 'Sample', last_name: 'Employee', profile_id: 1,
       monthly_basic_salary: '15000', monthly_cola: '1000', daily_fare_rate: '0', unpaid_break_minutes: 60,
@@ -219,6 +221,7 @@ test('a 6-hour night is paid 6 of 8 hours of the salary HR entered', async () =>
   const service = createPayrollService({ db: { async query(sql, params = []) {
     const fixture=reviewFixture(sql);if(fixture)return fixture
     if (sql.includes('SELECT * FROM payroll_runs WHERE period_start')) return { rows: [] }
+    if (sql.includes('FROM payroll_tax_tables')) return { rows: [{ effective_from: '2023-01-01', brackets: SEMI_MONTHLY_TAX_TABLE }] }
     if (sql.includes('FROM employees employee')) return { rows: [{ employee_id: 12,
       employee_code: 'IT-12', first_name: 'Sample', last_name: 'Employee', profile_id: 1,
       monthly_basic_salary: '15000', monthly_cola: '0', daily_fare_rate: '0', unpaid_break_minutes: 60,
@@ -587,6 +590,7 @@ test('approval rejects saved full-holiday-pay lines before updating the run', as
         rule_snapshot:{attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2},period_start: '2026-09-11', period_end: '2026-09-25' }] }
       if (sql.includes('FROM payroll_attendance_import_batches')) return { rows: [{ error_count: 0 }] }
       if (sql.includes('FROM payroll_daily_attendance')) return { rows: [{ count: 0 }] }
+      if (sql.includes('p.minimum_wage_earner')) return { rows: [] }
       if (sql.includes('FROM payroll_run_lines')) return { rows: [{ '?column?': 1 }] }
       throw new Error(`Unexpected query: ${sql}`)
     },
@@ -607,8 +611,9 @@ test('approval still rejects unresolved active attendance before updating pay', 
   const service = createPayrollService({db:{async query(sql) {
     const fixture=reviewFixture(sql);if(fixture)return fixture
     if(sql.includes('SELECT * FROM payroll_runs'))return {rows:[{id:1,status:'draft',attendance_batch_id:7,
-      period_start:'2026-09-11',period_end:'2026-09-25',rule_snapshot:{version:5,
+      period_start:'2026-09-11',period_end:'2026-09-25',rule_snapshot:{version:6,
         attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2}}]}
+    if(sql.includes('p.minimum_wage_earner'))return {rows:[]}
     if(sql.includes('FROM payroll_daily_attendance'))return {rows:[{count:1}]}
     if(sql.includes('UPDATE payroll_runs'))updated=true
     throw new Error(`Unexpected query: ${sql}`)
@@ -652,6 +657,35 @@ test('month-end approval accepts half the monthly salary as the 15th pay without
   }
 })
 
+for (const [name, version, taxRows, message] of [
+  ['a draft made before withholding tax', 5, [], /Recalculate this draft to apply withholding tax before approval/],
+  ['a draft whose TIN was unticked after it was calculated', 6, [{ employee_code: 'TAX-1',
+    details: { taxSettings: { tin: true, minimumWageEarner: false, taxShield: 0 } },
+    contribution_settings: { sss: true, philhealth: true, pagibig: true, tin: false }, minimum_wage_earner: false, tax_shield: '0.00' }],
+    /Tax setup \(TIN, minimum wage or tax shield\) changed for TAX-1/],
+]) {
+  test(`approval rejects ${name}`, async () => {
+    const previous = process.env.PAYROLL_FINALIZATION_ENABLED
+    process.env.PAYROLL_FINALIZATION_ENABLED = 'true'
+    let updated = false
+    const service = createPayrollService({ db: { async query(sql) {
+      const fixture = reviewFixture(sql); if (fixture) return fixture
+      if (sql.includes('SELECT * FROM payroll_runs')) return { rows: [{ id: 1, status: 'draft', cutoff: 'first', attendance_batch_id: 7,
+        period_start: '2026-09-11', period_end: '2026-09-25', rule_snapshot: { version, attendanceContextHash: confirmedBatch.context_hash, attendanceReviewVersion: 2 } }] }
+      if (sql.includes('p.minimum_wage_earner')) return { rows: taxRows }
+      if (sql.includes('UPDATE payroll_runs')) updated = true
+      throw new Error(`Unexpected query: ${sql}`)
+    } } })
+    try {
+      await assert.rejects(service.approveRun(1), message)
+      assert.equal(updated, false)
+    } finally {
+      if (previous === undefined) delete process.env.PAYROLL_FINALIZATION_ENABLED
+      else process.env.PAYROLL_FINALIZATION_ENABLED = previous
+    }
+  })
+}
+
 test('saved draft earnings cannot retain the old full-holiday-pay type', async () => {
   const service = createPayrollService({ db: { query: () => { throw new Error('Database should not be called') } } })
   await assert.rejects(service.updateManualEarnings(1, 2, [
@@ -665,7 +699,8 @@ test('approval blocks unverified holiday or missing-punch night pay before updat
   let updated=false
   const service=createPayrollService({db:{async query(sql){
     const fixture=reviewFixture(sql);if(fixture)return fixture
-    if(sql.includes('SELECT * FROM payroll_runs'))return {rows:[{id:1,status:'draft',cutoff:'first',attendance_batch_id:7,period_start:'2026-09-11',period_end:'2026-09-25',rule_snapshot:{version:5,attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2}}]}
+    if(sql.includes('SELECT * FROM payroll_runs'))return {rows:[{id:1,status:'draft',cutoff:'first',attendance_batch_id:7,period_start:'2026-09-11',period_end:'2026-09-25',rule_snapshot:{version:6,attendanceContextHash:confirmedBatch.context_hash,attendanceReviewVersion:2}}]}
+    if(sql.includes('p.minimum_wage_earner'))return {rows:[]}
     if(sql.includes('FROM payroll_daily_attendance'))return {rows:[{count:0}]}
     if(sql.includes("details->'nightDifferential'"))return {rows:[{employee_code:'NIGHT-12'}]}
     if(sql.includes('SELECT 1 FROM payroll_run_lines'))return {rows:[]}

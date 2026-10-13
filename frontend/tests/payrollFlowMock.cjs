@@ -12,6 +12,7 @@ const batch={id:1,file_name:'UI fixture attendance.csv',period_start:'2026-09-11
     work_date:'2026-09-11',status:i===0?'exception':'present',review_state:i===0?'pending':'clear',issue_codes:i===0?['no_record']:[],
     first_scan_at:i===0?null:'2026-09-11T01:00:00Z',last_scan_at:i===0?null:'2026-09-11T10:00:00Z',scan_count:i===0?0:2,
     late_minutes:0,undertime_minutes:0,leaves:[],schedule:'09:00–18:00',scheduled_minutes:480}))}
+let taxTables=[{effectiveFrom:'2023-01-01',note:'TRAIN law semi-monthly table from 2023, as in the workbook',rows:[{upTo:10417,base:0,over:0,rate:0},{upTo:16666,base:0,over:10417,rate:0.15},{upTo:33332,base:937.5,over:16667,rate:0.2},{upTo:83332,base:4270.7,over:33333,rate:0.25},{upTo:333332,base:16770.7,over:83333,rate:0.3},{upTo:null,base:91770.7,over:333333,rate:0.35}]}]
 let run=null,calculateAttempts=0,failEmail=true
 const accounts=[{id:1,email:'fixture-1@example.test',role:'employee',employee_id:1}]
 const emails=new Map(),failures=new Map(),calls=[]
@@ -19,10 +20,10 @@ function lines(){return profiles.map((p,i)=>({id:i+1,employee_id:p.employee_id,e
   monthly_basic_salary:15000,gross_salary:7500,cola_pay:0,daily_rate:689.66,hourly_rate:86.21,
   absence_deduction:batch.daily[i].status==='absent'?689.66:0,late_deduction:0,undertime_deduction:0,
   employee_sss:750,employee_philhealth:375,employee_pagibig:200,employer_sss:1500,employer_ec:30,employer_philhealth:375,employer_pagibig:200,
-  net_pay:7500-(batch.daily[i].status==='absent'?689.66:0)-1325,
-  details:{manualEarnings:[],charges:[],attendance:[batch.daily[i]],contributionSettings:p.contribution_settings,
+  withholding_tax:i===0?25:0,net_pay:7500-(batch.daily[i].status==='absent'?689.66:0)-1325-(i===0?25:0),
+  details:{manualEarnings:[],charges:[],attendance:[batch.daily[i]],contributionSettings:p.contribution_settings,taxSettings:{tin:true,minimumWageEarner:false,taxShield:0},
     sssAssessment:{firstCutoffPay:7500,firstCutoffSource:'assumed-half-basic',secondCutoffNetBasic:7500-(batch.daily[i].status==='absent'?689.66:0),monthlyCompensation:15000}}}))}
-function recalc(line){line.net_pay=line.gross_salary-line.absence_deduction-1325+(line.details.manualEarnings||[]).reduce((s,x)=>s+Number(x.amount),0)+(line.details.charges||[]).reduce((s,x)=>s+(x.type==='other_non_taxable_earning'||x.type==='basic_pay_adjustment'?Number(x.amount):-Number(x.amount)),0)}
+function recalc(line){line.net_pay=line.gross_salary-line.absence_deduction-1325-Number(line.withholding_tax||0)+(line.details.manualEarnings||[]).reduce((s,x)=>s+Number(x.amount),0)+(line.details.charges||[]).reduce((s,x)=>s+(x.type==='other_non_taxable_earning'||x.type==='basic_pay_adjustment'?Number(x.amount):-Number(x.amount)),0)}
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value))}
 const server=http.createServer(async(req,res)=>{
  res.setHeader('Access-Control-Allow-Origin','http://127.0.0.1:5175');res.setHeader('Access-Control-Allow-Headers','Content-Type, Authorization');res.setHeader('Access-Control-Allow-Methods','GET,POST,PUT,PATCH,OPTIONS')
@@ -84,9 +85,14 @@ const server=http.createServer(async(req,res)=>{
  const profileMatch=path.match(/^\/api\/payroll\/profiles\/(\d+)(\/history)?$/)
  if(profileMatch){const p=profiles.find(x=>x.employee_id===Number(profileMatch[1]));if(!p)return json(res,{message:'Employee not found'},404)
    if(profileMatch[2])return json(res,p.history||[])
-   if(req.method==='PUT'){Object.assign(p,{monthly_basic_salary:body.monthlyBasicSalary,monthly_cola:body.monthlyCola,biometric_person_id:body.biometricPersonId,work_start_time:`${body.workStartTime}:00`,work_end_time:`${body.workEndTime}:00`,workdays:body.workdays,contribution_settings:body.contributionSettings})
+   if(req.method==='PUT'){Object.assign(p,{monthly_basic_salary:body.monthlyBasicSalary,monthly_cola:body.monthlyCola,biometric_person_id:body.biometricPersonId,work_start_time:`${body.workStartTime}:00`,work_end_time:`${body.workEndTime}:00`,workdays:body.workdays,contribution_settings:body.contributionSettings,minimum_wage_earner:body.minimumWageEarner,tax_shield:body.taxShield})
      p.history=[{id:Date.now(),effective_from:body.effectiveFrom,effective_to:null,monthly_basic_salary:body.monthlyBasicSalary,monthly_cola:body.monthlyCola,work_start_time:p.work_start_time,work_end_time:p.work_end_time,contribution_settings:p.contribution_settings},...(p.history||[])]
      return json(res,p)}}
+ // Withholding tax tables: the 2023 table, used by the approved Sep 30 run.
+ if(path==='/api/payroll/tax-tables')return json(res,taxTables.map((t,i)=>({...t,inUse:t.effectiveFrom<='2026-09-30',earliest:i===taxTables.length-1})))
+ const taxMatch=path.match(/^\/api\/payroll\/tax-tables\/(\d{4}-\d{2}-\d{2})$/)
+ if(taxMatch){const date=taxMatch[1];if(date<='2026-09-30')return json(res,{message:'Payroll for 2026-09-30 is already approved with the rates in effect then. Start the new rates after 2026-09-30'},409)
+   taxTables=taxTables.filter(t=>t.effectiveFrom!==date);if(req.method==='PUT')taxTables.push({effectiveFrom:date,rows:body.rows,note:body.note||''});taxTables.sort((a,b)=>b.effectiveFrom.localeCompare(a.effectiveFrom));return json(res,{effectiveFrom:date,rows:body?.rows,note:body?.note})}
  if(path==='/fixture/state')return json(res,{run,batch,calls,calculateAttempts,emails:[...emails.keys()]})
  if(path==='/api/leave-types'||path.includes('/notifications'))return json(res,[])
  return req.method==='GET'?json(res,[],200):json(res,{message:`Unsupported fixture action ${path}`},501)

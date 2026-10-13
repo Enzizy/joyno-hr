@@ -14,6 +14,9 @@ const {
   calculateSssAssessablePay,
   calculateThirteenthMonthAccrual,
   calculateWorkedSpecialHoliday,
+  normalizeTaxSettings,
+  normalizeTaxTable,
+  profileTaxSettings,
 } = require('./payrollCalculationService')
 const {
   addDays,
@@ -26,7 +29,7 @@ const {
   parseManilaTimestamp,
 } = require('./payrollAttendanceService')
 const { validatePayrollPeriod } = require('./payrollScheduleService')
-const { basicAdjustmentTotal, draftNetPay, normalizeCharges } = require('./payrollChargesService')
+const { basicAdjustmentTotal, draftPay, normalizeCharges } = require('./payrollChargesService')
 const { loadContext, fingerprint } = require('./attendanceReviewService')
 
 const MAX_IMPORT_DAYS = 62
@@ -66,6 +69,8 @@ function normalizeProfile(row) {
     monthly_basic_salary: Number(row.monthly_basic_salary),
     monthly_cola: Number(row.monthly_cola ?? 0),
     contribution_settings: normalizeContributionSettings(row.contribution_settings ?? undefined),
+    minimum_wage_earner: Boolean(row.minimum_wage_earner),
+    tax_shield: Number(row.tax_shield ?? 0),
     daily_fare_rate: Number(row.daily_fare_rate),
     unpaid_break_minutes: Number(row.unpaid_break_minutes),
     daily_rate_divisor: Number(row.daily_rate_divisor),
@@ -191,6 +196,61 @@ function createPayrollService({ db }) {
     return { ...batch, context }
   }
 
+  // Withholding tax tables, one per start date. A payday uses the newest table started on or before it.
+  async function taxTableFor(queryable, payday) {
+    const row = (await queryable.query(`SELECT effective_from::text, brackets FROM payroll_tax_tables
+      WHERE effective_from <= $1 ORDER BY effective_from DESC LIMIT 1`, [payday])).rows[0]
+    if (!row) throw serviceError(`No withholding tax table covers the ${payday} payday. Add one in Settings → Withholding tax`, 409)
+    return { effectiveFrom: row.effective_from, rows: normalizeTaxTable(row.brackets) }
+  }
+
+  // Approved or released real payroll on or after a date has already used the table in effect then.
+  async function finalizedPaydayFrom(queryable, date) {
+    return (await queryable.query(`SELECT payday::text FROM payroll_runs WHERE status IN ('approved','locked')
+      AND COALESCE(rule_snapshot->>'isTest','false')<>'true' AND payday >= $1 ORDER BY payday DESC LIMIT 1`, [date])).rows[0]?.payday || null
+  }
+
+  async function listTaxTables() {
+    const [tables, latest] = await Promise.all([
+      db.query('SELECT effective_from::text, brackets, note, updated_at FROM payroll_tax_tables ORDER BY effective_from DESC'),
+      db.query(`SELECT MAX(payday)::text AS payday FROM payroll_runs WHERE status IN ('approved','locked')
+        AND COALESCE(rule_snapshot->>'isTest','false')<>'true'`),
+    ])
+    const lastFinalized = latest.rows[0]?.payday || null
+    return tables.rows.map((row, index) => ({ effectiveFrom: row.effective_from, rows: normalizeTaxTable(row.brackets), note: row.note,
+      updatedAt: row.updated_at, inUse: Boolean(lastFinalized && lastFinalized >= row.effective_from), earliest: index === tables.rows.length - 1 }))
+  }
+
+  async function saveTaxTable(effectiveFrom, input = {}, actor = {}) {
+    const rows = normalizeTaxTable(input.rows)
+    const note = String(input.note ?? '').trim()
+    if (note.length > 300) throw serviceError('Keep the note to 300 characters', 400)
+    return withTransaction(db, async (tx) => {
+      await tx.query('LOCK TABLE payroll_tax_tables IN EXCLUSIVE MODE')
+      const used = await finalizedPaydayFrom(tx, effectiveFrom)
+      if (used) throw serviceError(`Payroll for ${used} is already approved with the rates in effect then. Start the new rates after ${used}`, 409)
+      await tx.query(`INSERT INTO payroll_tax_tables (effective_from, brackets, note, updated_by) VALUES ($1, $2::jsonb, $3, $4)
+        ON CONFLICT (effective_from) DO UPDATE SET brackets = EXCLUDED.brackets, note = EXCLUDED.note,
+          updated_by = EXCLUDED.updated_by, updated_at = NOW()`, [effectiveFrom, JSON.stringify(rows), note, actorFields(actor).userId])
+      await appendAudit(tx, actor, 'payroll_tax_table_saved', 'payroll_tax_tables', null)
+      return { effectiveFrom, rows, note }
+    })
+  }
+
+  async function deleteTaxTable(effectiveFrom, actor = {}) {
+    return withTransaction(db, async (tx) => {
+      await tx.query('LOCK TABLE payroll_tax_tables IN EXCLUSIVE MODE')
+      const earliest = (await tx.query('SELECT MIN(effective_from)::text AS date FROM payroll_tax_tables')).rows[0]?.date
+      if (earliest === effectiveFrom) throw serviceError('The first tax table cannot be removed; edit it or add newer rates instead', 409)
+      const used = await finalizedPaydayFrom(tx, effectiveFrom)
+      if (used) throw serviceError(`Payroll for ${used} is already approved with these rates, so they stay on record`, 409)
+      const removed = await tx.query('DELETE FROM payroll_tax_tables WHERE effective_from = $1', [effectiveFrom])
+      if (!removed.rowCount) return null
+      await appendAudit(tx, actor, 'payroll_tax_table_removed', 'payroll_tax_tables', null)
+      return { effectiveFrom }
+    })
+  }
+
   async function profileHistory(employeeId) {
     return (await db.query('SELECT p.*,p.effective_from::text,p.effective_to::text FROM payroll_employee_profiles p WHERE p.employee_id=$1 ORDER BY p.effective_from DESC',[employeeId])).rows
   }
@@ -201,7 +261,7 @@ function createPayrollService({ db }) {
       `SELECT e.id AS employee_id, e.employee_code, e.first_name, e.last_name, e.department, e.shift,
               EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = e.id AND ceo_account.role = 'ceo') AS is_ceo,
               p.id AS profile_id, p.effective_from, p.effective_to, p.monthly_basic_salary, p.monthly_cola,
-              p.daily_fare_rate, p.contribution_settings, p.work_start_time, p.work_end_time, p.unpaid_break_minutes,
+              p.daily_fare_rate, p.contribution_settings, p.minimum_wage_earner, p.tax_shield, p.work_start_time, p.work_end_time, p.unpaid_break_minutes,
               p.workdays, p.daily_rate_divisor, bio.person_id AS biometric_person_id, e.date_hired,
               (SELECT MIN(first.effective_from) FROM payroll_employee_profiles first WHERE first.employee_id = e.id) AS first_effective_from
        FROM employees e
@@ -229,6 +289,8 @@ function createPayrollService({ db }) {
       monthly_basic_salary: row.monthly_basic_salary == null ? null : Number(row.monthly_basic_salary),
       monthly_cola: row.monthly_cola == null ? 0 : Number(row.monthly_cola),
       contribution_settings: normalizeContributionSettings(row.contribution_settings ?? undefined),
+      minimum_wage_earner: Boolean(row.minimum_wage_earner),
+      tax_shield: row.tax_shield == null ? 0 : Number(row.tax_shield),
       daily_fare_rate: row.daily_fare_rate == null ? null : Number(row.daily_fare_rate),
       unpaid_break_minutes: row.unpaid_break_minutes == null ? null : Number(row.unpaid_break_minutes),
       daily_rate_divisor: row.daily_rate_divisor == null ? null : Number(row.daily_rate_divisor),
@@ -245,6 +307,11 @@ function createPayrollService({ db }) {
     const suppliedContributions = Object.hasOwn(input, 'contributionSettings')
       ? input.contributionSettings : input.contribution_settings
     if (suppliedContributions !== undefined) normalizeContributionSettings(suppliedContributions)
+    const suppliedMinimumWage = input.minimumWageEarner ?? input.minimum_wage_earner
+    const suppliedTaxShield = input.taxShield ?? input.tax_shield
+    if (suppliedMinimumWage !== undefined || suppliedTaxShield !== undefined) {
+      normalizeTaxSettings({ minimumWageEarner: suppliedMinimumWage ?? false, taxShield: suppliedTaxShield ?? 0 })
+    }
     const biometricIdProvided = Object.hasOwn(input, 'biometricPersonId') || Object.hasOwn(input, 'biometric_person_id')
     const biometricPersonId = biometricIdProvided
       ? String(input.biometricPersonId ?? input.biometric_person_id ?? '').trim().replace(/^'/, '')
@@ -269,7 +336,8 @@ function createPayrollService({ db }) {
       if (!employeeResult.rows[0]) throw serviceError('Employee was not found', 404)
       const { rows } = await tx.query(
         `SELECT id, effective_from, effective_to, monthly_cola, daily_fare_rate, daily_rate_divisor,
-                workdays, work_start_time, work_end_time, unpaid_break_minutes, contribution_settings
+                workdays, work_start_time, work_end_time, unpaid_break_minutes, contribution_settings,
+                minimum_wage_earner, tax_shield
          FROM payroll_employee_profiles
          WHERE employee_id = $1
          ORDER BY effective_from
@@ -285,6 +353,8 @@ function createPayrollService({ db }) {
       const previousProfile = [...rows].reverse().find((row) => dateKey(row.effective_from) <= effectiveFrom)
       const inheritedProfile = sameDate || previousProfile
       const contributionSettings = normalizeContributionSettings(suppliedContributions, inheritedProfile?.contribution_settings)
+      const minimumWageEarner = suppliedMinimumWage ?? Boolean(inheritedProfile?.minimum_wage_earner)
+      const taxShield = Number(suppliedTaxShield ?? inheritedProfile?.tax_shield ?? 0)
       const dailyFare = suppliedDailyFare == null
         ? Number(inheritedProfile?.daily_fare_rate ?? 0)
         : Number(suppliedDailyFare)
@@ -320,18 +390,19 @@ function createPayrollService({ db }) {
            SET effective_to = $1, monthly_basic_salary = $2, daily_fare_rate = $3,
                work_start_time = $4, work_end_time = $5, unpaid_break_minutes = $6,
                workdays = $7::smallint[], daily_rate_divisor = $8, monthly_cola = $9,
-               contribution_settings = $11::jsonb
+               contribution_settings = $11::jsonb, minimum_wage_earner = $12, tax_shield = $13
            WHERE id = $10
            RETURNING *`,
-          [effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, sameDate.id, JSON.stringify(contributionSettings)]
+          [effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, sameDate.id, JSON.stringify(contributionSettings), minimumWageEarner, taxShield]
         )
         : await tx.query(
           `INSERT INTO payroll_employee_profiles
              (employee_id, effective_from, effective_to, monthly_basic_salary, daily_fare_rate,
-              work_start_time, work_end_time, unpaid_break_minutes, workdays, daily_rate_divisor, monthly_cola, created_by, contribution_settings)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::smallint[], $10, $11, $12, $13::jsonb)
+              work_start_time, work_end_time, unpaid_break_minutes, workdays, daily_rate_divisor, monthly_cola, created_by, contribution_settings,
+              minimum_wage_earner, tax_shield)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::smallint[], $10, $11, $12, $13::jsonb, $14, $15)
            RETURNING *`,
-          [employeeId, effectiveFrom, effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, fields.userId, JSON.stringify(contributionSettings)]
+          [employeeId, effectiveFrom, effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, fields.userId, JSON.stringify(contributionSettings), minimumWageEarner, taxShield]
         )
       if (biometricIdProvided) {
         if (biometricPersonId) {
@@ -729,7 +800,8 @@ function createPayrollService({ db }) {
                 EXISTS(SELECT 1 FROM users ceo_account WHERE ceo_account.employee_id = employee.id AND ceo_account.role = 'ceo') AS is_ceo,
                 profile.id AS profile_id, profile.effective_from, profile.effective_to,
                 profile.monthly_basic_salary, profile.monthly_cola, profile.daily_fare_rate, profile.work_start_time,
-                profile.work_end_time, profile.unpaid_break_minutes, profile.workdays, profile.daily_rate_divisor, profile.contribution_settings
+                profile.work_end_time, profile.unpaid_break_minutes, profile.workdays, profile.daily_rate_divisor, profile.contribution_settings,
+                profile.minimum_wage_earner, profile.tax_shield
          FROM employees employee
          LEFT JOIN LATERAL (
            -- The salary currently set applies to the whole period (see loadContext in attendanceReviewService).
@@ -768,8 +840,9 @@ function createPayrollService({ db }) {
         )).rows : []
       const firstCutoffByEmployee = new Map(firstCutoffRows.map((line) => [Number(line.employee_id), line]))
 
+      const taxTable = await taxTableFor(tx, payday)
       const ruleSnapshot = {
-        version: 5,
+        version: 6,
         ...(confirmedBatch.context.isTest ? {isTest:true,employeeIds:confirmedBatch.context.employeeIds,practiceSalaryBasis:'Current configured salaries used hypothetically; original effective dates retained in testProfiles',testProfiles:confirmedBatch.context.profiles} : {}),
         payrollScope: scope,
         attendanceContextHash: confirmedBatch.context_hash,
@@ -793,6 +866,7 @@ function createPayrollService({ db }) {
           'New Bio_New Office Biometrics_Entrance Card Reader1': 'first_or_last_endpoint',
         },
         missedTimeDeduction: 'late_and_undertime_minutes * daily_rate / scheduled paid hours / 60',
+        withholdingTax: { table: 'BIR semi-monthly table in effect on the payday (Settings → Withholding tax; workbook Remittance AS)', taxablePay: 'gross pay - employee SSS, PhilHealth and Pag-IBIG - tax shield - COLA and non-taxable allowances; 0 for a minimum wage earner', requires: 'TIN ticked', override: 'an HR-entered withholding tax replaces the computed tax', tableEffectiveFrom: taxTable.effectiveFrom },
         contributionsAppliedThisRun: includeContributions,
         createdAt: new Date().toISOString(),
       }
@@ -857,7 +931,6 @@ function createPayrollService({ db }) {
         const night = calculateNightDifferential({attendance, employeeId: employee.employee_id, fallbackProfile: profile, profiles: payProfiles, holidays: confirmedBatch.context.holidays})
         const approved = calculateApprovedWork({ attendance, employeeId: employee.employee_id, fallbackProfile: profile, profiles: payProfiles })
         const automaticEarnings = [...night.automaticEarnings, ...approved.automaticEarnings]
-        const automaticTotal = automaticEarnings.reduce((sum, entry) => sum + Number(entry.amount), 0)
         const baseLine = computeLineWithLeave({ ...lineInput, includeContributions: false })
         const firstCutoffLine = firstCutoffByEmployee.get(Number(employee.employee_id))
         const firstCutoffPay = firstCutoffLine
@@ -880,6 +953,8 @@ function createPayrollService({ db }) {
             reason:'Hired or left during the cutoff; verify basic pay and COLA proration against company policy',verifiedReason:null},
           contributionBasis: line.contributionBasis,
           contributionSettings: profile.contribution_settings,
+          taxSettings: profileTaxSettings(profile),
+          taxTable,
           sssAssessment: sssAssessment ? { ...sssAssessment,
             firstCutoffSource: firstCutoffLine ? `saved-first-cutoff-${firstCutoffLine.first_cutoff_status}` : 'assumed-half-basic',
             firstCutoffRunId: firstCutoffLine?.first_cutoff_run_id ?? null } : null,
@@ -898,6 +973,10 @@ function createPayrollService({ db }) {
           contributionSchedule: 'PH-2025',
           charges: [],
         }
+        const pay = draftPay({ gross_salary: line.grossSalary, cola_pay: line.colaPay, absence_deduction: line.absenceDeduction,
+          late_deduction: line.lateDeduction, undertime_deduction: line.undertimeDeduction, employee_sss: line.employeeSss,
+          employee_philhealth: line.employeePhilhealth, employee_pagibig: line.employeePagibig, details })
+        details.tax = pay.tax
         await tx.query(
           `INSERT INTO payroll_run_lines
              (payroll_run_id, employee_id, employee_code, employee_name, monthly_basic_salary,
@@ -905,9 +984,9 @@ function createPayrollService({ db }) {
               absence_deduction, late_minutes, late_deduction, undertime_minutes, undertime_deduction,
               employee_sss, employer_sss, employer_ec, employee_philhealth, employer_philhealth,
               employee_pagibig, employer_pagibig, thirteenth_month_accrual,
-              net_pay, details, cola_pay)
+              net_pay, details, cola_pay, withholding_tax)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-                   $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26::jsonb, $27)`,
+                   $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26::jsonb, $27, $28)`,
           [run.id, employee.employee_id, employee.employee_code,
             `${employee.first_name} ${employee.last_name}`.trim(), line.monthlyBasicSalary,
             line.dailyRate, line.hourlyRate, line.grossSalary,
@@ -916,7 +995,7 @@ function createPayrollService({ db }) {
             line.employeeSss, line.employerSss, line.employerEc,
             line.employeePhilhealth, line.employerPhilhealth,
             line.employeePagibig, line.employerPagibig,
-            line.thirteenthMonthAccrual, Math.round(Math.max(0,line.grossSalary + line.colaPay + automaticTotal - line.employeeDeductions) * 100) / 100, JSON.stringify(details), line.colaPay]
+            line.thirteenthMonthAccrual, Math.max(0, pay.netPay), JSON.stringify(details), line.colaPay, pay.withholdingTax]
         )
       }
       const recreated=(await tx.query('SELECT * FROM payroll_run_lines WHERE payroll_run_id = $1',[run.id])).rows
@@ -1031,19 +1110,20 @@ function createPayrollService({ db }) {
       const sssContributions = sssAssessment
         ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation, contributionSettings }) : null
       const employeeSss = sssContributions?.sssEmployee ?? Number(line.employee_sss || 0)
-      const netPay = draftNetPay(line, { manualEarnings: recalculated, employeeSss })
+      const pay = draftPay(line, { manualEarnings: recalculated, employeeSss })
+      const netPay = pay.netPay
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
-      const details = { ...line.details, manualEarnings: recalculated,
+      const details = { ...line.details, manualEarnings: recalculated, tax: pay.tax,
         ...(sssAssessment ? { sssAssessment: { ...line.details?.sssAssessment, ...sssAssessment,
           firstCutoffSource: line.details?.sssAssessment?.firstCutoffSource || 'assumed-half-basic' },
           contributionBasis: { ...line.details?.contributionBasis,
             sssCompensation: sssAssessment.monthlyCompensation, sssMsc: sssContributions.sssMsc } } : {}) }
       const updated = await tx.query(
         `UPDATE payroll_run_lines SET details = $1::jsonb, net_pay = $2, employee_sss = $3,
-           employer_sss = $4, employer_ec = $5 WHERE id = $6 RETURNING *`,
+           employer_sss = $4, employer_ec = $5, withholding_tax = $7 WHERE id = $6 RETURNING *`,
         [JSON.stringify(details), netPay, employeeSss,
           sssContributions?.sssEmployer ?? Number(line.employer_sss || 0),
-          sssContributions?.sssEmployerEc ?? Number(line.employer_ec || 0), lineId]
+          sssContributions?.sssEmployerEc ?? Number(line.employer_ec || 0), lineId, pay.withholdingTax]
       )
       await appendRunEvent(tx, runId, 'manual_earnings_updated', actor, {
         lineId, employeeId: line.employee_id, previous, current: recalculated,
@@ -1077,9 +1157,10 @@ function createPayrollService({ db }) {
       const sssContributions = sssAssessment
         ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation, contributionSettings }) : null
       const employeeSss = sssContributions?.sssEmployee ?? Number(line.employee_sss || 0)
-      const netPay = draftNetPay(line, { charges: normalized, employeeSss })
+      const pay = draftPay(line, { charges: normalized, employeeSss })
+      const netPay = pay.netPay
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
-      const details = { ...line.details, charges: normalized,
+      const details = { ...line.details, charges: normalized, tax: pay.tax,
         ...(line.details?.payBasisReview?.required?{payBasisReview:{...line.details.payBasisReview,verifiedReason:null,verifiedBy:null,verifiedAt:null}}:{}),
         ...(sssAssessment ? { sssAssessment: { ...line.details?.sssAssessment, ...sssAssessment,
           firstCutoffSource: line.details?.sssAssessment?.firstCutoffSource || 'assumed-half-basic' },
@@ -1087,12 +1168,13 @@ function createPayrollService({ db }) {
             sssCompensation: sssAssessment.monthlyCompensation, sssMsc: sssContributions.sssMsc } } : {}) }
       const updated = await tx.query(
         `UPDATE payroll_run_lines SET details = $1::jsonb, net_pay = $2, employee_sss = $3,
-           employer_sss = $4, employer_ec = $5, thirteenth_month_accrual = $7 WHERE id = $6 RETURNING *`,
+           employer_sss = $4, employer_ec = $5, thirteenth_month_accrual = $7, withholding_tax = $8 WHERE id = $6 RETURNING *`,
         [JSON.stringify(details), netPay, employeeSss,
           sssContributions?.sssEmployer ?? Number(line.employer_sss || 0),
           sssContributions?.sssEmployerEc ?? Number(line.employer_ec || 0), lineId,
           calculateThirteenthMonthAccrual({ grossSalary: Number(line.gross_salary),
-            absenceDeduction: Number(line.absence_deduction || 0), basicAdjustment: basicAdjustmentTotal(normalized) })]
+            absenceDeduction: Number(line.absence_deduction || 0), basicAdjustment: basicAdjustmentTotal(normalized) }),
+          pay.withholdingTax]
       )
       await appendRunEvent(tx, runId, 'charges_updated', actor, {
         lineId, employeeId: line.employee_id, previous, current: normalized,
@@ -1134,9 +1216,10 @@ function createPayrollService({ db }) {
         sssCompensation: sssAssessment.monthlyCompensation,
         contributionSettings,
       })
-      const netPay = draftNetPay(line, { employeeSss: contributions.sssEmployee })
+      const pay = draftPay(line, { employeeSss: contributions.sssEmployee })
+      const netPay = pay.netPay
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
-      const details = { ...line.details,
+      const details = { ...line.details, tax: pay.tax,
         sssAssessment: { ...sssAssessment, firstCutoffSource: 'hr-override',
           firstCutoffRunId: previous?.firstCutoffRunId ?? null, overrideReason: explanation },
         contributionBasis: { ...line.details?.contributionBasis,
@@ -1144,9 +1227,9 @@ function createPayrollService({ db }) {
       }
       const updated = await tx.query(
         `UPDATE payroll_run_lines SET details = $1::jsonb, net_pay = $2, employee_sss = $3,
-           employer_sss = $4, employer_ec = $5 WHERE id = $6 RETURNING *`,
+           employer_sss = $4, employer_ec = $5, withholding_tax = $7 WHERE id = $6 RETURNING *`,
         [JSON.stringify(details), netPay, contributions.sssEmployee,
-          contributions.sssEmployer, contributions.sssEmployerEc, lineId]
+          contributions.sssEmployer, contributions.sssEmployerEc, lineId, pay.withholdingTax]
       )
       await appendRunEvent(tx, runId, 'first_cutoff_pay_overridden', actor, {
         lineId, employeeId: line.employee_id, previousPay: previous?.firstCutoffPay ?? null,
@@ -1165,6 +1248,7 @@ function createPayrollService({ db }) {
       if(!canFinalizePayroll(run))throw serviceError('Payroll approval is disabled until workbook parity is verified',403)
       if (run.status !== 'draft') throw serviceError('Only draft payroll runs can be approved', 409)
       if (run.rule_snapshot?.version && run.rule_snapshot.version < 5) throw serviceError('Recalculate this draft to apply the night shift and night differential rules before approval',409)
+      if (run.rule_snapshot?.version && run.rule_snapshot.version < 6) throw serviceError('Recalculate this draft to apply withholding tax before approval',409)
       if (!run.attendance_batch_id) throw serviceError('An attendance import batch is required before approval', 400)
       const batch = await requireConfirmedAttendance(tx,run.attendance_batch_id,dateKey(run.period_start),dateKey(run.period_end),run.rule_snapshot?.payrollScope || 'all')
       if(Boolean(batch.context.isTest)!==Boolean(run.rule_snapshot?.isTest))throw serviceError('Practice and real attendance cannot be mixed',409)
@@ -1180,6 +1264,22 @@ function createPayrollService({ db }) {
         const changed = contributions.rows.find(line => JSON.stringify(payContributionSettings(line.details?.contributionSettings)) !==
           JSON.stringify(payContributionSettings(line.contribution_settings ?? undefined)))
         if (changed) throw serviceError(`Government contribution setup changed for ${changed.employee_code}. Recalculate this draft before approval`, 409)
+      }
+      // Withholding tax applies on both paydays, so its TIN, minimum wage and tax shield setup is checked the same way.
+      const taxSetup = await tx.query(`SELECT l.employee_code, l.details, p.contribution_settings, p.minimum_wage_earner, p.tax_shield
+        FROM payroll_run_lines l
+        LEFT JOIN LATERAL (SELECT contribution_settings, minimum_wage_earner, tax_shield FROM payroll_employee_profiles
+          WHERE employee_id=l.employee_id ORDER BY effective_from DESC,id DESC LIMIT 1) p ON TRUE
+        WHERE l.payroll_run_id=$1`, [Number(runId)])
+      const taxChanged = taxSetup.rows.find(line => !line.details?.taxSettings ||
+        JSON.stringify(normalizeTaxSettings(line.details.taxSettings)) !== JSON.stringify(profileTaxSettings(line)))
+      if (taxChanged) throw serviceError(`Tax setup (TIN, minimum wage or tax shield) changed for ${taxChanged.employee_code}. Recalculate this draft before approval`, 409)
+      if (taxSetup.rows.length) {
+        const current = JSON.stringify(await taxTableFor(tx, dateKey(run.payday)))
+        const savedTable = table => table ? JSON.stringify({ effectiveFrom: table.effectiveFrom, rows: normalizeTaxTable(table.rows) }) : null
+        if (taxSetup.rows.some(line => savedTable(line.details?.taxTable) !== current)) {
+          throw serviceError('The withholding tax table for this payday changed. Recalculate this draft before approval', 409)
+        }
       }
       const batchResult = await tx.query(
         'SELECT error_count FROM payroll_attendance_import_batches WHERE id = $1',
@@ -1325,6 +1425,9 @@ function createPayrollService({ db }) {
     recordPayment,
     profileHistory,
     listProfiles,
+    listTaxTables,
+    saveTaxTable,
+    deleteTaxTable,
     upsertProfile,
     importAttendance,
     getAttendanceBatch,

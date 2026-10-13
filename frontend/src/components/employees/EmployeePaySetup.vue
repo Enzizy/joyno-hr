@@ -15,7 +15,7 @@ const toast = useToastStore()
 
 const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
 const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-// SSS, PhilHealth and Pag-IBIG decide month-end contributions; TIN is recorded only (tax is entered in Adjust pay).
+// SSS, PhilHealth and Pag-IBIG decide month-end contributions; withholding tax is deducted only when TIN is ticked.
 const contributionOptions = [{ key: 'sss', label: 'SSS' }, { key: 'philhealth', label: 'PhilHealth' }, { key: 'pagibig', label: 'Pag-IBIG' }, { key: 'tin', label: 'TIN' }]
 const contributionSettings = p => ({ sss: p?.contribution_settings?.sss ?? true, philhealth: p?.contribution_settings?.philhealth ?? true, pagibig: p?.contribution_settings?.pagibig ?? true, tin: p?.contribution_settings?.tin ?? true })
 const contributionSummary = p => contributionOptions.filter(option => contributionSettings(p)[option.key]).map(option => option.label).join(', ') || 'All IDs pending'
@@ -38,6 +38,8 @@ function reset() {
     workEndTime: String(p?.work_end_time || hours.end).slice(0, 5),
     workdays: [...(p?.workdays || [1, 2, 3, 4, 5])],
     contributionSettings: contributionSettings(p),
+    minimumWageEarner: Boolean(p?.minimum_wage_earner),
+    taxShield: Number(p?.tax_shield ?? 0),
   }
   error.value = ''
 }
@@ -119,7 +121,7 @@ async function save() {
 
     <fieldset class="border-t border-gray-800 pt-5">
       <legend class="float-left mb-1 w-full text-sm font-semibold text-gray-100">Government IDs</legend>
-      <p id="contribution-help" class="clear-both mb-3 text-xs text-gray-500">Tick each ID that is ready. A pending SSS, PhilHealth or Pag-IBIG ID is left out of month-end contributions. TIN is for your records; tax is entered in Adjust pay.</p>
+      <p id="contribution-help" class="clear-both mb-3 text-xs text-gray-500">Tick each ID that is ready. A pending SSS, PhilHealth or Pag-IBIG ID is left out of month-end contributions. A pending TIN means no withholding tax.</p>
       <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label v-for="option in contributionOptions" :key="option.key" class="flex cursor-pointer items-start gap-3 rounded-lg border p-3" :style="{ borderColor: form.contributionSettings?.[option.key] ? 'var(--success-border)' : 'var(--warning-border)', background: form.contributionSettings?.[option.key] ? 'var(--success-bg)' : 'var(--warning-bg)' }">
           <input v-model="form.contributionSettings[option.key]" type="checkbox" class="mt-1" :aria-label="`${option.label} ID ready`" aria-describedby="contribution-help">
@@ -127,6 +129,18 @@ async function save() {
         </label>
       </div>
     </fieldset>
+
+    <section class="border-t border-gray-800 pt-5">
+      <h3 class="text-sm font-semibold text-gray-100">Withholding tax</h3>
+      <p id="tax-help" class="mb-3 mt-1 text-xs text-gray-500">Worked out every payday from the <RouterLink to="/settings/tax" class="underline hover:text-gray-300">BIR tax table</RouterLink>, like the workbook. {{ form.contributionSettings?.tin ? '' : 'No tax while the TIN is pending.' }}</p>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-800 p-3">
+          <input v-model="form.minimumWageEarner" type="checkbox" class="mt-1" aria-describedby="tax-help">
+          <span><span class="block text-sm font-semibold text-gray-100">Minimum wage earner</span><span class="mt-1 block text-xs text-gray-500">No withholding tax</span></span>
+        </label>
+        <label class="text-xs font-medium text-gray-400">Tax shield per payday<input v-model.number="form.taxShield" type="number" min="0" step="0.01" class="form-control mt-1.5" :disabled="form.minimumWageEarner" aria-describedby="tax-shield-help"><span id="tax-shield-help" class="mt-1 block font-normal text-gray-500">Taken off taxable pay. Usually 0.</span></label>
+      </div>
+    </section>
 
     <div class="flex justify-end gap-2 border-t border-gray-800 pt-4">
       <AppButton type="button" variant="outline" :disabled="busy" @click="reset">Undo changes</AppButton>

@@ -170,7 +170,7 @@ Existing local calculation code already covers semi-monthly basic salary, the 26
 | SSS basis | Workbook includes ND and both adjustments; current calculateSssAssessablePay includes OT and basic-pay adjustments, but has no separate ND/second-adjustment basis. |
 | Contribution eligibility | Workbook has global switches, membership-ID checks, and a current-cutoff >1,500 condition. Current calculation is principally gated by cutoff/includeContributions. |
 | PhilHealth | Workbook's literal 200/80,000/1,600 rules differ from the local app's 5% schedule using a 10,000 floor and 100,000 cap. |
-| Taxes | No withholding/MWE/tax-shield calculation was found in the current local payroll calculation/charge services. |
+| Taxes | Implemented (migration 034): AR9 taxable pay and the AS9 table, with the TIN, MWE and tax-shield rules. The 333,332–333,333 gap uses the 35% row instead of returning FALSE; tax is rounded to centavos. |
 | OT and ND | Workbook has three coded OT slots and a full ND breakdown. Current app supports selected manually approved earnings and a limited special-holiday calculator. |
 | Paid leave | Workbook adds paid-leave pay back against attendance deductions. The app already knows paid/unpaid leave; integration must avoid a double payment. |
 | Adjustments/accrual | Workbook distinguishes two adjustments but includes only one in its accrual build. Current app needs explicit classification if both are introduced. |
