@@ -75,7 +75,7 @@ const readiness = computed(() => paydayReadiness(next.value, profiles.value))
 const shiftsWithPeople = computed(() => SHIFTS.filter(shift => readiness.value[shift]?.total))
 const progress = computed(() => paydayProgress({ period: next.value, today,
   stagesByShift: shiftsWithPeople.value.filter(shift => readiness.value[shift].ready).map(shift => stagesFor(next.value.payday, shift)) }))
-const stepDetail = (index) => [`${shortDate(next.value.end)}`, `from ${shortDate(addDay(next.value.end))}`, 'check each employee', shortDate(next.value.payday)][index]
+const stepDetail = (index) => [today <= next.value.end ? `opens ${shortDate(addDay(next.value.end))}` : `from ${shortDate(addDay(next.value.end))}`, 'check each employee', `payday ${shortDate(next.value.payday)}`][index]
 
 // One row per shift: how many people are ready, and the one thing to do there.
 function shiftAction(shift) {
@@ -135,7 +135,7 @@ function begin() {
           <div class="flex flex-wrap items-center justify-between gap-3"><p class="text-xs font-semibold uppercase tracking-wide text-primary-300">Next payday</p><StatusBadge variant="info">{{ daysFromToday(next.payday) === 0 ? 'Today' : `In ${plural(daysFromToday(next.payday), 'day')}` }}</StatusBadge></div>
           <h2 class="mt-1 text-2xl font-semibold text-gray-100">{{ longDate(next.payday) }}</h2>
           <div class="mt-4 grid gap-3 border-t border-gray-800 pt-4 sm:grid-cols-2"><div><p class="text-xs text-gray-500">Attendance dates</p><p class="mt-1 text-sm font-medium text-gray-300">{{ formatWorkRange(next.start, next.end) }}</p></div><div><p class="text-xs text-gray-500">{{ next.cutoff === 'second' ? 'Month-end payroll' : '15th payroll' }}</p><p class="mt-1 text-sm text-gray-300">{{ attendanceClosed ? 'Ready for attendance upload' : closesIn === 0 ? 'Attendance closes today' : `Attendance closes in ${plural(closesIn, 'day')}` }}</p><p v-if="next.cutoff === 'second'" class="mt-1 text-xs text-gray-500">Includes SSS, PhilHealth & Pag-IBIG</p></div></div>
-          <ol class="mt-5 grid grid-cols-2 gap-4 rounded-xl bg-gray-950/60 p-4 sm:grid-cols-4" aria-label="Payday steps">
+          <ol class="mt-5 grid grid-cols-1 gap-4 rounded-xl bg-gray-950/60 p-4 sm:grid-cols-3" aria-label="Payday steps">
             <li v-for="(step, index) in PAYDAY_STEPS" :key="step" class="flex items-start gap-2.5">
               <span class="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold" :class="index < progress ? 'border-emerald-500 bg-emerald-500 text-gray-950' : index === progress ? 'border-primary-500 text-primary-300' : 'border-gray-700 text-gray-500'">{{ index < progress ? '✓' : index + 1 }}</span>
               <span class="min-w-0"><span class="block text-sm font-semibold" :class="index <= progress ? 'text-gray-100' : 'text-gray-500'">{{ step }}</span><span class="block text-xs text-gray-500">{{ stepDetail(index) }}</span></span>

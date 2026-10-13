@@ -168,15 +168,17 @@ export function paydayReadiness(period, profilesByShift) {
   return result
 }
 
-export const PAYDAY_STEPS = Object.freeze(['Attendance closes', 'Upload & check', 'Review & approve', 'Release payslips'])
-// Where a payday is in PAYDAY_STEPS (4 = done): the least advanced shift that has people to pay.
+// The Payroll page's payday timeline uses the same steps as a pay run.
+export const PAYDAY_STEPS = Object.freeze(PAY_RUN_STAGES.map(stage => stage.label))
+// Where a payday is in PAYDAY_STEPS (3 = done): the least advanced shift that has people to pay.
+// Before the cutoff ends, attendance is the next step (it opens the day after).
 export function paydayProgress({ period, today, stagesByShift = [] }) {
   if (today <= period.end) return 0
   const progress = stagesByShift.map(stages => {
     const state = key => stages.find(stage => stage.key === key)?.state
-    if (state('attendance') !== 'done') return 1
-    if (state('review') !== 'done') return 2
-    return state('payslips') === 'done' ? 4 : 3
+    if (state('attendance') !== 'done') return 0
+    if (state('review') !== 'done') return 1
+    return state('payslips') === 'done' ? 3 : 2
   })
-  return progress.length ? Math.min(...progress) : 1
+  return progress.length ? Math.min(...progress) : 0
 }

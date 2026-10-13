@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { periodForPayday, paydayForPeriodEnd, paydaysAround, nextPayday, payRunStages, currentPayRun, paydayReadiness, paydayProgress, currentStageKey, runSummary, runsForPeriod, profileGaps } from './payRun.js'
+import { periodForPayday, paydayForPeriodEnd, paydaysAround, nextPayday, payRunStages, currentPayRun, paydayReadiness, paydayProgress, PAYDAY_STEPS, currentStageKey, runSummary, runsForPeriod, profileGaps } from './payRun.js'
 
 const period = periodForPayday('2026-09-30')
 const ready = { monthly_basic_salary: '15000', biometric_person_id: '00000060', work_start_time: '09:00', work_end_time: '18:00' }
@@ -156,13 +156,14 @@ test('payday readiness lists people not set up', () => {
   assert.equal(readiness.night.total, 0)
 })
 
-test('payday progress waits for the cutoff, then follows the least advanced shift', () => {
+test('the payday timeline uses the pay run steps and follows the least advanced shift', () => {
+  assert.deepEqual(PAYDAY_STEPS, ['Attendance', 'Review & approve', 'Payslips'])
   const oct15 = periodForPayday('2026-10-15')
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-07' }), 0)
   assert.equal(paydayProgress({ period: oct15, today: '2026-10-10' }), 0)
   const stages = (attendance, review, payslips) => [{ key: 'attendance', state: attendance }, { key: 'review', state: review }, { key: 'payslips', state: payslips }]
-  assert.equal(paydayProgress({ period: oct15, today: '2026-10-11', stagesByShift: [stages('todo', 'locked', 'locked')] }), 1)
-  assert.equal(paydayProgress({ period: oct15, today: '2026-10-13', stagesByShift: [stages('done', 'todo', 'locked'), stages('done', 'done', 'done')] }), 2)
-  assert.equal(paydayProgress({ period: oct15, today: '2026-10-14', stagesByShift: [stages('done', 'done', 'todo')] }), 3)
-  assert.equal(paydayProgress({ period: oct15, today: '2026-10-15', stagesByShift: [stages('done', 'done', 'done')] }), 4)
+  assert.equal(paydayProgress({ period: oct15, today: '2026-10-11', stagesByShift: [stages('todo', 'locked', 'locked')] }), 0)
+  assert.equal(paydayProgress({ period: oct15, today: '2026-10-13', stagesByShift: [stages('done', 'todo', 'locked'), stages('done', 'done', 'done')] }), 1)
+  assert.equal(paydayProgress({ period: oct15, today: '2026-10-14', stagesByShift: [stages('done', 'done', 'todo')] }), 2)
+  assert.equal(paydayProgress({ period: oct15, today: '2026-10-15', stagesByShift: [stages('done', 'done', 'done')] }), 3)
 })
