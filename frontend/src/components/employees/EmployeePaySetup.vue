@@ -15,8 +15,9 @@ const toast = useToastStore()
 
 const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10)
 const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const contributionOptions = [{ key: 'sss', label: 'SSS' }, { key: 'philhealth', label: 'PhilHealth' }, { key: 'pagibig', label: 'Pag-IBIG' }]
-const contributionSettings = p => ({ sss: p?.contribution_settings?.sss ?? true, philhealth: p?.contribution_settings?.philhealth ?? true, pagibig: p?.contribution_settings?.pagibig ?? true })
+// SSS, PhilHealth and Pag-IBIG decide month-end contributions; TIN is recorded only (tax is entered in Adjust pay).
+const contributionOptions = [{ key: 'sss', label: 'SSS' }, { key: 'philhealth', label: 'PhilHealth' }, { key: 'pagibig', label: 'Pag-IBIG' }, { key: 'tin', label: 'TIN' }]
+const contributionSettings = p => ({ sss: p?.contribution_settings?.sss ?? true, philhealth: p?.contribution_settings?.philhealth ?? true, pagibig: p?.contribution_settings?.pagibig ?? true, tin: p?.contribution_settings?.tin ?? true })
 const contributionSummary = p => contributionOptions.filter(option => contributionSettings(p)[option.key]).map(option => option.label).join(', ') || 'All IDs pending'
 const defaultHours = shift => shift === 'night' ? { start: '21:00', end: '06:00' } : { start: '09:00', end: '18:00' }
 
@@ -117,9 +118,9 @@ async function save() {
     </section>
 
     <fieldset class="border-t border-gray-800 pt-5">
-      <legend class="float-left mb-1 w-full text-sm font-semibold text-gray-100">Government contributions</legend>
-      <p id="contribution-help" class="clear-both mb-3 text-xs text-gray-500">Tick each ID that is ready. Pending IDs are left out of month-end contributions.</p>
-      <div class="grid gap-3 sm:grid-cols-3">
+      <legend class="float-left mb-1 w-full text-sm font-semibold text-gray-100">Government IDs</legend>
+      <p id="contribution-help" class="clear-both mb-3 text-xs text-gray-500">Tick each ID that is ready. A pending SSS, PhilHealth or Pag-IBIG ID is left out of month-end contributions. TIN is for your records; tax is entered in Adjust pay.</p>
+      <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label v-for="option in contributionOptions" :key="option.key" class="flex cursor-pointer items-start gap-3 rounded-lg border p-3" :style="{ borderColor: form.contributionSettings?.[option.key] ? 'var(--success-border)' : 'var(--warning-border)', background: form.contributionSettings?.[option.key] ? 'var(--success-bg)' : 'var(--warning-bg)' }">
           <input v-model="form.contributionSettings[option.key]" type="checkbox" class="mt-1" :aria-label="`${option.label} ID ready`" aria-describedby="contribution-help">
           <span><span class="block text-sm font-semibold text-gray-100">{{ option.label }}</span><span class="mt-1 block text-xs" :style="{ color: form.contributionSettings?.[option.key] ? 'var(--success-text)' : 'var(--warning-text)' }">{{ form.contributionSettings?.[option.key] ? 'ID ready' : 'ID pending' }}</span></span>

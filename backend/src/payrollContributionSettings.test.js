@@ -1,11 +1,11 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { calculatePayrollLine, calculateContributions, normalizeContributionSettings } = require('./services/payrollCalculationService')
+const { calculatePayrollLine, calculateContributions, normalizeContributionSettings, payContributionSettings } = require('./services/payrollCalculationService')
 
 test('government ID defaults preserve the existing three-agency calculations', () => {
-  assert.deepEqual(normalizeContributionSettings(), { sss:true, philhealth:true, pagibig:true })
+  assert.deepEqual(normalizeContributionSettings(), { sss:true, philhealth:true, pagibig:true, tin:true })
   assert.deepEqual(calculateContributions(15000), calculateContributions(15000, { contributionSettings:normalizeContributionSettings() }))
-  assert.deepEqual(normalizeContributionSettings({pagibig:false}, {sss:false,philhealth:true,pagibig:true}), {sss:false,philhealth:true,pagibig:false})
+  assert.deepEqual(normalizeContributionSettings({pagibig:false}, {sss:false,philhealth:true,pagibig:true}), {sss:false,philhealth:true,pagibig:false,tin:true})
 })
 
 test('Pag-IBIG-only month-end deducts 200 and excludes both employee and employer SSS/PhilHealth', () => {
@@ -36,4 +36,10 @@ test('invalid contribution switches cannot silently suppress deductions', () => 
   for (const value of [null,[],false,'pending',{sss:'false'},{sss:0},{sss:null},{other:true}]) {
     assert.throws(()=>normalizeContributionSettings(value),TypeError)
   }
+})
+
+test('TIN readiness is recorded but never changes contributions', () => {
+  assert.deepEqual(calculateContributions(15000, { contributionSettings: { sss:true, philhealth:true, pagibig:true, tin:false } }), calculateContributions(15000))
+  assert.deepEqual(payContributionSettings({ sss:true, philhealth:false, pagibig:true, tin:false }), { sss:true, philhealth:false, pagibig:true })
+  assert.throws(() => normalizeContributionSettings({ tin:'yes' }), TypeError)
 })

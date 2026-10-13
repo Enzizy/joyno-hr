@@ -9,6 +9,7 @@ const EARNING_LABELS = Object.freeze({ overtime: 'Approved overtime', night_diff
 const {
   calculateContributions,
   normalizeContributionSettings,
+  payContributionSettings,
   calculatePayrollLine,
   calculateSssAssessablePay,
   calculateThirteenthMonthAccrual,
@@ -1176,8 +1177,8 @@ function createPayrollService({ db }) {
           LEFT JOIN LATERAL (SELECT contribution_settings FROM payroll_employee_profiles
             WHERE employee_id=l.employee_id ORDER BY effective_from DESC,id DESC LIMIT 1) p ON TRUE
           WHERE l.payroll_run_id=$1`, [Number(runId)])
-        const changed = contributions.rows.find(line => JSON.stringify(normalizeContributionSettings(line.details?.contributionSettings)) !==
-          JSON.stringify(normalizeContributionSettings(line.contribution_settings ?? undefined)))
+        const changed = contributions.rows.find(line => JSON.stringify(payContributionSettings(line.details?.contributionSettings)) !==
+          JSON.stringify(payContributionSettings(line.contribution_settings ?? undefined)))
         if (changed) throw serviceError(`Government contribution setup changed for ${changed.employee_code}. Recalculate this draft before approval`, 409)
       }
       const batchResult = await tx.query(

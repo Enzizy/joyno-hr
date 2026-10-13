@@ -68,21 +68,29 @@ function calculateSssAssessablePay({ firstCutoffPay, grossSalary, absenceDeducti
 }
 
 const CONTRIBUTION_KEYS = Object.freeze(['sss', 'philhealth', 'pagibig'])
+// TIN readiness is recorded beside the contribution IDs but never changes pay: tax is entered by HR.
+const GOVERNMENT_ID_KEYS = Object.freeze([...CONTRIBUTION_KEYS, 'tin'])
 
 function normalizeContributionSettings(value, fallback = {}) {
   if (value !== undefined && (!value || typeof value !== 'object' || Array.isArray(value))) {
     throw new TypeError('contributionSettings must contain government contribution checkboxes')
   }
-  if (value && Object.keys(value).some(key => !CONTRIBUTION_KEYS.includes(key))) {
+  if (value && Object.keys(value).some(key => !GOVERNMENT_ID_KEYS.includes(key))) {
     throw new TypeError('Unknown government contribution setting')
   }
-  return Object.fromEntries(CONTRIBUTION_KEYS.map(key => {
+  return Object.fromEntries(GOVERNMENT_ID_KEYS.map(key => {
     const enabled = value?.[key] ?? fallback?.[key] ?? true
     if (value && Object.hasOwn(value, key) && typeof value[key] !== 'boolean') {
       throw new TypeError(`${key} contribution setting must be true or false`)
     }
     return [key, enabled]
   }))
+}
+
+// Only the settings that change pay (SSS, PhilHealth, Pag-IBIG), for comparing saved drafts with the current setup.
+function payContributionSettings(value) {
+  const settings = normalizeContributionSettings(value)
+  return Object.fromEntries(CONTRIBUTION_KEYS.map(key => [key, settings[key]]))
 }
 
 function calculateContributions(monthlyBasicSalary, { effectiveYear = 2025, sssCompensation, contributionSettings } = {}) {
@@ -308,6 +316,7 @@ module.exports = {
   calculateWorkedSpecialHoliday,
   calculatePayrollLine,
   normalizeContributionSettings,
+  payContributionSettings,
   getSssMonthlySalaryCredit,
   roundMoney,
 }
