@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppConfirmModal from '@/components/ui/AppConfirmModal.vue'
-import SettingsWorkspaceNav from '@/components/settings/SettingsWorkspaceNav.vue'
 import { deleteTaxTable, listTaxTables, saveTaxTable } from '@/services/api'
 import { useToastStore } from '@/stores/toastStore'
 import { tableFor, withholdingTax } from '@/utils/withholdingTax'
@@ -86,7 +85,6 @@ const checked = computed(() => taxable.value === '' || !Number.isFinite(Number(t
 <template>
   <div class="space-y-6">
     <PageHeader title="Withholding tax" />
-    <SettingsWorkspaceNav />
     <p v-if="loadError" role="alert" class="rounded-lg border p-3 text-sm" style="color:var(--danger-text);background:var(--danger-bg);border-color:var(--danger-border)">{{ loadError }}</p>
     <div class="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
       <section class="min-w-0 rounded-xl border border-gray-800 bg-gray-900 p-5">

@@ -29,13 +29,12 @@ export const navGroups = [
     ],
   },
   {
-    name: 'Settings', icon: 'settings', path: '/settings', roles: MANAGEMENT_ROLES,
-    activePaths: ['/settings', '/users', '/audit-logs'],
-    related: [
-      { path: '/settings/leave', name: 'Leave policy', icon: 'leave' },
-      { path: '/settings/tax', name: 'Withholding tax', icon: 'pay', hidden: !payrollEnabled },
-      { path: '/users', name: 'Accounts', icon: 'user-cog' },
-      { path: '/audit-logs', name: 'Audit log', icon: 'audit' },
+    name: 'Settings', icon: 'settings', roles: MANAGEMENT_ROLES,
+    children: [
+      { path: '/settings/leave', name: 'Leave policy', icon: 'leave', roles: MANAGEMENT_ROLES },
+      { path: '/settings/tax', name: 'Withholding tax', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
+      { path: '/users', name: 'Accounts', icon: 'user-cog', roles: MANAGEMENT_ROLES },
+      { path: '/audit-logs', name: 'Audit log', icon: 'audit', roles: MANAGEMENT_ROLES },
     ],
   },
   { name: 'Profile', icon: 'users', path: '/profile', roles: ['employee'] },

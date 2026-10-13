@@ -175,10 +175,8 @@ const routes = [
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
       {
-        path: 'settings',
-        name: 'Settings',
-        component: () => import('@/views/SettingsHubView.vue'),
-        meta: { roles: ['admin', 'hr', 'ceo'] },
+        // Settings is a sidebar group; its old overview page opens the first setting.
+        path: 'settings', name: 'Settings', redirect: '/settings/leave',
       },
       {
         path: 'settings/leave',
