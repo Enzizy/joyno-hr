@@ -10,6 +10,14 @@ export function standardPeriod(monthKey, type) {
   }
 }
 
+// The payroll cutoff a work date falls in: the 26th–10th is paid on the 15th, the 11th–25th on the 30th.
+export function cutoffContaining(date) {
+  const [year, month, day] = String(date).slice(0, 10).split('-').map(Number)
+  if (day >= 11 && day <= 25) return standardPeriod(`${year}-${String(month).padStart(2, '0')}`, 'second')
+  const paidMonth = new Date(Date.UTC(year, month - 1 + (day >= 26 ? 1 : 0), 1)).toISOString().slice(0, 7)
+  return standardPeriod(paidMonth, 'first')
+}
+
 export function formatWorkDate(value) {
   if (!value) return '—'
   const date = new Date(`${String(value).slice(0, 10)}T12:00:00Z`)

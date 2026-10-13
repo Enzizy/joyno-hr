@@ -42,3 +42,11 @@ test('confirmed attendance from an earlier employee scope is not selected for a 
   assert.deepEqual(matchingAttendanceReviews(reviews, '2026-10-11', '2026-10-25').map(r => r.id), [1])
   assert.deepEqual(matchingAttendanceReviews(reviews, '2026-10-11', '2026-10-25', false).map(r => r.id), [3])
 })
+
+test('a work date falls in the 26th–10th or the 11th–25th cutoff, across months and years', async () => {
+  const { cutoffContaining } = await import('./payrollPeriods.js')
+  assert.deepEqual(cutoffContaining('2026-10-13'), { start: '2026-10-11', end: '2026-10-25', payday: '2026-10-30' })
+  assert.deepEqual(cutoffContaining('2026-10-05'), { start: '2026-09-26', end: '2026-10-10', payday: '2026-10-15' })
+  assert.deepEqual(cutoffContaining('2026-12-28'), { start: '2026-12-26', end: '2027-01-10', payday: '2027-01-15' })
+  assert.deepEqual(cutoffContaining('2026-10-10'), { start: '2026-09-26', end: '2026-10-10', payday: '2026-10-15' })
+})

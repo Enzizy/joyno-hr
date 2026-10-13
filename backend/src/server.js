@@ -3109,8 +3109,9 @@ app.get('/api/leave-requests/:id/attachment', authRequired, async (req, res) => 
   res.send(buffer)
 })
 
-// Reports
-function buildLeaveReportQuery(from, to) {
+// Reports. The on-screen report also gets pending requests, to say how many still await approval;
+// attachment files are left out since no report shows them.
+function buildLeaveReportQuery(from, to, { includePending = false } = {}) {
   let sql = `
     SELECT
       lr.id,
@@ -3134,12 +3135,11 @@ function buildLeaveReportQuery(from, to) {
       lr.credits_deducted,
       lr.attachment_name,
       lr.attachment_type,
-      lr.attachment_data,
       lr.created_at,
       e.department
     FROM leave_requests lr
     LEFT JOIN employees e ON lr.employee_id = e.id
-    WHERE lr.status = 'approved'
+    WHERE lr.status IN ('approved'${includePending ? ", 'pending'" : ''})
   `
   const params = []
   if (from) {
@@ -3156,7 +3156,7 @@ function buildLeaveReportQuery(from, to) {
 
 app.get('/api/reports/leave', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {
   const { from, to } = req.query
-  const { sql, params } = buildLeaveReportQuery(from, to)
+  const { sql, params } = buildLeaveReportQuery(from, to, { includePending: true })
   const { rows } = await db.query(sql, params)
   res.json(rows)
 })
