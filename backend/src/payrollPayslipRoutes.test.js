@@ -24,7 +24,7 @@ test('CSV inspection accepts New Bio-only dates and preserves Windows-1252 names
   }
 })
 
-test('pay profile saves monthly COLA along with basic salary', async () => {
+test('pay profile saves monthly COLA and the government ID ticks along with basic salary', async () => {
   const app = express()
   app.use(express.json())
   let saved
@@ -37,10 +37,12 @@ test('pay profile saves monthly COLA along with basic salary', async () => {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/api/payroll/profiles/12`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ monthlyBasicSalary: 15000, monthlyCola: 1000,
-        effectiveFrom: '2026-09-01', biometricPersonId: '42' }),
+        effectiveFrom: '2026-09-01', biometricPersonId: '42', contributionSettings: { sss: true, philhealth: true, pagibig: false, tin: false } }),
     })
     assert.equal(response.status, 200)
     assert.equal(saved.monthlyCola, 1000)
+    // The route must pass the ticks through; dropping them silently saved every ID as ready.
+    assert.deepEqual(saved.contributionSettings, { sss: true, philhealth: true, pagibig: false, tin: false })
   } finally {
     await new Promise((resolve) => server.close(resolve))
   }

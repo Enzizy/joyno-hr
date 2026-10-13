@@ -212,6 +212,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
         workEndTime: req.body.workEndTime,
         unpaidBreakMinutes: req.body.unpaidBreakMinutes,
         dailyRateDivisor: req.body.dailyRateDivisor,
+        contributionSettings: req.body.contributionSettings,
       }
       for (const key of Object.keys(profileInput)) {
         if (profileInput[key] === undefined) delete profileInput[key]
