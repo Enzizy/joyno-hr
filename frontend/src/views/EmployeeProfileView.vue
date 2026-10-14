@@ -10,6 +10,7 @@ import AppModal from '@/components/ui/AppModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import MoreMenu from '@/components/ui/MoreMenu.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
+import { auditAction, auditActor, auditChanges } from '@/utils/auditLog'
 import EmployeePaySetup from '@/components/employees/EmployeePaySetup.vue'
 
 // One page per employee: details, schedule & pay, leave, login and history in one place.
@@ -43,12 +44,12 @@ async function load() {
       getEmployee(id.value),
       payrollEnabled ? getPayrollProfiles().catch(() => []) : [],
       getUsers().catch(() => []),
-      getAuditLogs({ limit: 100 }).catch(() => []),
+      getAuditLogs({ employee_id: id.value, limit: 30 }).catch(() => ({ items: [] })),
     ])
     employee.value = person
     profile.value = (profiles || []).find(p => Number(p.employee_id) === id.value) || null
     account.value = (users || []).find(u => Number(u.employee_id) === id.value) || null
-    activities.value = (logs?.items || logs || []).filter(item => item.target_table === 'employees' && Number(item.target_id) === id.value)
+    activities.value = logs?.items || []
     resetDetails()
   } catch (error) { loadError.value = error.message || 'Unable to load this employee.' }
   finally { loading.value = false }
@@ -197,10 +198,10 @@ watch(id, load)
       <section id="section-history" class="scroll-mt-16 rounded-xl border border-gray-800 bg-gray-900 p-5">
         <h2 class="mb-4 font-semibold text-gray-100">History</h2>
         <ol v-if="activities.length" class="space-y-3">
-          <li v-for="item in activities.slice(0, 15)" :key="item.id" class="flex gap-3 text-sm"><span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary-500" /><span><span class="text-gray-200">{{ String(item.action || 'Updated').replaceAll('_', ' ') }}</span><span class="block text-xs text-gray-500">{{ stamp(item.created_at) }}<span v-if="item.user_email || item.actor_name"> · {{ item.actor_name || item.user_email }}</span></span></span></li>
+          <li v-for="item in activities" :key="item.id" class="flex gap-3 text-sm"><span class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary-500" /><span class="min-w-0"><span class="text-gray-200">{{ auditAction(item) }}</span><span class="block text-xs text-gray-500">{{ stamp(item.created_at) }} · {{ auditActor(item) }}</span><span v-for="change in auditChanges(item)" :key="change" class="block text-xs text-gray-400">{{ change }}</span></span></li>
         </ol>
         <p v-else class="text-sm text-gray-400">No recorded changes yet.</p>
-        <p v-if="payrollEnabled" class="mt-3 text-xs text-gray-500">Pay and schedule changes are listed under Schedule & pay.</p>
+        <RouterLink :to="{ path: '/audit-logs' }" class="mt-3 inline-block text-xs font-semibold text-primary-300 hover:underline">Full audit log →</RouterLink>
       </section>
     </template>
 

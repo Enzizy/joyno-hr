@@ -8,8 +8,6 @@ const props = defineProps({
   show: Boolean,
   mode: { type: String, default: 'task' },
   task: { type: Object, default: null },
-  clients: { type: Array, default: () => [] },
-  services: { type: Array, default: () => [] },
   users: { type: Array, default: () => [] },
   saving: Boolean,
 })
@@ -40,10 +38,6 @@ const allDepartmentUsersSelected = computed(() => {
   const selected = new Set(taskForm.value.assigned_to_ids.map(String))
   return departmentUsers.value.every((user) => selected.has(String(user.id)))
 })
-const formServices = computed(() => {
-  if (!taskForm.value.client_id) return []
-  return props.services.filter((service) => Number(service.client_id) === Number(taskForm.value.client_id))
-})
 const filteredUsers = computed(() => {
   const query = assigneeSearch.value.trim().toLowerCase()
   const users = departmentFilter.value ? departmentUsers.value : assignableUsers.value
@@ -59,12 +53,6 @@ const selectedUsers = computed(() => {
 
 watch(() => props.show, (show) => {
   if (show) resetForm()
-})
-
-watch(() => taskForm.value.client_id, () => {
-  if (taskForm.value.service_id && !formServices.value.some((service) => String(service.id) === String(taskForm.value.service_id))) {
-    taskForm.value.service_id = ''
-  }
 })
 
 function emptyForm() {
@@ -98,12 +86,6 @@ function resetForm() {
 function userLabel(user) {
   const name = `${String(user.first_name || '').trim()} ${String(user.last_name || '').trim()}`.trim()
   return name || user.email || `User #${user.id}`
-}
-
-function serviceLabel(value) {
-  if (value === 'social_media_management') return 'Social Media'
-  if (value === 'website_development') return 'Website Dev'
-  return value || '-'
 }
 
 function toggleDepartmentSelection() {
@@ -151,22 +133,6 @@ function submitForm() {
             <div>
               <label class="mb-1 block text-sm font-medium text-gray-200">Description</label>
               <textarea v-model="taskForm.description" rows="4" class="block w-full resize-y rounded-lg border border-gray-700 bg-gray-900 px-4 py-3 text-sm text-gray-100 placeholder:text-gray-500 focus:border-primary-500 focus:ring-primary-500" :placeholder="isMeeting ? 'Add the agenda or meeting context.' : 'Add instructions or important context.'" />
-            </div>
-            <div v-if="isEditing || mode === 'task'" class="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-200">Client</label>
-                <select v-model="taskForm.client_id" class="form-control">
-                  <option value="">No client</option>
-                  <option v-for="client in clients" :key="client.id" :value="String(client.id)">{{ client.company_name }}</option>
-                </select>
-              </div>
-              <div>
-                <label class="mb-1 block text-sm font-medium text-gray-200">Service</label>
-                <select v-model="taskForm.service_id" class="form-control" :disabled="!taskForm.client_id">
-                  <option value="">No service</option>
-                  <option v-for="service in formServices" :key="service.id" :value="String(service.id)">{{ serviceLabel(service.service_type) }}</option>
-                </select>
-              </div>
             </div>
           </div>
         </section>

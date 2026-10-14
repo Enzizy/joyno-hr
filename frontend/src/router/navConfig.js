@@ -24,7 +24,10 @@ export const navGroups = [
     name: 'Reports', icon: 'chart', roles: MANAGEMENT_ROLES,
     children: [
       { path: '/reports/leave', name: 'Leave reports', icon: 'leave', roles: MANAGEMENT_ROLES },
+      { path: '/reports/leave-balances', name: 'Leave balances', icon: 'leave', roles: MANAGEMENT_ROLES },
       { path: '/reports/payroll', name: 'Payroll reports', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
+      { path: '/reports/remittances', name: 'Government remittances', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
+      { path: '/reports/13th-month', name: '13th month pay', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
       { path: '/reports/attendance', name: 'Attendance reports', icon: 'check', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
     ],
   },

@@ -10,6 +10,7 @@ const { parseAttendanceCsv, decodeAttendanceCsv, isAttendanceScan, parseManilaTi
 const { calculatePayrollLine, calculateSssAssessablePay, calculateWorkedSpecialHoliday, normalizeContributionSettings } = require('../services/payrollCalculationService')
 const { validatePayrollPeriod } = require('../services/payrollScheduleService')
 const {csvRows}=require('../services/hrmsCsvService')
+const { monthlyRemittance, thirteenthMonth } = require('../services/payrollReportsService')
 
 const CSV_MAX_BYTES = 10 * 1024 * 1024
 
@@ -269,6 +270,14 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
     } catch (error) {
       return handlePayrollError(error, res)
     }
+  })
+
+  // Monthly government remittances (SSS, PhilHealth, Pag-IBIG, BIR 1601-C) and the year's 13th month pay.
+  router.get('/api/payroll/reports/remittance',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    try{res.set('Cache-Control','private, no-store').json(await monthlyRemittance(db,req.query.month))}catch(e){handlePayrollError(e,res)}
+  })
+  router.get('/api/payroll/reports/thirteenth-month',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
+    try{res.set('Cache-Control','private, no-store').json(await thirteenthMonth(db,req.query.year))}catch(e){handlePayrollError(e,res)}
   })
 
   // Withholding tax tables by start date (Settings → Withholding tax).

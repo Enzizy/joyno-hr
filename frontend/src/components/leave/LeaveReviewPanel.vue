@@ -4,6 +4,8 @@ import AppButton from '@/components/ui/AppButton.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import { getAttachmentReviewPresentation } from '@/utils/leaveAttachmentPresentation'
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+
 const props = defineProps({
   row: { type: Object, default: null },
   comments: { type: Array, default: () => [] },
@@ -52,13 +54,28 @@ const attachmentIsPdf = computed(() => {
   const name = String(props.row?.attachment_name || '').toLowerCase()
   return type === 'application/pdf' || name.endsWith('.pdf')
 })
-const attachmentPreviewUrl = computed(() => {
-  if (!props.row?.attachment_data) return ''
-  if (attachmentIsPdf.value) {
-    return `${props.row.attachment_data}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`
-  }
-  return props.row.attachment_data
-})
+// Lists only say a file exists; the thumbnail loads that one file when the request is opened.
+const hasDocument = computed(() => Boolean(props.row?.has_attachment || props.row?.attachment_data))
+const attachmentBlobUrl = ref('')
+let attachmentRequest = 0
+async function loadAttachmentPreview() {
+  const id = ++attachmentRequest
+  if (attachmentBlobUrl.value) URL.revokeObjectURL(attachmentBlobUrl.value)
+  attachmentBlobUrl.value = ''
+  if (!hasDocument.value || !(attachmentIsImage.value || attachmentIsPdf.value)) return
+  try {
+    const token = localStorage.getItem('token')
+    const response = await fetch(`${API_BASE}/api/leave-requests/${props.row.id}/attachment`, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+    if (!response.ok) return
+    const url = URL.createObjectURL(await response.blob())
+    if (id === attachmentRequest) attachmentBlobUrl.value = url
+    else URL.revokeObjectURL(url)
+  } catch { /* the Open document button still works */ }
+}
+watch(() => [props.row?.id, props.row?.attachment_version, hasDocument.value], loadAttachmentPreview, { immediate: true })
+onBeforeUnmount(() => { attachmentRequest++; if (attachmentBlobUrl.value) URL.revokeObjectURL(attachmentBlobUrl.value) })
+const attachmentPreviewUrl = computed(() => !attachmentBlobUrl.value ? '' : attachmentIsPdf.value
+  ? `${attachmentBlobUrl.value}#toolbar=0&navpanes=0&scrollbar=0&view=FitH` : attachmentBlobUrl.value)
 
 watch(() => props.row?.id, () => {
   activeComposer.value = ''
@@ -240,7 +257,7 @@ function submitReplacement() {
 
             <div class="mt-4 grid gap-4 sm:grid-cols-[140px_minmax(0,1fr)]">
               <button
-                v-if="row.attachment_data"
+                v-if="hasDocument"
                 type="button"
                 class="group flex h-28 items-center justify-center overflow-hidden rounded-lg border border-gray-700 bg-gray-950"
                 aria-label="Open supporting document"
@@ -271,7 +288,7 @@ function submitReplacement() {
 
               <div class="divide-y divide-gray-800">
                 <button
-                  v-if="row.attachment_data"
+                  v-if="hasDocument"
                   type="button"
                   class="flex w-full items-center gap-3 py-3 text-left text-sm font-medium text-primary-300 transition hover:text-primary-200"
                   @click="emit('view-document', row)"

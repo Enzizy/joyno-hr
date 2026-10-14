@@ -292,62 +292,6 @@ export async function cleanupNotifications(days = 90) {
   return api.cleanupNotifications(days)
 }
 
-export async function getLeads(options = {}) {
-  return api.getLeads(options)
-}
-
-export async function createLead(data) {
-  return api.createLead(data)
-}
-
-export async function updateLead(id, data) {
-  return api.updateLead(id, data)
-}
-
-export async function deleteLead(id) {
-  return api.deleteLead(id)
-}
-
-export async function getLeadConversations(id) {
-  return api.getLeadConversations(id)
-}
-
-export async function createLeadConversation(id, data) {
-  return api.createLeadConversation(id, data)
-}
-
-export async function convertLead(id, data) {
-  return api.convertLead(id, data)
-}
-
-export async function getClients(options = {}) {
-  return api.getClients(options)
-}
-
-export async function createClient(data) {
-  return api.createClient(data)
-}
-
-export async function updateClient(id, data) {
-  return api.updateClient(id, data)
-}
-
-export async function getClientConversations(id) {
-  return api.getClientConversations(id)
-}
-
-export async function createClientConversation(id, data) {
-  return api.createClientConversation(id, data)
-}
-
-export async function getServices(options = {}) {
-  return api.getServices(options)
-}
-
-export async function updateService(id, data) {
-  return api.updateService(id, data)
-}
-
 export async function getTasks(options = {}) {
   return api.getTasks(options)
 }
@@ -380,26 +324,3 @@ export function getTaskAttachmentUrl(id) {
   return api.getTaskAttachmentUrl(id)
 }
 
-export async function getAutomationRules(options = {}) {
-  return api.getAutomationRules(options)
-}
-
-export async function createAutomationRule(data) {
-  return api.createAutomationRule(data)
-}
-
-export async function updateAutomationRule(id, data) {
-  return api.updateAutomationRule(id, data)
-}
-
-export async function toggleAutomationRule(id) {
-  return api.toggleAutomationRule(id)
-}
-
-export async function runAutomationRuleNow(id) {
-  return api.runAutomationRuleNow(id)
-}
-
-export async function deleteAutomationRule(id) {
-  return api.deleteAutomationRule(id)
-}

@@ -53,24 +53,6 @@ const routes = [
         meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
       },
       {
-        path: 'leads',
-        name: 'Leads',
-        component: () => import('@/views/LeadsView.vue'),
-        meta: { roles: ['admin', 'hr', 'ceo'] },
-      },
-      {
-        path: 'clients',
-        name: 'Clients',
-        component: () => import('@/views/ClientsView.vue'),
-        meta: { roles: ['admin', 'hr', 'ceo'] },
-      },
-      {
-        path: 'services',
-        name: 'Services',
-        component: () => import('@/views/ServicesView.vue'),
-        meta: { roles: ['admin', 'hr', 'ceo'] },
-      },
-      {
         path: 'tasks',
         name: 'Tasks',
         component: () => import('@/views/TasksView.vue'),
@@ -87,12 +69,6 @@ const routes = [
         name: 'Announcements',
         component: () => import('@/views/AnnouncementsView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo', 'employee'] },
-      },
-      {
-        path: 'automation',
-        name: 'Automation',
-        component: () => import('@/views/AutomationView.vue'),
-        meta: { roles: ['admin', 'hr', 'ceo'] },
       },
       {
         path: 'notifications',
@@ -136,7 +112,17 @@ const routes = [
         component: () => import('@/views/ReportsView.vue'),
         meta: { roles: ['admin', 'hr', 'ceo'] },
       },
+      {
+        path: 'reports/leave-balances',
+        name: 'LeaveBalances',
+        component: () => import('@/views/LeaveBalancesView.vue'),
+        meta: { roles: ['admin', 'hr', 'ceo'] },
+      },
       ...(payrollEnabled ? [{
+        path: 'reports/remittances', name: 'Remittances', component: () => import('@/views/RemittanceReportView.vue'), meta: { roles: ['admin','hr','ceo'] },
+      }, {
+        path: 'reports/13th-month', name: 'ThirteenthMonth', component: () => import('@/views/ThirteenthMonthView.vue'), meta: { roles: ['admin','hr','ceo'] },
+      }, {
         path: 'reports/payroll', name: 'PayrollReports', component: () => import('@/views/OperationalReportsView.vue'), meta: { roles: ['admin','hr','ceo'], reportKind: 'payroll' },
       }, {
         path: 'reports/attendance', name: 'AttendanceReports', component: () => import('@/views/OperationalReportsView.vue'), meta: { roles: ['admin','hr','ceo'], reportKind: 'attendance' },

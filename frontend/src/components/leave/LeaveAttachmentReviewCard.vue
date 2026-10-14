@@ -85,7 +85,7 @@ function formatDeadline(value) {
     </div>
 
     <div class="mt-4 flex flex-wrap gap-2">
-      <AppButton v-if="row.attachment_data" size="sm" variant="secondary" @click="emit('view', row)">
+      <AppButton v-if="row.has_attachment || row.attachment_data" size="sm" variant="secondary" @click="emit('view', row)">
         View document
       </AppButton>
       <template v-if="canReview && row.attachment_review_status === 'pending_review'">

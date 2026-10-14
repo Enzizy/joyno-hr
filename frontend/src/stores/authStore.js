@@ -17,15 +17,21 @@ export const useAuthStore = defineStore('auth', () => {
   const canAccessAdmin = computed(() => isManagementRole(role.value))
   const canAccessHR = computed(() => isManagementRole(role.value))
 
-  async function initAuth() {
-    try {
-      const data = await apiFetchMe()
-      userProfile.value = data.user || null
-    } catch {
-      userProfile.value = null
-    } finally {
-      authReady.value = true
-    }
+  // App start-up and the first route guard both wait for the session; they share one request.
+  let pendingInit = null
+  function initAuth() {
+    pendingInit ??= (async () => {
+      try {
+        const data = await apiFetchMe()
+        userProfile.value = data.user || null
+      } catch {
+        userProfile.value = null
+      } finally {
+        authReady.value = true
+        pendingInit = null
+      }
+    })()
+    return pendingInit
   }
 
   async function waitForAuth() {

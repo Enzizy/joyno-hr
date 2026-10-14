@@ -47,8 +47,6 @@ function assigneeNames(row) {
         <div class="detail-card"><p>Priority</p><strong>{{ labelFromOptions(task.priority, { low: 'Low', medium: 'Medium', high: 'High', urgent: 'Urgent' }) }}</strong></div>
         <div class="detail-card"><p>Type</p><strong class="capitalize">{{ resolveTaskType(task) }}</strong></div>
         <div class="detail-card"><p>Due Date</p><strong>{{ formatDate(task.due_date) }}</strong></div>
-        <div class="detail-card"><p>Service</p><strong>{{ labelFromOptions(task.service_type, { social_media_management: 'Social Media', website_development: 'Website Dev' }) }}</strong></div>
-        <div class="detail-card"><p>Client</p><strong>{{ task.company_name || '-' }}</strong></div>
       </div>
       <div class="detail-card"><p>Assigned Employees</p><strong class="break-words">{{ assigneeNames(task) }}</strong></div>
       <a v-if="task.attachment_data" :href="getTaskAttachmentUrl(task.id)" target="_blank" rel="noopener" class="inline-flex items-center rounded-lg border border-primary-500/40 bg-primary-500/10 px-4 py-2 text-sm font-medium text-primary-200 hover:bg-primary-500/20">{{ task.attachment_name || 'View attachment' }}</a>

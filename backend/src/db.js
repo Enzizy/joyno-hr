@@ -1,3 +1,6 @@
+// Postgres DATE values become midnight in the process time zone. Pin it to UTC so a date like
+// 2026-12-07 always serializes as 2026-12-07 (the production container already runs in UTC).
+process.env.TZ = 'UTC'
 const { Pool } = require('pg')
 
 const connectionString = process.env.DATABASE_URL

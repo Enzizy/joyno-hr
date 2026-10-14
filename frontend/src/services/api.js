@@ -125,6 +125,8 @@ export const getAttendanceReview=id=>request(`/api/attendance/batches/${id}`)
 export const attendanceReviewAction=(id,action,data)=>request(`/api/attendance/batches/${id}/${action}`,{method:'POST',body:JSON.stringify(data)})
 export const getPayrollProfileHistory=id=>request(`/api/payroll/profiles/${id}/history`)
 export const listTaxTables=()=>request('/api/payroll/tax-tables')
+export const getRemittanceReport=month=>request(`/api/payroll/reports/remittance?month=${encodeURIComponent(month)}`)
+export const getThirteenthMonthReport=year=>request(`/api/payroll/reports/thirteenth-month?year=${encodeURIComponent(year)}`)
 export const saveTaxTable=(effectiveFrom,data)=>request(`/api/payroll/tax-tables/${effectiveFrom}`,{method:'PUT',body:JSON.stringify(data)})
 export const deleteTaxTable=effectiveFrom=>request(`/api/payroll/tax-tables/${effectiveFrom}`,{method:'DELETE'})
 export const recordPayrollPayment=(id,data)=>request(`/api/payroll/runs/${id}/payment`,{method:'POST',body:JSON.stringify(data)})
@@ -514,86 +516,14 @@ export async function getLeaveReport(from, to) {
   return request(`/api/reports/leave${qs ? `?${qs}` : ''}`)
 }
 
+// Returns { items, total }. Filters: user_id, employee_id, category, from, to (YYYY-MM-DD).
 export async function getAuditLogs(options = {}) {
   const params = new URLSearchParams()
-  if (options.limit) params.set('limit', options.limit)
-  if (options.offset) params.set('offset', options.offset)
+  for (const key of ['limit', 'offset', 'user_id', 'employee_id', 'category', 'from', 'to']) {
+    if (options[key] !== undefined && options[key] !== null && options[key] !== '') params.set(key, options[key])
+  }
   const qs = params.toString()
   return request(`/api/audit-logs${qs ? `?${qs}` : ''}`)
-}
-
-export async function getLeads(options = {}) {
-  const params = new URLSearchParams()
-  if (options.status && options.status !== 'all') params.set('status', options.status)
-  if (options.source && options.source !== 'all') params.set('source', options.source)
-  if (options.search) params.set('search', options.search)
-  if (options.limit) params.set('limit', options.limit)
-  if (options.offset || options.offset === 0) params.set('offset', options.offset)
-  const qs = params.toString()
-  return request(`/api/leads${qs ? `?${qs}` : ''}`)
-}
-
-export async function createLead(data) {
-  return request('/api/leads', { method: 'POST', body: JSON.stringify(data) })
-}
-
-export async function updateLead(id, data) {
-  return request(`/api/leads/${id}`, { method: 'PUT', body: JSON.stringify(data) })
-}
-
-export async function deleteLead(id) {
-  return request(`/api/leads/${id}`, { method: 'DELETE' })
-}
-
-export async function getLeadConversations(id) {
-  return request(`/api/leads/${id}/conversations`)
-}
-
-export async function createLeadConversation(id, data) {
-  return request(`/api/leads/${id}/conversations`, { method: 'POST', body: JSON.stringify(data) })
-}
-
-export async function convertLead(id, data) {
-  return request(`/api/leads/${id}/convert`, { method: 'POST', body: JSON.stringify(data) })
-}
-
-export async function getClients(options = {}) {
-  const params = new URLSearchParams()
-  if (options.status && options.status !== 'all') params.set('status', options.status)
-  if (options.search) params.set('search', options.search)
-  if (options.limit) params.set('limit', options.limit)
-  if (options.offset || options.offset === 0) params.set('offset', options.offset)
-  const qs = params.toString()
-  return request(`/api/clients${qs ? `?${qs}` : ''}`)
-}
-
-export async function createClient(data) {
-  return request('/api/clients', { method: 'POST', body: JSON.stringify(data) })
-}
-
-export async function updateClient(id, data) {
-  return request(`/api/clients/${id}`, { method: 'PUT', body: JSON.stringify(data) })
-}
-
-export async function getClientConversations(id) {
-  return request(`/api/clients/${id}/conversations`)
-}
-
-export async function createClientConversation(id, data) {
-  return request(`/api/clients/${id}/conversations`, { method: 'POST', body: JSON.stringify(data) })
-}
-
-export async function getServices(options = {}) {
-  const params = new URLSearchParams()
-  if (options.search) params.set('search', options.search)
-  if (options.type && options.type !== 'all') params.set('type', options.type)
-  if (options.client_id) params.set('client_id', options.client_id)
-  const qs = params.toString()
-  return request(`/api/services${qs ? `?${qs}` : ''}`)
-}
-
-export async function updateService(id, data) {
-  return request(`/api/services/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
 export async function getTasks(options = {}) {
@@ -639,29 +569,3 @@ export function getTaskAttachmentUrl(id) {
   return `${API_BASE}/api/tasks/${id}/attachment`
 }
 
-export async function getAutomationRules(options = {}) {
-  const params = new URLSearchParams()
-  if (options.client_id) params.set('client_id', options.client_id)
-  const qs = params.toString()
-  return request(`/api/automation-rules${qs ? `?${qs}` : ''}`)
-}
-
-export async function createAutomationRule(data) {
-  return request('/api/automation-rules', { method: 'POST', body: JSON.stringify(data) })
-}
-
-export async function updateAutomationRule(id, data) {
-  return request(`/api/automation-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) })
-}
-
-export async function toggleAutomationRule(id) {
-  return request(`/api/automation-rules/${id}/toggle`, { method: 'POST' })
-}
-
-export async function runAutomationRuleNow(id) {
-  return request(`/api/automation-rules/${id}/run-now`, { method: 'POST' })
-}
-
-export async function deleteAutomationRule(id) {
-  return request(`/api/automation-rules/${id}`, { method: 'DELETE' })
-}

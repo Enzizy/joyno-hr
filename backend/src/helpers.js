@@ -1,10 +1,11 @@
 const db = require('./db')
 
-async function addAuditLog(userId, action, targetTable, targetId) {
+// details: optional { changes: [{ field, from, to }] }, shown on the Audit log page.
+async function addAuditLog(userId, action, targetTable, targetId, details = null) {
   if (!userId) return
   await db.query(
-    'INSERT INTO audit_logs (user_id, action, target_table, target_id) VALUES ($1,$2,$3,$4)',
-    [userId, action, targetTable, targetId || null]
+    'INSERT INTO audit_logs (user_id, action, target_table, target_id, details) VALUES ($1,$2,$3,$4,$5::jsonb)',
+    [userId, action, targetTable, targetId || null, details ? JSON.stringify(details) : null]
   )
 }
 

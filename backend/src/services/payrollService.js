@@ -31,6 +31,7 @@ const {
 const { validatePayrollPeriod } = require('./payrollScheduleService')
 const { basicAdjustmentTotal, draftPay, normalizeCharges } = require('./payrollChargesService')
 const { loadContext, fingerprint } = require('./attendanceReviewService')
+const { auditChanges, PAY_SETUP_FIELDS } = require('./auditChanges')
 
 const MAX_IMPORT_DAYS = 62
 
@@ -119,13 +120,13 @@ async function withTransaction(db, callback) {
   return callback(db)
 }
 
-async function appendAudit(db, actor, action, targetTable, targetId) {
+async function appendAudit(db, actor, action, targetTable, targetId, details = null) {
   const fields = actorFields(actor)
   if (!fields.userId) return
   await db.query(
-    `INSERT INTO audit_logs (user_id, action, target_table, target_id)
-     VALUES ($1, $2, $3, $4)`,
-    [fields.userId, action, targetTable, targetId]
+    `INSERT INTO audit_logs (user_id, action, target_table, target_id, details)
+     VALUES ($1, $2, $3, $4, $5::jsonb)`,
+    [fields.userId, action, targetTable, targetId, details ? JSON.stringify(details) : null]
   )
 }
 
@@ -179,6 +180,38 @@ function attendanceForCalculator(row) {
 function computeLineWithLeave(input) {
   const normalizedAttendance = (input.attendance || []).map(attendanceForCalculator)
   return calculatePayrollLine({ ...input, attendance: normalizedAttendance })
+}
+
+// Workbook Remittance H9/Z9/AJ9: month-end SSS, PhilHealth and Pag-IBIG apply only when the month-end
+// cutoff's own pay (net basic + overtime + night differential + adjustments) is over ₱1,500.
+const CONTRIBUTION_MINIMUM_CUTOFF_PAY = 1500
+const CONTRIBUTION_FIELDS = ['employee_sss', 'employer_sss', 'employer_ec', 'employee_philhealth', 'employer_philhealth', 'employee_pagibig', 'employer_pagibig']
+
+function cutoffContributionBasis(line, earnings = [], charges = []) {
+  const extra = earnings.filter(entry => ['overtime', 'night_differential', 'other'].includes(entry.type))
+    .reduce((sum, entry) => sum + Number(entry.amount || 0), 0)
+  return Math.round((Number(line.gross_salary || 0) - Number(line.absence_deduction || 0) - Number(line.late_deduction || 0) -
+    Number(line.undertime_deduction || 0) + extra + basicAdjustmentTotal(charges)) * 100) / 100
+}
+
+// The contribution columns of a month-end draft line after an edit. PhilHealth and Pag-IBIG follow the
+// monthly salary; SSS follows the recalculated SSS basis. Other lines keep their saved amounts.
+function monthEndContributions(line, { earnings, charges, sssContributions }) {
+  const current = Object.fromEntries(CONTRIBUTION_FIELDS.map(field => [field, Number(line[field] || 0)]))
+  if (line.cutoff !== 'second' || !line.include_contributions) return { values: current, skipped: null }
+  const basis = cutoffContributionBasis(line, earnings, charges)
+  if (basis <= CONTRIBUTION_MINIMUM_CUTOFF_PAY) {
+    return { values: Object.fromEntries(CONTRIBUTION_FIELDS.map(field => [field, 0])), skipped: { basis, minimum: CONTRIBUTION_MINIMUM_CUTOFF_PAY } }
+  }
+  const settings = normalizeContributionSettings(line.details?.contributionSettings)
+  const salaryBased = calculateContributions(line.monthly_basic_salary, { contributionSettings: settings })
+  return { skipped: null, values: {
+    employee_sss: sssContributions ? sssContributions.sssEmployee : current.employee_sss,
+    employer_sss: sssContributions ? sssContributions.sssEmployer : current.employer_sss,
+    employer_ec: sssContributions ? sssContributions.sssEmployerEc : current.employer_ec,
+    employee_philhealth: salaryBased.philHealthEmployee, employer_philhealth: salaryBased.philHealthEmployer,
+    employee_pagibig: salaryBased.pagIbigEmployee, employer_pagibig: salaryBased.pagIbigEmployer,
+  } }
 }
 
 function createPayrollService({ db }) {
@@ -335,7 +368,7 @@ function createPayrollService({ db }) {
       const employeeResult = await tx.query('SELECT id, shift FROM employees WHERE id = $1 FOR UPDATE', [employeeId])
       if (!employeeResult.rows[0]) throw serviceError('Employee was not found', 404)
       const { rows } = await tx.query(
-        `SELECT id, effective_from, effective_to, monthly_cola, daily_fare_rate, daily_rate_divisor,
+        `SELECT id, effective_from, effective_to, monthly_basic_salary, monthly_cola, daily_fare_rate, daily_rate_divisor,
                 workdays, work_start_time, work_end_time, unpaid_break_minutes, contribution_settings,
                 minimum_wage_earner, tax_shield
          FROM payroll_employee_profiles
@@ -404,6 +437,7 @@ function createPayrollService({ db }) {
            RETURNING *`,
           [employeeId, effectiveFrom, effectiveTo, monthlySalary, dailyFare, workStart, workEnd, unpaidBreakMinutes, workdays, dailyRateDivisor, monthlyCola, fields.userId, JSON.stringify(contributionSettings), minimumWageEarner, taxShield]
         )
+      const previousPersonId = (await tx.query('SELECT person_id FROM payroll_biometric_identities WHERE employee_id = $1', [employeeId])).rows[0]?.person_id ?? null
       if (biometricIdProvided) {
         if (biometricPersonId) {
           await tx.query(
@@ -417,7 +451,9 @@ function createPayrollService({ db }) {
           await tx.query('DELETE FROM payroll_biometric_identities WHERE employee_id = $1', [employeeId])
         }
       }
-      await appendAudit(tx, actor, sameDate ? 'payroll_profile_updated' : 'payroll_profile_created', 'payroll_employee_profiles', profileResult.rows[0].id)
+      const changes = auditChanges(inheritedProfile ? { ...inheritedProfile, biometric_person_id: previousPersonId } : null,
+        { ...profileResult.rows[0], biometric_person_id: biometricIdProvided ? biometricPersonId || null : previousPersonId }, PAY_SETUP_FIELDS)
+      await appendAudit(tx, actor, sameDate ? 'payroll_profile_updated' : 'payroll_profile_created', 'payroll_employee_profiles', profileResult.rows[0].id, changes)
       return { ...normalizeProfile(profileResult.rows[0]), biometric_person_id: biometricIdProvided ? biometricPersonId || null : undefined }
     })
   }
@@ -945,6 +981,13 @@ function createPayrollService({ db }) {
             absenceDeduction: baseLine.absenceDeduction, lateDeduction: baseLine.lateDeduction,
             undertimeDeduction: baseLine.undertimeDeduction, manualEarnings: automaticEarnings }) : null
         const line = computeLineWithLeave({ ...lineInput, sssCompensation: sssAssessment?.monthlyCompensation })
+        const cutoffPay = cutoffContributionBasis({ gross_salary: line.grossSalary, absence_deduction: line.absenceDeduction,
+          late_deduction: line.lateDeduction, undertime_deduction: line.undertimeDeduction }, automaticEarnings)
+        const contributionsSkipped = cutoff === 'second' && includeContributions && cutoffPay <= CONTRIBUTION_MINIMUM_CUTOFF_PAY
+          ? { basis: cutoffPay, minimum: CONTRIBUTION_MINIMUM_CUTOFF_PAY } : null
+        if (contributionsSkipped) {
+          for (const key of ['employeeSss', 'employerSss', 'employerEc', 'employeePhilhealth', 'employerPhilhealth', 'employeePagibig', 'employerPagibig']) line[key] = 0
+        }
         const details = {
           ...night,
           automaticEarnings,
@@ -955,6 +998,7 @@ function createPayrollService({ db }) {
           contributionSettings: profile.contribution_settings,
           taxSettings: profileTaxSettings(profile),
           taxTable,
+          contributionsSkipped,
           sssAssessment: sssAssessment ? { ...sssAssessment,
             firstCutoffSource: firstCutoffLine ? `saved-first-cutoff-${firstCutoffLine.first_cutoff_status}` : 'assumed-half-basic',
             firstCutoffRunId: firstCutoffLine?.first_cutoff_run_id ?? null } : null,
@@ -1109,21 +1153,21 @@ function createPayrollService({ db }) {
         }) : null
       const sssContributions = sssAssessment
         ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation, contributionSettings }) : null
-      const employeeSss = sssContributions?.sssEmployee ?? Number(line.employee_sss || 0)
-      const pay = draftPay(line, { manualEarnings: recalculated, employeeSss })
+      const month = monthEndContributions(line, { earnings: effectiveEarnings(line.details, recalculated), charges: line.details?.charges || [], sssContributions })
+      const pay = draftPay({ ...line, ...month.values }, { manualEarnings: recalculated, employeeSss: month.values.employee_sss })
       const netPay = pay.netPay
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
-      const details = { ...line.details, manualEarnings: recalculated, tax: pay.tax,
+      const details = { ...line.details, manualEarnings: recalculated, tax: pay.tax, contributionsSkipped: month.skipped,
         ...(sssAssessment ? { sssAssessment: { ...line.details?.sssAssessment, ...sssAssessment,
           firstCutoffSource: line.details?.sssAssessment?.firstCutoffSource || 'assumed-half-basic' },
           contributionBasis: { ...line.details?.contributionBasis,
             sssCompensation: sssAssessment.monthlyCompensation, sssMsc: sssContributions.sssMsc } } : {}) }
       const updated = await tx.query(
         `UPDATE payroll_run_lines SET details = $1::jsonb, net_pay = $2, employee_sss = $3,
-           employer_sss = $4, employer_ec = $5, withholding_tax = $7 WHERE id = $6 RETURNING *`,
-        [JSON.stringify(details), netPay, employeeSss,
-          sssContributions?.sssEmployer ?? Number(line.employer_sss || 0),
-          sssContributions?.sssEmployerEc ?? Number(line.employer_ec || 0), lineId, pay.withholdingTax]
+           employer_sss = $4, employer_ec = $5, withholding_tax = $7, employee_philhealth = $8, employer_philhealth = $9,
+           employee_pagibig = $10, employer_pagibig = $11 WHERE id = $6 RETURNING *`,
+        [JSON.stringify(details), netPay, month.values.employee_sss, month.values.employer_sss, month.values.employer_ec, lineId, pay.withholdingTax,
+          month.values.employee_philhealth, month.values.employer_philhealth, month.values.employee_pagibig, month.values.employer_pagibig]
       )
       await appendRunEvent(tx, runId, 'manual_earnings_updated', actor, {
         lineId, employeeId: line.employee_id, previous, current: recalculated,
@@ -1156,11 +1200,11 @@ function createPayrollService({ db }) {
         }) : null
       const sssContributions = sssAssessment
         ? calculateContributions(line.monthly_basic_salary, { sssCompensation: sssAssessment.monthlyCompensation, contributionSettings }) : null
-      const employeeSss = sssContributions?.sssEmployee ?? Number(line.employee_sss || 0)
-      const pay = draftPay(line, { charges: normalized, employeeSss })
+      const month = monthEndContributions(line, { earnings: effectiveEarnings(line.details), charges: normalized, sssContributions })
+      const pay = draftPay({ ...line, ...month.values }, { charges: normalized, employeeSss: month.values.employee_sss })
       const netPay = pay.netPay
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
-      const details = { ...line.details, charges: normalized, tax: pay.tax,
+      const details = { ...line.details, charges: normalized, tax: pay.tax, contributionsSkipped: month.skipped,
         ...(line.details?.payBasisReview?.required?{payBasisReview:{...line.details.payBasisReview,verifiedReason:null,verifiedBy:null,verifiedAt:null}}:{}),
         ...(sssAssessment ? { sssAssessment: { ...line.details?.sssAssessment, ...sssAssessment,
           firstCutoffSource: line.details?.sssAssessment?.firstCutoffSource || 'assumed-half-basic' },
@@ -1168,13 +1212,12 @@ function createPayrollService({ db }) {
             sssCompensation: sssAssessment.monthlyCompensation, sssMsc: sssContributions.sssMsc } } : {}) }
       const updated = await tx.query(
         `UPDATE payroll_run_lines SET details = $1::jsonb, net_pay = $2, employee_sss = $3,
-           employer_sss = $4, employer_ec = $5, thirteenth_month_accrual = $7, withholding_tax = $8 WHERE id = $6 RETURNING *`,
-        [JSON.stringify(details), netPay, employeeSss,
-          sssContributions?.sssEmployer ?? Number(line.employer_sss || 0),
-          sssContributions?.sssEmployerEc ?? Number(line.employer_ec || 0), lineId,
+           employer_sss = $4, employer_ec = $5, thirteenth_month_accrual = $7, withholding_tax = $8, employee_philhealth = $9,
+           employer_philhealth = $10, employee_pagibig = $11, employer_pagibig = $12 WHERE id = $6 RETURNING *`,
+        [JSON.stringify(details), netPay, month.values.employee_sss, month.values.employer_sss, month.values.employer_ec, lineId,
           calculateThirteenthMonthAccrual({ grossSalary: Number(line.gross_salary),
             absenceDeduction: Number(line.absence_deduction || 0), basicAdjustment: basicAdjustmentTotal(normalized) }),
-          pay.withholdingTax]
+          pay.withholdingTax, month.values.employee_philhealth, month.values.employer_philhealth, month.values.employee_pagibig, month.values.employer_pagibig]
       )
       await appendRunEvent(tx, runId, 'charges_updated', actor, {
         lineId, employeeId: line.employee_id, previous, current: normalized,
@@ -1216,10 +1259,11 @@ function createPayrollService({ db }) {
         sssCompensation: sssAssessment.monthlyCompensation,
         contributionSettings,
       })
-      const pay = draftPay(line, { employeeSss: contributions.sssEmployee })
+      const month = monthEndContributions(line, { earnings: effectiveEarnings(line.details), charges: line.details?.charges || [], sssContributions: contributions })
+      const pay = draftPay({ ...line, ...month.values }, { employeeSss: month.values.employee_sss })
       const netPay = pay.netPay
       if (netPay < 0) throw serviceError('Deductions exceed this employee’s earnings', 422)
-      const details = { ...line.details, tax: pay.tax,
+      const details = { ...line.details, tax: pay.tax, contributionsSkipped: month.skipped,
         sssAssessment: { ...sssAssessment, firstCutoffSource: 'hr-override',
           firstCutoffRunId: previous?.firstCutoffRunId ?? null, overrideReason: explanation },
         contributionBasis: { ...line.details?.contributionBasis,
@@ -1227,9 +1271,10 @@ function createPayrollService({ db }) {
       }
       const updated = await tx.query(
         `UPDATE payroll_run_lines SET details = $1::jsonb, net_pay = $2, employee_sss = $3,
-           employer_sss = $4, employer_ec = $5, withholding_tax = $7 WHERE id = $6 RETURNING *`,
-        [JSON.stringify(details), netPay, contributions.sssEmployee,
-          contributions.sssEmployer, contributions.sssEmployerEc, lineId, pay.withholdingTax]
+           employer_sss = $4, employer_ec = $5, withholding_tax = $7, employee_philhealth = $8, employer_philhealth = $9,
+           employee_pagibig = $10, employer_pagibig = $11 WHERE id = $6 RETURNING *`,
+        [JSON.stringify(details), netPay, month.values.employee_sss, month.values.employer_sss, month.values.employer_ec, lineId, pay.withholdingTax,
+          month.values.employee_philhealth, month.values.employer_philhealth, month.values.employee_pagibig, month.values.employer_pagibig]
       )
       await appendRunEvent(tx, runId, 'first_cutoff_pay_overridden', actor, {
         lineId, employeeId: line.employee_id, previousPay: previous?.firstCutoffPay ?? null,

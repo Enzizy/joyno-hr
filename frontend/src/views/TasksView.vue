@@ -9,8 +9,6 @@ import {
   updateTask,
   completeTask,
   cancelTask,
-  getClients,
-  getServices,
   getUsers,
 } from '@/services/backendService'
 import AppButton from '@/components/ui/AppButton.vue'
@@ -34,15 +32,12 @@ const pageSize = ref(10)
 
 const tab = ref('active')
 const searchQuery = ref('')
-const clientFilter = ref('all')
 const employeeFilter = ref('all')
 const taskTypeFilter = ref('all')
 const myRelevantOnly = ref(authStore.isEmployee)
 
-usePersistentFilters('tasks', { tab, searchQuery, clientFilter, employeeFilter, taskTypeFilter, myRelevantOnly, pageSize })
+usePersistentFilters('tasks', { tab, searchQuery, employeeFilter, taskTypeFilter, myRelevantOnly, pageSize })
 
-const clients = ref([])
-const services = ref([])
 const users = ref([])
 
 const showTaskModal = ref(false)
@@ -98,14 +93,7 @@ function openDetails(row) {
 }
 
 async function loadLookups() {
-  const [clientData, serviceRows, userRows] = await Promise.all([
-    getClients({ status: 'active', limit: 100, offset: 0 }),
-    getServices({}),
-    getUsers(),
-  ])
-  clients.value = Array.isArray(clientData) ? clientData : clientData.items || []
-  services.value = serviceRows
-  users.value = userRows
+  users.value = await getUsers()
 }
 
 async function loadTasks() {
@@ -116,7 +104,6 @@ async function loadTasks() {
     const data = await getTasks({
       tab: tab.value,
       search: searchQuery.value.trim(),
-      client_id: clientFilter.value !== 'all' ? clientFilter.value : null,
       assigned_to: relevantAssignedTo,
       task_type: taskTypeFilter.value !== 'all' ? taskTypeFilter.value : null,
       limit: pageSize.value,
@@ -137,8 +124,6 @@ async function loadTasks() {
 
 async function initPage() {
   try {
-    const clientId = Number.parseInt(route.query.client, 10)
-    if (clientId) clientFilter.value = String(clientId)
     await loadLookups()
     await loadTasks()
   } catch (err) {
@@ -179,13 +164,6 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleOutsideActionsClick)
-})
-
-watch(() => route.query.client, async () => {
-  const clientId = Number.parseInt(route.query.client, 10)
-  clientFilter.value = clientId ? String(clientId) : 'all'
-  page.value = 1
-  await loadTasks()
 })
 
 async function applyFilters() {
@@ -337,13 +315,6 @@ async function cancelTaskAction(row) {
         <input v-model="searchQuery" type="text" placeholder="Search task title" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @keyup.enter="applyFilters" />
       </div>
       <div>
-        <label class="mb-1 block text-xs text-gray-400">Client</label>
-        <select v-model="clientFilter" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100" @change="applyFilters">
-          <option value="all">All Clients</option>
-          <option v-for="client in clients" :key="client.id" :value="String(client.id)">{{ client.company_name }}</option>
-        </select>
-      </div>
-      <div>
         <label class="mb-1 block text-xs text-gray-400">Employee</label>
         <select v-model="employeeFilter" :disabled="myRelevantOnly" class="block w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 disabled:opacity-60" @change="applyFilters">
           <option value="all">All Employees</option>
@@ -398,8 +369,6 @@ async function cancelTaskAction(row) {
     :show="showTaskModal"
     :mode="createMode"
     :task="editingTask"
-    :clients="clients"
-    :services="services"
     :users="users"
     :saving="savingTask"
     @close="showTaskModal = false"

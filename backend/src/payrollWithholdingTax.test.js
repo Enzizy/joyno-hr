@@ -132,3 +132,58 @@ test('approval asks for a recalculation when the payday\'s tax table changed aft
     else process.env.PAYROLL_FINALIZATION_ENABLED = previous
   }
 })
+
+// Workbook Remittance H9/Z9/AJ9: no month-end contributions when the month-end cutoff's pay is ₱1,500 or less.
+function monthEndDraft(overrides = {}) {
+  const state = { id: 8, payroll_run_id: 4, employee_id: 12, monthly_basic_salary: '15000', daily_rate: '689.66', hourly_rate: '86.21',
+    gross_salary: '7500', cola_pay: '0', absence_deduction: '6206.94', late_deduction: '0', undertime_deduction: '0',
+    employee_sss: '0', employer_sss: '0', employer_ec: '0', employee_philhealth: '0', employer_philhealth: '0', employee_pagibig: '0', employer_pagibig: '0',
+    status: 'draft', cutoff: 'second', include_contributions: true,
+    details: { manualEarnings: [], charges: [], contributionSettings: { sss: true, philhealth: true, pagibig: true },
+      sssAssessment: { firstCutoffPay: 7500, firstCutoffSource: 'saved-first-cutoff-approved' } }, ...overrides }
+  const db = { async query(sql, params = []) {
+    if (sql.includes('SELECT line.*, run.status')) return { rows: [{ ...state }] }
+    if (sql.includes('UPDATE payroll_run_lines SET details')) {
+      Object.assign(state, { details: JSON.parse(params[0]), net_pay: params[1], employee_sss: params[2], employee_philhealth: params[7], employee_pagibig: params[9] })
+      if (sql.includes('thirteenth_month_accrual')) Object.assign(state, { employee_philhealth: params[8], employee_pagibig: params[10] })
+      return { rows: [{ ...state }] }
+    }
+    if (sql.includes('INSERT INTO payroll_run_events') || sql.includes('INSERT INTO audit_logs')) return { rows: [] }
+    throw new Error(`Unexpected query: ${sql}`)
+  } }
+  return { state, service: createPayrollService({ db }) }
+}
+
+test('month-end contributions are skipped when the cutoff pay is ₱1,500 or less, and return once it is over', async () => {
+  const { state, service } = monthEndDraft()
+  // ₱7,500 basic less 9 absent days leaves ₱1,293.06 for the cutoff: no SSS, PhilHealth or Pag-IBIG.
+  await service.updateCharges(4, 8, [], { id: 1, role: 'hr' })
+  assert.deepEqual([state.employee_sss, state.employee_philhealth, state.employee_pagibig].map(Number), [0, 0, 0])
+  assert.deepEqual(state.details.contributionsSkipped, { basis: 1293.06, minimum: 1500 })
+  assert.equal(Number(state.net_pay), 1293.06)
+  // A ₱300 basic correction lifts it to ₱1,593.06, so the month's contributions apply again.
+  await service.updateCharges(4, 8, [{ type: 'basic_pay_adjustment', amount: 300, note: 'Correction' }], { id: 1, role: 'hr' })
+  assert.ok(Number(state.employee_sss) > 0)
+  assert.equal(Number(state.employee_philhealth), 375)
+  assert.equal(Number(state.employee_pagibig), 200)
+  assert.equal(state.details.contributionsSkipped, null)
+})
+
+test('13th month pay and remittances are built from approved and released payroll lines', async () => {
+  const { thirteenthMonth, monthlyRemittance } = require('./services/payrollReportsService')
+  const lines = [
+    { employee_id: 3, employee_code: 'A-3', employee_name: 'Ana Cruz', department: 'Sales', run_payday: '2026-09-30', run_status: 'locked',
+      gross_salary: '8000', absence_deduction: '0', late_deduction: '0', undertime_deduction: '0', cola_pay: '500', thirteenth_month_accrual: '666.67',
+      employee_sss: '800', employer_sss: '1600', employer_ec: '30', employee_philhealth: '400', employer_philhealth: '400', employee_pagibig: '200', employer_pagibig: '200',
+      withholding_tax: '12.45', details: { taxSettings: { tin: true, minimumWageEarner: false, taxShield: 0 }, charges: [] } },
+  ]
+  const db = { async query() { return { rows: lines } } }
+  const year = await thirteenthMonth(db, 2026)
+  assert.deepEqual(year.employees[0], { employeeId: 3, employeeCode: 'A-3', name: 'Ana Cruz', department: 'Sales', payrolls: 1, basicEarned: 8000,
+    thirteenthMonth: 666.67, firstPayday: '2026-09-30', lastPayday: '2026-09-30' })
+  const month = await monthlyRemittance(db, '2026-09')
+  assert.equal(month.totals.sssEmployee + month.totals.sssEmployer + month.totals.ec, 2430)
+  assert.deepEqual(month.bir1601c, { totalCompensation: 8500, mweCompensation: 0, thirteenthMonthAndOtherBenefits: 0, deMinimis: 0,
+    contributions: 1400, otherNonTaxable: 500, taxableCompensation: 6600, taxWithheld: 12.45 })
+  await assert.rejects(monthlyRemittance(db, 'September'), /Choose a month/)
+})

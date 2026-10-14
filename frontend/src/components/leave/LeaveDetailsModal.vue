@@ -122,7 +122,7 @@ function eventTone(type) {
           @request-replacement="$emit('request-document-replacement', $event)"
           @upload="$emit('upload-document-replacement', $event)"
         />
-        <AppButton v-else-if="row.attachment_data" size="sm" variant="secondary" @click="$emit('view-attachment', row)">View attachment</AppButton>
+        <AppButton v-else-if="row.has_attachment || row.attachment_data" size="sm" variant="secondary" @click="$emit('view-attachment', row)">View attachment</AppButton>
       </div>
 
       <div v-else class="space-y-4">

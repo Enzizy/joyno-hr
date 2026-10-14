@@ -77,12 +77,6 @@ function priorityTone(value) {
   return 'bg-gray-800 text-gray-300'
 }
 
-function typeLabel(serviceType) {
-  if (serviceType === 'social_media_management') return 'Social Media'
-  if (serviceType === 'website_development') return 'Website Dev'
-  return serviceType || '-'
-}
-
 function dateOnly(value) {
   if (!value) return ''
   return String(value).slice(0, 10)
@@ -118,18 +112,6 @@ function serviceCardClass(row) {
   if (row.service_type === 'website_development') return 'border-cyan-700/70 bg-cyan-950/10'
   if (row.service_type === 'social_media_management') return 'border-violet-700/70 bg-violet-950/10'
   return 'border-gray-800 bg-gray-900'
-}
-
-function serviceBadgeClass(serviceType) {
-  if (serviceType === 'website_development') return 'border-cyan-600/60 bg-cyan-900/30 text-cyan-200'
-  if (serviceType === 'social_media_management') return 'border-violet-600/60 bg-violet-900/30 text-violet-200'
-  return 'border-gray-700 text-gray-300'
-}
-
-function serviceBadgeLabel(serviceType) {
-  if (serviceType === 'website_development') return 'Web Dev'
-  if (serviceType === 'social_media_management') return 'SocMed'
-  return 'General'
 }
 
 function resolveTaskType(row) {
@@ -274,17 +256,12 @@ function proofUrl(taskId) {
               <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="taskTypeBadgeClass(resolveTaskType(row))">
                 {{ taskTypeLabel(resolveTaskType(row)) }}
               </span>
-              <span class="rounded-full border px-2 py-0.5 text-xs font-semibold" :class="serviceBadgeClass(row.service_type)">
-                {{ serviceBadgeLabel(row.service_type) }}
-              </span>
               <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="priorityTone(row.priority)">{{ formatPriority(row.priority) }}</span>
               <span class="rounded-full px-2 py-0.5 text-xs font-semibold" :class="statusTone(row.status)">{{ formatStatus(row.status) }}</span>
             </div>
             <p class="line-clamp-2 text-sm text-gray-300">{{ row.description || 'No description.' }}</p>
             <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
               <span>Due: {{ formatDate(row.due_date) }}</span>
-              <span>Client: {{ row.company_name || '-' }}</span>
-              <span>Service: {{ typeLabel(row.service_type) }}</span>
               <a v-if="row.proof_of_work_data" :href="proofUrl(row.id)" target="_blank" rel="noopener" class="text-primary-300 hover:text-primary-200">View proof</a>
             </div>
           </div>

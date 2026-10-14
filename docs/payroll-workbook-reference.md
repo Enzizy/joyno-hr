@@ -168,7 +168,7 @@ Existing local calculation code already covers semi-monthly basic salary, the 26
 | --- | --- |
 | Pay types | Workbook contains PD and SM branches; current calculator takes monthly basic salary. PD behavior needs samples. |
 | SSS basis | Workbook includes ND and both adjustments; current calculateSssAssessablePay includes OT and basic-pay adjustments, but has no separate ND/second-adjustment basis. |
-| Contribution eligibility | Workbook has global switches, membership-ID checks, and a current-cutoff >1,500 condition. Current calculation is principally gated by cutoff/includeContributions. |
+| Contribution eligibility | Implemented: the month-end cutoff pay > 1,500 condition (H9/Z9/AJ9) applies to SSS, PhilHealth and Pag-IBIG; per-agency ID switches replace the membership-ID checks. Global switches remain the cutoff/includeContributions setting. |
 | PhilHealth | Workbook's literal 200/80,000/1,600 rules differ from the local app's 5% schedule using a 10,000 floor and 100,000 cap. |
 | Taxes | Implemented (migration 034): AR9 taxable pay and the AS9 table, with the TIN, MWE and tax-shield rules. The 333,332–333,333 gap uses the 35% row instead of returning FALSE; tax is rounded to centavos. |
 | OT and ND | Workbook has three coded OT slots and a full ND breakdown. Current app supports selected manually approved earnings and a limited special-holiday calculator. |
