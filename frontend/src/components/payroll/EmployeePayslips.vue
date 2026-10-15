@@ -48,7 +48,7 @@ const attendanceNote = computed(() => {
   const line = selected.value
   if (!line) return ''
   const parts = [`${Number(line.absence_days || 0) + Number(line.unpaid_leave_days || 0)} absent`, `${Number(line.paid_leave_days || 0)} paid leave`,
-    `${Number(line.late_minutes || 0) + Number(line.undertime_minutes || 0)} min late / undertime`]
+    `${Math.floor(Number(line.late_minutes || 0) + Number(line.undertime_minutes || 0) + 1e-9)} min late / undertime`]
   const overtime = line.payslip?.additions?.find((row) => row.name === 'Overtime')?.unit
   if (overtime) parts.push(`${overtime} overtime`)
   return parts.join(' · ')

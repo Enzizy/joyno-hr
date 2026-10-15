@@ -86,6 +86,8 @@ watch([attendanceMonth,cycle],()=>{
 function correctLeave(leave){reviewing.value=null;correctingLeave.value={leave,reason:''}}
 async function saveLeaveCorrection(){await run(async()=>{batch.value=await attendanceReviewAction(batch.value.id,'correct-leave',{version:batch.value.review_version,leaveId:correctingLeave.value.leave.id,reason:correctingLeave.value.reason});correctingLeave.value=null;await reloadChanged();toast.success('Incorrect leave cancelled with history retained; attendance refreshed')})}
 const labels={rest_day_work:'Scans on a rest day',late_undertime:'Late / undertime',no_record:'No scans',missing_punch:'Missing time-in or time-out',pending_leave:'Pending leave',leave_conflict:'Conflicting leave',leave_reconciliation:'Reconcile official leave',missing_profile:'Salary / schedule not configured',missing_attendance_id:'Attendance ID not mapped',missing_hire_date:'Hire date missing',unsupported_schedule:'Schedule needs setup'}
+// Scans carry seconds (9:10:50 is 10.83 min late); minutes are shown whole, counting full minutes only.
+const mins=v=>Math.floor(Number(v||0)+1e-9)
 const missedMinutes=d=>Number(d.late_minutes||0)+Number(d.undertime_minutes||0)
 const dayLabel=date=>new Intl.DateTimeFormat('en-PH',{weekday:'short',month:'short',day:'numeric',timeZone:'UTC'}).format(new Date(`${date}T00:00:00Z`))
 // Days worth listing under an employee: anything decided, deducted, or still open.
@@ -99,7 +101,7 @@ const groups=computed(()=>{
   if(!g){g={id:d.employee_id,name:d.employee_name,code:d.employee_code,personId:d.person_id,days:[],pending:0,late:0,undertime:0,absent:0,overtime:0,fullDays:0};byEmployee.set(d.employee_id,g)}
   g.days.push(d)
   if(d.review_state==='pending')g.pending++
-  g.late+=Number(d.late_minutes||0);g.undertime+=Number(d.undertime_minutes||0);g.overtime+=Number(d.review_decision?.overtimeHours||0)
+  g.late+=mins(d.late_minutes);g.undertime+=mins(d.undertime_minutes);g.overtime+=Number(d.review_decision?.overtimeHours||0)
   // A day off marked as not worked is not an absence.
   if(['absent','unpaid_leave'].includes(d.status)&&!d.issue_codes?.includes('rest_day_work'))g.absent++
   if(['excused','verified_work'].includes(d.review_decision?.action))g.fullDays++
@@ -112,7 +114,7 @@ const reviewTotals=computed(()=>{
  const daily=batch.value?.daily||[]
  return {employees:new Set(daily.map(d=>d.employee_id)).size,absent:daily.filter(d=>['absent','unpaid_leave'].includes(d.status)&&!d.issue_codes?.includes('rest_day_work')).length,
   fullDays:daily.filter(d=>['excused','verified_work'].includes(d.review_decision?.action)).length,
-  late:daily.reduce((sum,d)=>sum+missedMinutes(d),0),overtime:daily.reduce((sum,d)=>sum+Number(d.review_decision?.overtimeHours||0),0)}
+  late:daily.reduce((sum,d)=>sum+mins(d.late_minutes)+mins(d.undertime_minutes),0),overtime:daily.reduce((sum,d)=>sum+Number(d.review_decision?.overtimeHours||0),0)}
 })
 const totalsText=computed(()=>{const t=reviewTotals.value;return [`${t.employees} employees`,t.absent?`${t.absent} absent`:null,t.fullDays?`${t.fullDays} counted as full day`:null,t.late?`${t.late} min late / undertime`:null,t.overtime?`${t.overtime} h OT`:null].filter(Boolean).join(' · ')})
 const isConfirmed=computed(()=>batch.value?.review_state==='confirmed')
@@ -210,7 +212,7 @@ const decisionOptions=computed(()=>{
  if(d.leaves?.some(l=>l.status==='approved'))keys.push('link_leave')
  return keys.map(value=>({value,...all[value]}))
 })
-const recordedSummary=computed(()=>{const d=reviewing.value;if(!d)return '';if(!d.first_scan_at&&!d.last_scan_at)return 'No scans recorded';return `Recorded: in ${stamp(d.first_scan_at)} · out ${stamp(d.last_scan_at)} · ${Number(d.late_minutes||0)} min late · ${Number(d.undertime_minutes||0)} min undertime`})
+const recordedSummary=computed(()=>{const d=reviewing.value;if(!d)return '';if(!d.first_scan_at&&!d.last_scan_at)return 'No scans recorded';return `Recorded: in ${stamp(d.first_scan_at)} · out ${stamp(d.last_scan_at)} · ${mins(d.late_minutes)} min late · ${mins(d.undertime_minutes)} min undertime`})
 const allowsApprovedWork=computed(()=>['acknowledge','excused','actual_times','verified_work'].includes(decision.value.action))
 function review(day){reviewing.value=day;const noScans=!day.first_scan_at&&!day.last_scan_at;const restDay=day.issue_codes?.includes('rest_day_work');decision.value={action:restDay?(day.review_decision?.action||(day.status==='exception'?'':'acknowledge')):day.review_decision?.action==='excused'?'excused':day.status==='exception'?(noScans?'':'actual_times'):day.issue_codes?.includes('leave_reconciliation')?(day.leaves?.some(l=>l.status==='approved')?'link_leave':'actual_times'):'acknowledge',reason:'',timeIn:day.first_scan_at?stamp(day.first_scan_at):'',timeOut:day.last_scan_at?stamp(day.last_scan_at):'',leaveId:day.leave_request_id,dayType:restDay?'rest_day':day.review_decision?.dayType||'regular',overtimeHours:Number(day.review_decision?.overtimeHours||0)}}
 const approvedWorkLabel=d=>{const ot=Number(d.review_decision?.overtimeHours||0),type=d.review_decision?.dayType,special=type==='special_holiday'||type==='rest_day';return special||ot?[type==='rest_day'?'Rest day work (130%)':special?'Special holiday / rest day':null,ot?`OT ${ot} h`:null].filter(Boolean).join(' · '):''}
@@ -292,7 +294,7 @@ watch(()=>route.query.batch,id=>{if(id&&String(batch.value?.id)!==String(id)&&!b
        <tr v-for="d in g.shown" :key="d.work_date" class="border-t border-gray-800/70">
         <td class="px-4 py-2 pl-10 whitespace-nowrap">{{dayLabel(d.work_date)}}<p class="text-xs text-gray-500">{{twelveHourText(d.schedule)}}</p></td>
         <td class="px-4 py-2 whitespace-nowrap">{{stamp(d.first_scan_at)}} / {{stamp(d.last_scan_at)}}</td>
-        <td class="px-4 py-2 whitespace-nowrap">{{Number(d.late_minutes)}} / {{Number(d.undertime_minutes)}} min</td>
+        <td class="px-4 py-2 whitespace-nowrap">{{mins(d.late_minutes)}} / {{mins(d.undertime_minutes)}} min</td>
         <td class="px-4 py-2">
          <template v-if="d.review_state==='pending'"><span class="text-amber-300">Needs a decision</span><p class="text-xs text-gray-400">{{d.issue_codes.map(c=>labels[c]||c).join(' · ')}}</p></template>
          <template v-else-if="d.review_state==='resolved'"><span class="text-emerald-300">Decided</span><p class="text-xs text-gray-400">{{twelveHourText(d.correction_reason)}}</p></template>
