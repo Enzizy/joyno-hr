@@ -475,7 +475,26 @@ test('door labels, intermediate scans, and the unpaid 13:00–14:00 lunch are re
   const missingOut = computeDailyAttendance({ date: '2026-09-01', profile, events: [event('9:10', 'in'), event('18:30', 'ignored')] })
   assert.equal(missingOut.status, 'exception')
   assert.equal(missingOut.lastScanAt, null)
-  assert.match(missingOut.exceptionReason, /No recognized time-out/)
+  assert.equal(missingOut.exceptionReason, 'Only one scan was recorded for this workday')
+})
+
+test('time in and time out are the first and last scans on any reader, whichever door was used', () => {
+  const profile = { workdays: [1, 2, 3, 4, 5], work_start_time: '09:00', work_end_time: '18:00', unpaid_break_minutes: 60 }
+  const event = (time, eventType) => ({ occurredAt: parseManilaTimestamp(`10/02/26 ${time}`), eventType })
+  // Charmaine, Oct 2: both scans on the outside reader (mapped "in").
+  const sameReader = computeDailyAttendance({ date: '2026-10-02', profile, events: [event('8:52', 'in'), event('18:04', 'in')] })
+  assert.equal(sameReader.status, 'present')
+  assert.equal(sameReader.firstScanAt, '2026-10-02T00:52:00.000Z')
+  assert.equal(sameReader.lastScanAt, '2026-10-02T10:04:00.000Z')
+  assert.equal(sameReader.lateMinutes, 0)
+  assert.equal(sameReader.undertimeMinutes, 0)
+  // Both on the inside reader (mapped "out") works the same way.
+  assert.equal(computeDailyAttendance({ date: '2026-10-02', profile, events: [event('9:15', 'out'), event('17:30', 'out')] }).lateMinutes, 15)
+  // A double tap is one moment, so the missing time still goes to HR.
+  const doubleTap = computeDailyAttendance({ date: '2026-10-02', profile, events: [event('9:00', 'in'), event('9:05', 'in')] })
+  assert.equal(doubleTap.status, 'exception')
+  assert.equal(doubleTap.lastScanAt, null)
+  assert.equal(doubleTap.exceptionReason, 'Scans only around 9:00 AM; the other time in or time out is missing')
 })
 
 test('duplicate scans do not turn a single door event into a complete attendance day', () => {

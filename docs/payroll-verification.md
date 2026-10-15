@@ -12,9 +12,9 @@ The initial verification used read-only database checks. After the user requeste
 
 | Raw checkpoint | Meaning | Daily selection |
 | --- | --- | --- |
-| Main_Door_Out_Door1_Entrance Card Reader1 | Time in | Earliest matching scan for the employee on that local day. |
-| Main_Door_IN_Door1_Entrance Card Reader1 | Time out | Latest matching scan for the employee on that local day. |
-| New Bio_New Office Biometrics_Entrance Card Reader1 | Either daily endpoint | Can provide the earliest arrival or latest departure. Intermediate scans do not change endpoints. |
+| Main_Door_Out_Door1_Entrance Card Reader1 | Either daily endpoint | Since Oct 15, 2026 the readers are treated alike: time in is the earliest scan on any of them, time out the latest. People leaving often scan the outside reader again. |
+| Main_Door_IN_Door1_Entrance Card Reader1 | Either daily endpoint | Same as above. |
+| New Bio_New Office Biometrics_Entrance Card Reader1 | Either daily endpoint | Same as above. Intermediate scans do not change endpoints; scans under 30 minutes apart count as one moment, so a lone double tap still needs HR review. |
 
 The importer uses Person ID rather than assuming a biometric identifier is the HR employee number. It strips the leading apostrophe but preserves leading zeroes. HR maintains an explicit, unique employee-to-Person-ID map.
 

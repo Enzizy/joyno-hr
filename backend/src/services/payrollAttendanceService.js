@@ -225,6 +225,13 @@ function roundMinutes(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100
 }
 
+// Scans closer together than this are one moment (a double tap), not a time in and a time out.
+const SAME_MOMENT_MINUTES = 30
+
+function clockLabel(date) {
+  return new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: MANILA_TIME_ZONE }).format(date)
+}
+
 function computeDailyAttendance({ date, events = [], profile = {} }) {
   const workDate = dateKey(date)
   const workdays = Array.isArray(profile.workdays) ? profile.workdays.map(Number) : [1, 2, 3, 4, 5]
@@ -250,25 +257,28 @@ function computeDailyAttendance({ date, events = [], profile = {} }) {
     }
   }
 
-  const hasCheckpointTypes = sorted.some((event) => event.eventType != null || event.event_type != null)
-  // New Bio has no direction. It can extend either daily endpoint; interior
-  // scans never change the first arrival or last departure.
-  const arrivals = hasCheckpointTypes ? sorted.filter((event) => ['in', 'boundary'].includes(event.eventType ?? event.event_type)) : sorted
-  const departures = hasCheckpointTypes ? sorted.filter((event) => ['out', 'boundary'].includes(event.eventType ?? event.event_type)) : sorted
-  const first = arrivals[0]?.occurredAt ?? null
-  const last = departures[departures.length - 1]?.occurredAt ?? null
-  const complete = first && last && last > first && (hasCheckpointTypes || sorted.length > 1)
+  // The day's time in and time out are its first and last scan on any attendance reader. The door
+  // readers' in/out names are not reliable: people leaving often scan the outside reader again, so
+  // both of a day's scans can come from one reader. Scans on other readers are ignored.
+  const recognized = sorted.filter((event) => {
+    const type = event.eventType ?? event.event_type
+    return type == null || isAttendanceScan(type)
+  })
+  const first = recognized[0]?.occurredAt ?? null
+  const lastScan = recognized.length > 1 ? recognized[recognized.length - 1].occurredAt : null
+  // Two taps a few minutes apart (for example 9:00 and 9:05) are one arrival or departure, not a day.
+  const together = first && lastScan && lastScan - first < SAME_MOMENT_MINUTES * 60000
+  const last = together ? null : lastScan
+  const complete = Boolean(first && last)
   const { start: startMinutes, end: endMinutes } = shiftWindow(profile)
   const firstAt = first ? minutesOnWorkDate(first, workDate) : null
   const lastAt = last ? minutesOnWorkDate(last, workDate) : null
   const status = complete ? 'present' : 'exception'
   let exceptionReason = null
   if (!complete) {
-    if (!hasCheckpointTypes) exceptionReason = 'Only one scan was recorded for this workday'
-    else if (!first && !last) exceptionReason = 'No recognized time-in or time-out scan for this workday'
-    else if (!first) exceptionReason = 'No recognized time-in scan for this workday'
-    else if (!last) exceptionReason = 'No recognized time-out scan for this workday'
-    else exceptionReason = 'Time-out scan is not after time-in scan'
+    if (!first) exceptionReason = 'No recognized attendance scan for this workday'
+    else if (together) exceptionReason = `Scans only around ${clockLabel(first)}; the other time in or time out is missing`
+    else exceptionReason = 'Only one scan was recorded for this workday'
   }
 
   return {

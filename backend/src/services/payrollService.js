@@ -897,9 +897,8 @@ function createPayrollService({ db }) {
         approvedWork: { source: 'HR attendance decision per day', regularOvertime: 'hourly x 125%', specialHolidayOvertime: 'hourly x 130% x 130%', specialHolidayPremium: 'days worked x daily x 30%', restDay: 'days worked x daily x 130%', daysWorked: 'scheduled paid hours less late and undertime, over the scheduled paid hours', override: 'a manual earning of the same type replaces the attendance-based amount' },
         overnightWorkDate: 'date the shift starts',
         attendanceReaders: {
-          'Main_Door_Out_Door1_Entrance Card Reader1': 'time_in',
-          'Main_Door_IN_Door1_Entrance Card Reader1': 'time_out',
-          'New Bio_New Office Biometrics_Entrance Card Reader1': 'first_or_last_endpoint',
+          readers: ['Main_Door_Out_Door1_Entrance Card Reader1', 'Main_Door_IN_Door1_Entrance Card Reader1', 'New Bio_New Office Biometrics_Entrance Card Reader1'],
+          rule: 'time in = first scan of the work date on any reader; time out = last scan; scans under 30 minutes apart are one moment',
         },
         missedTimeDeduction: 'late_and_undertime_minutes * daily_rate / scheduled paid hours / 60',
         withholdingTax: { table: 'BIR semi-monthly table in effect on the payday (Settings → Withholding tax; workbook Remittance AS)', taxablePay: 'gross pay - employee SSS, PhilHealth and Pag-IBIG - tax shield - COLA and non-taxable allowances; 0 for a minimum wage earner', requires: 'TIN ticked', override: 'an HR-entered withholding tax replaces the computed tax', tableEffectiveFrom: taxTable.effectiveFrom },
