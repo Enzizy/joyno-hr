@@ -64,8 +64,8 @@ function payslipSections(line) {
   const leave = roundMoney(leaveDays * daily)
   const absenceDays = amount(line.absence_days) + amount(line.unpaid_leave_days) + leaveDays
   const absence = roundMoney(amount(line.absence_deduction) + leave)
-  // Scans carry seconds; the payslip shows whole minutes (the peso amount is unchanged).
-  const missedMinutes = Math.floor(amount(line.late_minutes) + amount(line.undertime_minutes) + 1e-9)
+  // Scans carry seconds, so minutes keep up to 2 decimals (10.83m).
+  const missedMinutes = roundMoney(amount(line.late_minutes) + amount(line.undertime_minutes))
   const utLate = roundMoney(amount(line.late_deduction) + amount(line.undertime_deduction))
   const approved = line.details?.approvedWork || {}
   const night = line.details?.nightDifferential || {}
@@ -112,7 +112,7 @@ function payslipSections(line) {
     basic, gross, totalDeduction, net: roundMoney(gross - totalDeduction),
     less: [
       { label: 'ABSENCE', name: 'Absences', qty: count(absenceDays), unit: units(absenceDays, 'day'), amount: absence },
-      { label: 'UT/LATE', name: 'Late / undertime', qty: missedMinutes ? `(${missedMinutes} min.)` : '', unit: missedMinutes ? `${missedMinutes} min` : '', amount: utLate },
+      { label: 'UT/LATE', name: 'Late / undertime', qty: missedMinutes ? `(${missedMinutes}m)` : '', unit: missedMinutes ? `${missedMinutes}m` : '', amount: utLate },
     ],
     additions, deductions,
   }
