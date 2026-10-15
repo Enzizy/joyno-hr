@@ -117,7 +117,7 @@ test('payslip follows the workbook layout and its net pay matches the pay line',
   assert.equal(less.ABSENCE.qty, '(3.00)')
   assert.equal(less.ABSENCE.amount, 2068.97)
   assert.equal(add.LEAVE.amount, 1379.31)
-  assert.equal(less['UT/LATE'].qty, '(45 min.)')
+  assert.equal(less['UT/LATE'].qty, '(45m)')
   assert.equal(add.OVERTIME.qty, '(4.00)')
   assert.equal(add['ALLOWANCE / COLA'].amount, 750)
   assert.equal(sections.deductions.find((row) => row.label === 'MPL').amount, 300)
