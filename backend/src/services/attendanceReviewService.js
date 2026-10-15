@@ -294,7 +294,10 @@ function createAttendanceReviewService({db}) {
       employees:context.employees,issues:result.review_issues,events}
   }
   async function persistDays(tx,id,days,previous=[]) {
-    await tx.query("UPDATE payroll_daily_attendance SET review_state='excluded' WHERE batch_id=$1",[id])
+    // Set every old row aside before the recalculated days are written back. A verified-work day (present,
+    // no scans) is only valid while resolved, so it is set aside as an exception; the rewrite restores it.
+    await tx.query(`UPDATE payroll_daily_attendance SET review_state='excluded',
+      status=CASE WHEN status='present' AND first_scan_at IS NULL THEN 'exception' ELSE status END WHERE batch_id=$1`,[id])
     for(let day of days){
       const old=previous.find(d=>Number(d.employee_id)===Number(day.employee_id)&&dateKey(d.work_date)===day.work_date)
       if(old?.base_hash===day.base_hash&&old.review_state==='resolved')day={...day,...old,work_date:day.work_date}
