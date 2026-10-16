@@ -282,7 +282,7 @@ function createPayrollRouter({ db, payrollService, authRequired, requireRole, ad
 
   // Unused SIL converted to cash, paid with the 13th month pay.
   router.get('/api/payroll/reports/sil-conversion',authRequired,requireRole(MANAGEMENT_ROLES),async(req,res)=>{
-    try{res.set('Cache-Control','private, no-store').json(await silConversion(db,req.query.year))}catch(e){handlePayrollError(e,res)}
+    try{res.set('Cache-Control','private, no-store').json(await silConversion(db,req.query.year,req.query.release_date||undefined))}catch(e){handlePayrollError(e,res)}
   })
 
   // Withholding tax tables by start date (Settings → Withholding tax).

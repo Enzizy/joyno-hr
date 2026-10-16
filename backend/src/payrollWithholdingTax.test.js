@@ -207,3 +207,19 @@ test('unused SIL converts to cash at the actual daily pay, once 12 months are se
   assert.deepEqual([cy.eligible, cy.daysLeft, cy.cash], [false, 0, 0])
   assert.equal(report.total, 3965.52)
 })
+
+test('SIL conversion goes only to people with 12 months of service on the 13th month release date', async () => {
+  const { silConversion } = require('./services/payrollReportsService')
+  const db = { async query(sql) {
+    if (sql.includes('FROM leave_policies')) return { rows: [{ id: 'service_incentive_leave', name: 'Service Incentive Leave', paid_days_per_year: '5.00', min_months_employed: 12 }] }
+    // Reaches one year on Dec 19.
+    if (sql.includes('FROM employees e')) return { rows: [{ id: 1, employee_code: 'A', first_name: 'Ana', last_name: 'Cruz', date_hired: '2025-12-19',
+      monthly_basic_salary: '15000', daily_rate_divisor: 261, work_start_time: '09:00', work_end_time: '18:00', unpaid_break_minutes: 60 }] }
+    if (sql.includes('FROM leave_requests')) return { rows: [] }
+    throw new Error(`Unexpected query: ${sql}`)
+  } }
+  assert.equal((await silConversion(db, 2026, '2026-12-18')).employees[0].cash, 0)
+  assert.equal((await silConversion(db, 2026, '2026-12-19')).employees[0].cash, 3448.28)
+  assert.equal((await silConversion(db, 2026)).payout, '2026-12-24')
+  await assert.rejects(silConversion(db, 2026, '2026-12-28'), /on or before Dec 24/)
+})

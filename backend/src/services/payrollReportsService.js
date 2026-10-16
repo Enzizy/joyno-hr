@@ -108,10 +108,15 @@ async function thirteenthMonth(db, year) {
 
 // Unused leave that converts to cash (Service Incentive Leave), paid together with the 13th month pay on or
 // before Dec 24. Cash = days left × the employee's actual daily pay (a shorter schedule's share of the salary).
-// Eligibility is checked as of the payout date.
-async function silConversion(db, year) {
+// Only employees with 12 months of service on the day the 13th month is released qualify; someone who reaches it
+// after the release gets nothing this year and converts next year's unused SIL instead (HR, Oct 2026).
+async function silConversion(db, year, releaseDate) {
   if (!/^\d{4}$/.test(String(year))) throw Object.assign(new Error('Choose a year'), { status: 400 })
-  const payout = `${year}-12-24`
+  const payout = releaseDate || `${year}-12-24`
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(payout) || payout.slice(0, 4) !== String(year) || payout > `${year}-12-24` ||
+      new Date(`${payout}T00:00:00Z`).toISOString().slice(0, 10) !== payout) {
+    throw Object.assign(new Error(`The 13th month release date must be in ${year}, on or before Dec 24`), { status: 400 })
+  }
   const types = (await db.query(`SELECT id, name, paid_days_per_year, min_months_employed FROM leave_policies
     WHERE cash_convertible = TRUE AND is_active = TRUE AND paid_days_per_year > 0 ORDER BY name`)).rows
   const employees = (await db.query(`SELECT e.id, e.employee_code, e.first_name, e.last_name, e.department, e.date_hired::text,

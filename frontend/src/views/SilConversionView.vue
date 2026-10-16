@@ -10,6 +10,8 @@ import { downloadCsv } from '@/utils/csv'
 // Cash = SIL days left × the employee's actual daily pay.
 const thisYear = new Date(Date.now() + 8 * 3600000).getUTCFullYear()
 const year = ref(thisYear)
+// Eligibility is checked on the day the 13th month is released (Dec 24 at the latest).
+const releaseDate = ref(`${thisYear}-12-24`)
 const show = ref('all')
 const search = ref('')
 const report = ref(null)
@@ -22,11 +24,12 @@ let requestId = 0
 async function load() {
   const id = ++requestId
   loading.value = true; error.value = ''
-  try { const result = await getSilConversionReport(year.value); if (id === requestId) report.value = result }
+  try { const result = await getSilConversionReport(year.value, releaseDate.value || undefined); if (id === requestId) report.value = result }
   catch (e) { if (id === requestId) { report.value = null; error.value = e.message || 'Unable to load SIL conversion.' } }
   finally { if (id === requestId) loading.value = false }
 }
-watch(year, load, { immediate: true })
+watch(year, value => { releaseDate.value = `${value}-12-24` })
+watch([year, releaseDate], load, { immediate: true })
 
 const sil = computed(() => report.value?.types?.[0] || { name: 'Service Incentive Leave', days: 5, minMonths: 12 })
 const rows = computed(() => {
@@ -48,8 +51,9 @@ function download() {
 <template>
   <div class="space-y-6">
     <PageHeader title="SIL cash conversion" />
-    <section class="grid gap-4 rounded-xl border border-gray-800 bg-gray-900 p-4 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto] sm:items-end">
+    <section class="grid gap-4 rounded-xl border border-gray-800 bg-gray-900 p-4 sm:grid-cols-[auto_auto_minmax(0,1fr)_auto_auto] sm:items-end">
       <label class="text-xs font-medium text-gray-400">Year<select v-model.number="year" class="form-control mt-1.5"><option v-for="item in [thisYear, thisYear - 1]" :key="item" :value="item">{{ item }}</option></select></label>
+      <label class="text-xs font-medium text-gray-400">13th month release date<input v-model="releaseDate" type="date" :min="`${year}-01-01`" :max="`${year}-12-24`" class="form-control mt-1.5"></label>
       <label class="text-xs font-medium text-gray-400">Search<input v-model="search" type="search" class="form-control mt-1.5" placeholder="Name or employee ID"></label>
       <div class="flex gap-1" role="group" aria-label="Show">
         <button v-for="item in [{ key: 'all', label: 'Everyone' }, { key: 'cash', label: `Getting cash (${counts.cash})` }, { key: 'notyet', label: `Not yet eligible (${counts.notYet})` }]" :key="item.key" type="button" class="rounded-lg px-3 py-2 text-xs font-semibold" :class="show === item.key ? 'bg-primary-500 text-gray-950' : 'bg-gray-800 text-gray-400 hover:text-gray-200'" :aria-pressed="show === item.key" @click="show = item.key">{{ item.label }}</button>
@@ -62,8 +66,8 @@ function download() {
     <template v-else-if="report">
       <div class="grid gap-3 sm:grid-cols-3" :class="loading ? 'opacity-60' : ''">
         <article class="rounded-xl border border-gray-800 bg-gray-900 p-4"><p class="text-sm text-gray-400">Total to convert</p><p class="mt-1 text-2xl font-semibold text-gray-100">{{ peso(report.total) }}</p><p class="mt-1 text-xs text-gray-500">{{ counts.cash }} employees</p></article>
-        <article class="rounded-xl border border-gray-800 bg-gray-900 p-4"><p class="text-sm text-gray-400">Paid</p><p class="mt-1 text-lg font-semibold text-gray-100">With the 13th month pay</p><p class="mt-1 text-xs text-gray-500">On or before Dec 24, {{ year }} · <RouterLink to="/reports/13th-month" class="text-primary-300 hover:underline">13th month pay →</RouterLink></p></article>
-        <article class="rounded-xl border border-gray-800 bg-gray-900 p-4"><p class="text-sm text-gray-400">Rule</p><p class="mt-1 text-lg font-semibold text-gray-100">{{ sil.days }} days a year</p><p class="mt-1 text-xs text-gray-500">After {{ sil.minMonths }} months of service by Dec 24 · unused days × daily pay</p></article>
+        <article class="rounded-xl border border-gray-800 bg-gray-900 p-4"><p class="text-sm text-gray-400">Paid</p><p class="mt-1 text-lg font-semibold text-gray-100">With the 13th month pay</p><p class="mt-1 text-xs text-gray-500">Released {{ new Date(`${report.payout}T00:00:00Z`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) }} · <RouterLink to="/reports/13th-month" class="text-primary-300 hover:underline">13th month pay →</RouterLink></p></article>
+        <article class="rounded-xl border border-gray-800 bg-gray-900 p-4"><p class="text-sm text-gray-400">Rule</p><p class="mt-1 text-lg font-semibold text-gray-100">{{ sil.days }} days a year</p><p class="mt-1 text-xs text-gray-500">Needs {{ sil.minMonths }} months of service on the release date; reaching it later means next year · unused days × daily pay</p></article>
       </div>
       <section class="rounded-xl border border-gray-800 bg-gray-900">
         <div class="overflow-x-auto">
