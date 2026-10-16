@@ -126,6 +126,7 @@ export const attendanceReviewAction=(id,action,data)=>request(`/api/attendance/b
 export const getPayrollProfileHistory=id=>request(`/api/payroll/profiles/${id}/history`)
 export const listTaxTables=()=>request('/api/payroll/tax-tables')
 export const getRemittanceReport=month=>request(`/api/payroll/reports/remittance?month=${encodeURIComponent(month)}`)
+export const getSilConversionReport=year=>request(`/api/payroll/reports/sil-conversion?year=${encodeURIComponent(year)}`)
 export const getThirteenthMonthReport=year=>request(`/api/payroll/reports/thirteenth-month?year=${encodeURIComponent(year)}`)
 export const saveTaxTable=(effectiveFrom,data)=>request(`/api/payroll/tax-tables/${effectiveFrom}`,{method:'PUT',body:JSON.stringify(data)})
 export const deleteTaxTable=effectiveFrom=>request(`/api/payroll/tax-tables/${effectiveFrom}`,{method:'DELETE'})

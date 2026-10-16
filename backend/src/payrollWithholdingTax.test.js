@@ -187,3 +187,23 @@ test('13th month pay and remittances are built from approved and released payrol
     contributions: 1400, otherNonTaxable: 500, taxableCompensation: 6600, taxWithheld: 12.45 })
   await assert.rejects(monthlyRemittance(db, 'September'), /Choose a month/)
 })
+
+test('unused SIL converts to cash at the actual daily pay, once 12 months are served by Dec 24', async () => {
+  const { silConversion } = require('./services/payrollReportsService')
+  const db = { async query(sql) {
+    if (sql.includes('FROM leave_policies')) return { rows: [{ id: 'service_incentive_leave', name: 'Service Incentive Leave', paid_days_per_year: '5.00', min_months_employed: 12 }] }
+    if (sql.includes('FROM employees e')) return { rows: [
+      { id: 1, employee_code: 'A', first_name: 'Ana', last_name: 'Full', date_hired: '2025-01-10', monthly_basic_salary: '15000', daily_rate_divisor: 261, work_start_time: '09:00', work_end_time: '18:00', unpaid_break_minutes: 60 },
+      { id: 2, employee_code: 'B', first_name: 'Ben', last_name: 'Night', date_hired: '2025-05-26', monthly_basic_salary: '15000', daily_rate_divisor: 261, work_start_time: '19:00', work_end_time: '01:00', unpaid_break_minutes: 0 },
+      { id: 3, employee_code: 'C', first_name: 'Cy', last_name: 'New', date_hired: '2026-03-01', monthly_basic_salary: '15000', daily_rate_divisor: 261, work_start_time: '09:00', work_end_time: '18:00', unpaid_break_minutes: 60 },
+    ] }
+    if (sql.includes('FROM leave_requests')) return { rows: [{ employee_id: 1, type: 'service incentive leave', days: '3' }] }
+    throw new Error(`Unexpected query: ${sql}`)
+  } }
+  const report = await silConversion(db, 2026)
+  const [ana, ben, cy] = report.employees
+  assert.deepEqual([ana.daysLeft, ana.dailyRate, ana.cash], [2, 689.66, 1379.31])
+  assert.deepEqual([ben.daysLeft, ben.dailyRate, ben.cash], [5, 517.24, 2586.21])
+  assert.deepEqual([cy.eligible, cy.daysLeft, cy.cash], [false, 0, 0])
+  assert.equal(report.total, 3965.52)
+})

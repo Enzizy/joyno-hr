@@ -28,6 +28,7 @@ export const navGroups = [
       { path: '/reports/payroll', name: 'Payroll reports', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
       { path: '/reports/remittances', name: 'Government remittances', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
       { path: '/reports/13th-month', name: '13th month pay', icon: 'pay', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
+      { path: '/reports/sil-conversion', name: 'SIL cash conversion', icon: 'leave', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
       { path: '/reports/attendance', name: 'Attendance reports', icon: 'check', roles: MANAGEMENT_ROLES, hidden: !payrollEnabled },
     ],
   },

@@ -123,6 +123,8 @@ const routes = [
       }, {
         path: 'reports/13th-month', name: 'ThirteenthMonth', component: () => import('@/views/ThirteenthMonthView.vue'), meta: { roles: ['admin','hr','ceo'] },
       }, {
+        path: 'reports/sil-conversion', name: 'SilConversion', component: () => import('@/views/SilConversionView.vue'), meta: { roles: ['admin','hr','ceo'] },
+      }, {
         path: 'reports/payroll', name: 'PayrollReports', component: () => import('@/views/OperationalReportsView.vue'), meta: { roles: ['admin','hr','ceo'], reportKind: 'payroll' },
       }, {
         path: 'reports/attendance', name: 'AttendanceReports', component: () => import('@/views/OperationalReportsView.vue'), meta: { roles: ['admin','hr','ceo'], reportKind: 'attendance' },

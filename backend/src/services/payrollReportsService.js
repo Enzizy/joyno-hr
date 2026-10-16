@@ -3,6 +3,8 @@
 // are approved or released count; drafts can still change.
 const { payslipSections } = require('./payrollPayslipService')
 const { basicAdjustmentTotal } = require('./payrollChargesService')
+const { payableProfile } = require('./payrollShiftService')
+const { isPaidLeaveEligible } = require('./leaveEligibilityService')
 
 const round = value => Math.round((Number(value) + Number.EPSILON) * 100) / 100
 const amount = value => Number(value || 0)
@@ -104,4 +106,41 @@ async function thirteenthMonth(db, year) {
     firstPayday: rows[0]?.run_payday || null, lastPayday: rows.at(-1)?.run_payday || null }
 }
 
-module.exports = { monthlyRemittance, thirteenthMonth, remittanceLine }
+// Unused leave that converts to cash (Service Incentive Leave), paid together with the 13th month pay on or
+// before Dec 24. Cash = days left × the employee's actual daily pay (a shorter schedule's share of the salary).
+// Eligibility is checked as of the payout date.
+async function silConversion(db, year) {
+  if (!/^\d{4}$/.test(String(year))) throw Object.assign(new Error('Choose a year'), { status: 400 })
+  const payout = `${year}-12-24`
+  const types = (await db.query(`SELECT id, name, paid_days_per_year, min_months_employed FROM leave_policies
+    WHERE cash_convertible = TRUE AND is_active = TRUE AND paid_days_per_year > 0 ORDER BY name`)).rows
+  const employees = (await db.query(`SELECT e.id, e.employee_code, e.first_name, e.last_name, e.department, e.date_hired::text,
+      p.monthly_basic_salary, p.daily_rate_divisor, p.work_start_time, p.work_end_time, p.unpaid_break_minutes
+    FROM employees e
+    LEFT JOIN LATERAL (SELECT * FROM payroll_employee_profiles WHERE employee_id = e.id ORDER BY effective_from DESC, id DESC LIMIT 1) p ON TRUE
+    WHERE COALESCE(LOWER(e.status), 'active') IN ('active', 'on_leave')
+      AND NOT EXISTS (SELECT 1 FROM users u WHERE u.employee_id = e.id AND u.role = 'ceo')
+    ORDER BY e.first_name, e.last_name`)).rows
+  const used = (await db.query(`SELECT employee_id, LOWER(leave_type_name) AS type, SUM(COALESCE(credits_deducted, leave_days, 0))::numeric AS days
+    FROM leave_requests WHERE status = 'approved' AND leave_pay_type IN ('paid', 'partial_paid') AND EXTRACT(YEAR FROM start_date) = $1
+    GROUP BY employee_id, LOWER(leave_type_name)`, [Number(year)])).rows
+  const usedDays = new Map(used.map(row => [`${row.employee_id}|${row.type}`, Number(row.days)]))
+  const rows = employees.map(employee => {
+    const salary = employee.monthly_basic_salary == null ? null : Number(payableProfile(employee).monthly_basic_salary)
+    const dailyRate = salary == null ? null : salary * 12 / Number(employee.daily_rate_divisor || 261)
+    const leave = types.map(type => {
+      const eligible = isPaidLeaveEligible(employee.date_hired, payout, type.min_months_employed)
+      const taken = round(usedDays.get(`${employee.id}|${type.name.toLowerCase()}`) || 0)
+      return { type: type.name, total: Number(type.paid_days_per_year), used: taken, eligible,
+        left: eligible ? Math.max(0, round(Number(type.paid_days_per_year) - taken)) : 0 }
+    })
+    const daysLeft = round(leave.reduce((sum, item) => sum + item.left, 0))
+    return { employeeId: employee.id, employeeCode: employee.employee_code, name: `${employee.first_name} ${employee.last_name}`.trim(),
+      department: employee.department || '', dateHired: employee.date_hired, eligible: leave.some(item => item.eligible), leave,
+      daysLeft, dailyRate: dailyRate == null ? null : round(dailyRate), cash: dailyRate == null ? 0 : round(daysLeft * dailyRate) }
+  })
+  return { year: Number(year), payout, types: types.map(type => ({ name: type.name, days: Number(type.paid_days_per_year), minMonths: type.min_months_employed })),
+    employees: rows, total: round(rows.reduce((sum, row) => sum + row.cash, 0)), missingSalary: rows.filter(row => row.dailyRate == null).length }
+}
+
+module.exports = { monthlyRemittance, thirteenthMonth, silConversion, remittanceLine }
