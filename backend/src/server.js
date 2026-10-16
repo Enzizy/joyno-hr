@@ -22,6 +22,7 @@ const { createHrRecordedLeave } = require('./services/hrRecordedLeaveService')
 const { getEmployeeLeaveBalanceBreakdown, refreshEmployeeLeaveCredits } = require('./services/employeeLeaveBalanceService')
 const { currentManilaDate, isPaidLeaveEligible } = require('./services/leaveEligibilityService')
 const { resolveLeaveCompensation } = require('./services/leaveCompensationService')
+const { rescheduleLeave } = require('./services/leaveRescheduleService')
 const { asyncRoute } = require('./routes/asyncRoute')
 const {
   approvalDocumentDecision,
@@ -2386,6 +2387,42 @@ app.post('/api/leave-requests/:id/cancel', authRequired, async (req, res) => {
   await db.query('DELETE FROM leave_requests WHERE id = $1', [id])
   await addAuditLog(req.user.id, 'delete_leave_request', 'leave_requests', id)
   res.json({ message: 'Leave request deleted' })
+})
+
+// Admin and HR correct a recorded leave's dates or type, for example leave plotted on the wrong days.
+app.put('/api/leave-requests/:id/dates', authRequired, requireRole(['admin', 'hr']), async (req, res) => {
+  const id = Number(req.params.id)
+  if (!id) return res.status(400).json({ message: 'Invalid leave request id' })
+  try {
+    const result = await rescheduleLeave({ db, id, input: req.body || {}, user: req.user, employeeColumns: EMPLOYEE_COLUMNS,
+      resolveLeaveType, resolveEffectiveLeaveType, resolveLeaveCompensation })
+    const changes = auditChanges(result.before, result.after, [
+      { label: 'Start date', read: row => row.start_date, format: 'date' },
+      { label: 'End date', read: row => row.end_date, format: 'date' },
+      { label: 'Leave type', read: row => row.leave_type_name },
+      { label: 'Paid days', read: row => Number(row.paid_days) },
+      { label: 'Unpaid days', read: row => Number(row.unpaid_days) },
+    ])
+    await addAuditLog(req.user.id, 'move_leave_request', 'leave_requests', id, changes)
+    await updateEmployeeStatus(result.leave.employee_id)
+    const owner = (await db.query('SELECT id FROM users WHERE employee_id = $1 ORDER BY id ASC LIMIT 1', [result.leave.employee_id])).rows[0]
+    if (owner?.id) {
+      const range = formatEmailDateRange(result.after.start_date, result.after.end_date)
+      await createNotification({ userId: owner.id, type: 'leave_approved', title: 'Leave dates corrected',
+        message: `HR corrected your ${result.after.leave_type_name} to ${range}.`, targetTable: 'leave_requests', targetId: id })
+      const contact = await getUserContactById(owner.id)
+      await sendEmailNotification({ to: contact?.email, subject: `Leave dates corrected: ${result.after.leave_type_name}`,
+        text: [`Hi ${contact?.name || 'Employee'},`, '', 'HR corrected the dates of your leave.',
+          `Was: ${formatEmailDateRange(result.before.start_date, result.before.end_date)}`, `Now: ${range}`,
+          `Paid days: ${result.after.paid_days} · Unpaid days: ${result.after.unpaid_days}`].join('\n') })
+    }
+    const updated = await db.query(`SELECT ${LEAVE_LIST_COLUMNS} FROM leave_requests WHERE id = $1`, [id])
+    res.json({ ...updated.rows[0], compensation_message: result.compensation.note || null })
+  } catch (error) {
+    if (error.status) return res.status(error.status).json({ message: error.message })
+    console.error('[leave] move failed', error)
+    res.status(500).json({ message: 'Unable to move this leave' })
+  }
 })
 
 app.delete('/api/leave-requests/:id', authRequired, requireRole(['admin', 'hr', 'ceo']), async (req, res) => {

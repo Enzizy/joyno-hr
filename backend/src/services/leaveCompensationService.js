@@ -9,7 +9,7 @@ async function resolveLeaveCompensation(
   endDate,
   hasMedicalAttachment = false,
   queryDb = db,
-  {dayFraction = 1} = {}
+  {dayFraction = 1, excludeRequestId = null} = {}
 ) {
   // pg returns DATE columns as Date objects when an existing request is approved.
   const normalizedStart = normalizeDateOnly(startDate)
@@ -54,7 +54,8 @@ async function resolveLeaveCompensation(
   }
 
   const leaveYear = Number(normalizedStart.slice(0, 4))
-  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, null, queryDb)
+  // A leave being moved does not count against its own allowance.
+  const usedDays = await getApprovedPaidLeaveDays(employee?.id, leaveType.name, leaveYear, excludeRequestId, queryDb)
   const remainingTypePaidDays = Math.max(0, paidDaysCap - usedDays)
   const payableDays = Math.min(leaveDays, remainingTypePaidDays)
   const unpaidDays = Math.max(0, leaveDays - payableDays)

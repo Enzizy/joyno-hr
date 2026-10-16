@@ -357,6 +357,9 @@ export async function updateLeavePolicySettings(data) {
   return request('/api/leave-policy-settings', { method: 'PUT', body: JSON.stringify(data) })
 }
 
+// Admin and HR correct a recorded leave's dates or type.
+export const moveLeaveRequest=(id,data)=>request(`/api/leave-requests/${id}/dates`,{method:'PUT',body:JSON.stringify(data)})
+
 export async function getLeaveCalendar(options = {}) {
   if (!HAS_WORKSPACE_API) {
     const rows = await getLeaveRequests()

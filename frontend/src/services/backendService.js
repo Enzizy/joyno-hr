@@ -101,6 +101,10 @@ export async function createHrCalendarEntry(data) {
   return api.createHrCalendarEntry(data)
 }
 
+export async function moveLeaveRequest(id, data) {
+  return api.moveLeaveRequest(id, data)
+}
+
 export async function updateHrCalendarEntry(id, data) {
   return api.updateHrCalendarEntry(id, data)
 }

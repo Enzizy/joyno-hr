@@ -9,6 +9,7 @@ import {
   getLeaveRequests,
   getLeaveTypes,
   getPhilippineHolidays,
+  moveLeaveRequest,
   updateHrCalendarEntry,
 } from '@/services/backendService'
 import { useAuthStore } from '@/stores/authStore'
@@ -48,6 +49,29 @@ const deleteTarget = ref(null)
 const employeeDepartments = ref(new Map())
 
 const canManageCalendar = computed(() => isManagementRole(authStore.role))
+// Admin and HR can correct a recorded leave's dates, for example leave plotted on the wrong days.
+const canMoveLeave = computed(() => ['admin', 'hr'].includes(authStore.role))
+const movable = event => canMoveLeave.value && event?.entry_type === 'leave' && event.source !== 'hr_entry' && ['approved', 'pending'].includes(event.status)
+const moveForm = ref(null)
+const movingLeave = ref(false)
+const moveError = ref('')
+function openMove(event) {
+  moveError.value = ''
+  moveForm.value = { id: event.record_id || event.id, name: eventTitle(event), start_date: event.start_date, end_date: event.end_date, leave_type_name: event.leave_type_name, halfDay: Number(event.day_fraction) < 1 }
+  selectedEvent.value = null
+}
+async function saveMove() {
+  const form = moveForm.value
+  if (!form.start_date || !form.end_date || form.end_date < form.start_date) { moveError.value = 'Choose a start date on or before the end date.'; return }
+  movingLeave.value = true; moveError.value = ''
+  try {
+    const result = await moveLeaveRequest(form.id, { start_date: form.start_date, end_date: form.halfDay ? form.start_date : form.end_date, leave_type_name: form.leave_type_name })
+    toast.success(`Leave moved to ${formatDate(result.start_date)} – ${formatDate(result.end_date)}. ${result.compensation_message || ''}`.trim())
+    moveForm.value = null
+    await loadCalendar()
+  } catch (error) { moveError.value = error.message || 'Unable to move this leave.' }
+  finally { movingLeave.value = false }
+}
 const monthLabel = computed(() => currentMonth.value.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }))
 const monthStart = computed(() => toISO(new Date(currentMonth.value.getFullYear(), currentMonth.value.getMonth(), 1)))
 const monthEnd = computed(() => toISO(new Date(currentMonth.value.getFullYear(), currentMonth.value.getMonth() + 1, 0)))
@@ -404,6 +428,7 @@ onMounted(async () => {
       </dl>
     </div>
     <template #footer>
+      <AppButton v-if="movable(selectedEvent)" variant="secondary" @click="openMove(selectedEvent)">Change dates</AppButton>
       <AppButton
         v-if="selectedEvent?.source === 'hr_entry' && canManageCalendar"
         variant="secondary"
@@ -413,6 +438,20 @@ onMounted(async () => {
       </AppButton>
       <AppButton variant="secondary" @click="selectedEvent = null">Close</AppButton>
     </template>
+  </AppModal>
+
+  <AppModal :show="Boolean(moveForm)" title="Change leave dates" @close="moveForm = null">
+    <div v-if="moveForm" class="space-y-4 text-sm">
+      <p class="text-gray-300"><span class="font-semibold text-gray-100">{{ moveForm.name }}</span> · {{ moveForm.leave_type_name }}</p>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <label class="text-xs font-medium text-gray-400">{{ moveForm.halfDay ? 'Date' : 'From' }}<input v-model="moveForm.start_date" type="date" class="form-control mt-1.5"></label>
+        <label v-if="!moveForm.halfDay" class="text-xs font-medium text-gray-400">To<input v-model="moveForm.end_date" type="date" :min="moveForm.start_date" class="form-control mt-1.5"></label>
+        <label class="text-xs font-medium text-gray-400 sm:col-span-2">Leave type<select v-model="moveForm.leave_type_name" class="form-control mt-1.5"><option v-for="type in leaveTypes.filter(t => t.is_active !== false && t.id !== 'awol')" :key="type.id" :value="type.name">{{ type.name }}</option><option v-if="!leaveTypes.some(t => t.name === moveForm.leave_type_name)" :value="moveForm.leave_type_name">{{ moveForm.leave_type_name }}</option></select></label>
+      </div>
+      <p class="text-xs leading-5 text-gray-500">Paid days and leave credits are worked out again for the new dates, and the employee is told about the change. If attendance for these dates was already confirmed, reload it on the payday's Attendance step.</p>
+      <p v-if="moveError" role="alert" class="rounded-lg border p-3 text-sm" style="color:var(--danger-text);background:var(--danger-bg);border-color:var(--danger-border)">{{ moveError }}</p>
+    </div>
+    <template #footer><AppButton variant="secondary" :disabled="movingLeave" @click="moveForm = null">Cancel</AppButton><AppButton :loading="movingLeave" @click="saveMove">Save dates</AppButton></template>
   </AppModal>
 
   <HrCalendarEntryModal
