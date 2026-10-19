@@ -1,25 +1,30 @@
 <script setup>
 import { ref } from 'vue'
-import { useToastStore } from '@/stores/toastStore'
 import { forgotPassword } from '@/services/api'
 import AppButton from '@/components/ui/AppButton.vue'
 import AppInput from '@/components/ui/AppInput.vue'
 import logoBg from '@/assets/Joynomedia logo.png'
 
-const toast = useToastStore()
 const email = ref('')
 const loading = ref(false)
 const submitted = ref(false)
+const error = ref('')
+const successMessage = ref('')
 
 async function onSubmit() {
-  if (!email.value) return
+  if (loading.value) return
+  error.value = ''
+  if (!email.value.trim()) {
+    error.value = 'Enter a valid email address.'
+    return
+  }
   loading.value = true
   try {
-    await forgotPassword(email.value)
+    const result = await forgotPassword(email.value.trim())
+    successMessage.value = result.message
     submitted.value = true
-    toast.success('If the account exists, a reset link has been sent.')
   } catch (err) {
-    toast.error(err.message || 'Unable to process request.')
+    error.value = err.message || 'Unable to process your request. Please try again later.'
   } finally {
     loading.value = false
   }
@@ -39,12 +44,15 @@ async function onSubmit() {
           <p class="mt-1 text-sm text-gray-400">Enter your email to receive a reset link.</p>
         </div>
 
-        <div v-if="submitted" class="rounded-lg border border-emerald-700/30 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">
-          If the account exists, we sent a password reset link to your email.
+        <div v-if="submitted" role="status" class="rounded-lg border border-emerald-700/30 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">
+          {{ successMessage }}
         </div>
 
         <form v-else class="space-y-4" @submit.prevent="onSubmit">
-          <AppInput v-model="email" type="email" label="Email" placeholder="you@company.com" required />
+          <div v-if="error" role="alert" class="rounded-lg border border-red-700/30 bg-red-900/20 px-4 py-3 text-sm text-red-200">
+            {{ error }}
+          </div>
+          <AppInput v-model="email" name="reset-email" type="email" label="Email" placeholder="you@company.com" :disabled="loading" required @update:model-value="error = ''" />
           <AppButton type="submit" class="w-full" :loading="loading">Send reset link</AppButton>
         </form>
 

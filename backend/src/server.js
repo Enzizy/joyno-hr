@@ -1012,19 +1012,21 @@ app.post('/api/auth/change-password', authRequired, async (req, res) => {
   res.json({ message: 'Password updated' })
 })
 
-app.post('/api/auth/forgot-password', loginLimiter, async (req, res) => {
-  const genericMessage = 'If the account exists, a password reset link has been sent.'
-  const email = String(req.body?.email || '').trim().toLowerCase()
-  if (!email) return res.json({ message: genericMessage })
+app.post('/api/auth/forgot-password', loginLimiter, asyncRoute(async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ message: 'Enter a valid email address.' })
+  }
 
   const { rows } = await db.query('SELECT id, email FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email])
   const user = rows[0]
-  if (!user) return res.json({ message: genericMessage })
+  if (!user) return res.status(404).json({ message: 'Account not found.' })
 
   const rawToken = crypto.randomBytes(32).toString('hex')
   const tokenHash = hashResetToken(rawToken)
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000)
   const resetUrl = buildResetPasswordUrl(rawToken)
+  if (!resetUrl) return res.status(503).json({ message: 'Unable to send a reset link right now. Please try again later.' })
 
   await db.query('DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < NOW()', [user.id])
   await db.query(
@@ -1032,11 +1034,11 @@ app.post('/api/auth/forgot-password', loginLimiter, async (req, res) => {
     [user.id, tokenHash, expiresAt.toISOString()]
   )
 
-  if (resetUrl) {
-    sendEmailNotification({
+  try {
+    await deliverEmailNotification({
       to: user.email,
       subject: 'Reset your password',
-      bypassPreferences: true,
+      requireDelivery: true,
       text:
         `Hi,\n\n` +
         `We received a request to reset your password.\n` +
@@ -1045,10 +1047,13 @@ app.post('/api/auth/forgot-password', loginLimiter, async (req, res) => {
         `If you did not request this, you can ignore this email.\n\n` +
         `- ${MAIL_APP_NAME}`,
     })
+  } catch (error) {
+    console.error('Password reset email failed:', error.message || error)
+    return res.status(503).json({ message: 'Unable to send a reset link right now. Please try again later.' })
   }
 
-  return res.json({ message: genericMessage })
-})
+  return res.json({ message: 'We sent a password reset link to your email.' })
+}, 'Unable to process your request. Please try again later.'))
 
 app.post('/api/auth/reset-password', loginLimiter, async (req, res) => {
   const rawToken = String(req.body?.token || '').trim()
